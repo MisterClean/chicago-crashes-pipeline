@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.config import settings
 from utils.logging import get_logger, setup_logging
-from api.routers import sync, health, validation
+from api.routers import sync, health, validation, spatial
 from api.dependencies import sync_state
 
 # Setup logging
@@ -54,6 +54,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(sync.router)
 app.include_router(validation.router)
+app.include_router(spatial.router)
 
 
 if __name__ == "__main__":
