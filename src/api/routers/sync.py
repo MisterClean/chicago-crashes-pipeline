@@ -12,6 +12,7 @@ from api.models import SyncRequest, SyncResponse, StatusResponse, TestSyncRespon
 from api.dependencies import get_soda_client, get_data_sanitizer, get_sync_state
 from etl.soda_client import SODAClient
 from validators.data_sanitizer import DataSanitizer
+from services.database_service import DatabaseService
 from utils.config import settings
 from utils.logging import get_logger
 
@@ -144,6 +145,24 @@ async def get_endpoints():
     }
 
 
+@router.get("/counts")
+async def get_database_counts():
+    """Get current record counts in the database."""
+    try:
+        db_service = DatabaseService()
+        counts = db_service.get_record_counts()
+        
+        return {
+            "status": "success",
+            "counts": counts,
+            "total_records": sum(counts.values()) if counts else 0,
+            "timestamp": datetime.now()
+        }
+    except Exception as e:
+        logger.error("Failed to get database counts", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to get database counts: {str(e)}")
+
+
 async def run_sync_operation(
     sync_id: str,
     sync_state: dict,
@@ -163,42 +182,67 @@ async def run_sync_operation(
         # Initialize clients
         client = SODAClient()
         sanitizer = DataSanitizer()
+        db_service = DatabaseService()
         
         # Determine which endpoints to sync
         endpoints_to_sync = [endpoint] if endpoint else list(settings.api.endpoints.keys())
         
         total_records = 0
+        total_inserted = 0
+        total_updated = 0
         
         for endpoint_name in endpoints_to_sync:
             sync_state["current_operation"] = f"Syncing {endpoint_name}"
             
             endpoint_url = settings.api.endpoints[endpoint_name]
             
-            # For demonstration, limit to small batches
-            # In production, this would be configurable
-            records = await client.fetch_records(
+            # Fetch all records with pagination and date filtering
+            records = await client.fetch_all_records(
                 endpoint=endpoint_url,
-                limit=100  # Small limit for demo
+                batch_size=50000,  # 50K records per batch
+                start_date=start_date,
+                end_date=end_date,
+                date_field="crash_date",
+                show_progress=False  # Disable progress bar for background task
             )
+            
+            if not records:
+                logger.info(f"No records found for {endpoint_name}")
+                continue
             
             # Process records based on type
             if endpoint_name == "crashes":
                 processed_records = [sanitizer.sanitize_crash_record(r) for r in records]
+                # Save to database
+                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
+                result = db_service.insert_crash_records(processed_records)
             elif endpoint_name == "people":
                 processed_records = [sanitizer.sanitize_person_record(r) for r in records]
+                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
+                result = db_service.insert_person_records(processed_records)
             elif endpoint_name == "vehicles":
                 processed_records = [sanitizer.sanitize_vehicle_record(r) for r in records]
+                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
+                result = db_service.insert_vehicle_records(processed_records)
             elif endpoint_name == "fatalities":
                 processed_records = [sanitizer.sanitize_fatality_record(r) for r in records]
+                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
+                result = db_service.insert_fatality_records(processed_records)
             else:
                 processed_records = records
+                result = {"inserted": 0, "updated": 0, "skipped": len(records)}
             
             total_records += len(processed_records)
+            total_inserted += result.get("inserted", 0)
+            total_updated += result.get("updated", 0)
             
             logger.info(
                 "Processed endpoint records",
                 endpoint=endpoint_name,
-                records=len(processed_records)
+                records=len(processed_records),
+                inserted=result.get("inserted", 0),
+                updated=result.get("updated", 0),
+                skipped=result.get("skipped", 0)
             )
         
         # Calculate duration
@@ -216,6 +260,8 @@ async def run_sync_operation(
             "Sync operation completed successfully",
             sync_id=sync_id,
             total_records=total_records,
+            total_inserted=total_inserted,
+            total_updated=total_updated,
             duration=duration
         )
         

@@ -18,7 +18,7 @@ class Crash(Base, TimestampMixin):
     __tablename__ = "crashes"
     
     # Primary key
-    crash_record_id = Column(String(50), primary_key=True)
+    crash_record_id = Column(String(128), primary_key=True)
     
     # Basic crash information
     crash_date = Column(DateTime, nullable=False, index=True)
@@ -42,8 +42,8 @@ class Crash(Base, TimestampMixin):
     street_name_2 = Column(String(100))
     
     # Crash characteristics
-    crash_type = Column(String(50))
-    crash_record_id_original = Column(String(50))
+    crash_type = Column(String(100))
+    crash_record_id_original = Column(String(128))
     crash_date_original = Column(DateTime)
     
     # Location coordinates
@@ -118,8 +118,8 @@ class CrashPerson(Base, TimestampMixin):
     __tablename__ = "crash_people"
     
     # Composite primary key
-    crash_record_id = Column(String(50), ForeignKey('crashes.crash_record_id'), primary_key=True)
-    person_id = Column(String(50), primary_key=True)
+    crash_record_id = Column(String(128), ForeignKey('crashes.crash_record_id'), primary_key=True)
+    person_id = Column(String(128), primary_key=True)
     
     # Person demographics
     person_type = Column(String(50))  # DRIVER, PASSENGER, PEDESTRIAN, etc.
@@ -184,7 +184,7 @@ class CrashVehicle(Base, TimestampMixin):
     __tablename__ = "crash_vehicles"
     
     # Composite primary key  
-    crash_record_id = Column(String(50), ForeignKey('crashes.crash_record_id'), primary_key=True)
+    crash_record_id = Column(String(128), ForeignKey('crashes.crash_record_id'), primary_key=True)
     unit_no = Column(String(10), primary_key=True)
     
     # Unit information
@@ -234,7 +234,7 @@ class VisionZeroFatality(Base, TimestampMixin):
     __tablename__ = "vision_zero_fatalities"
     
     # Primary key
-    person_id = Column(String(50), primary_key=True)
+    person_id = Column(String(128), primary_key=True)
     
     # Crash information
     rd_no = Column(String(50), index=True)  # Links to crash_record_id potentially
