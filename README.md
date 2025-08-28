@@ -154,6 +154,22 @@ Import shapefiles for geographic boundaries:
 python -m src.spatial.loader --file data/shapefiles/chicago_wards.shp
 ```
 
+### Run Tests
+
+Run the comprehensive test suite:
+```bash
+source venv/bin/activate
+python -m pytest tests/ -v
+```
+
+The test suite includes 53+ tests covering:
+- Configuration management and validation
+- Data sanitization and cleaning operations  
+- Data validation with Chicago geographic bounds
+- SODA API client functionality (pagination, error handling, rate limiting)
+- FastAPI endpoint testing with dependency mocking
+- Async operations and concurrent request handling
+
 ### Start API Server
 
 Launch the FastAPI service:
