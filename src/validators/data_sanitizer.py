@@ -3,8 +3,11 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 
-from ..utils.config import settings
-from ..utils.logging import get_logger
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.config import settings
+from utils.logging import get_logger
 
 logger = get_logger(__name__)
 

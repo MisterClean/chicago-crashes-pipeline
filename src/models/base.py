@@ -8,7 +8,10 @@ from sqlalchemy.ext.declarative import as_declarative, declared_attr
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
-from ..utils.config import settings
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from utils.config import settings
 
 # Create engine with connection pooling
 engine = create_engine(

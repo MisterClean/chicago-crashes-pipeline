@@ -4,17 +4,20 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from pydantic import BaseSettings, Field
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class DatabaseSettings(BaseSettings):
     """Database configuration settings."""
     
-    host: str = Field(default="localhost", env="DB_HOST")
-    port: int = Field(default=5432, env="DB_PORT") 
-    database: str = Field(default="chicago_crashes", env="DB_NAME")
-    username: str = Field(default="postgres", env="DB_USER")
-    password: str = Field(default="", env="DB_PASSWORD")
+    host: str = "localhost"
+    port: int = 5432
+    database: str = "chicago_crashes"
+    username: str = "postgres"
+    password: str = ""
+    
+    model_config = {"env_prefix": "DB_"}
     pool_size: int = 10
     max_overflow: int = 20
     bulk_insert_size: int = 1000

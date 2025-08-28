@@ -36,6 +36,12 @@ This pipeline handles four interconnected datasets from the Chicago Open Data Po
 ```bash
 git clone https://github.com/MisterClean/lakeview-crashes.git
 cd lakeview-crashes
+
+# Create virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -54,6 +60,45 @@ Or manually setup PostgreSQL and run:
 ```bash
 make migrate
 make initial-load START_DATE=2020-01-01
+```
+
+## Testing the Pipeline
+
+You can test the core pipeline components without setting up a database:
+
+```bash
+# Activate virtual environment
+source venv/bin/activate
+
+# Test configuration and data processing
+python3 -c "
+import sys
+sys.path.append('src')
+import asyncio
+
+async def test():
+    from etl.soda_client import SODAClient
+    from validators.data_sanitizer import DataSanitizer
+    from utils.config import settings
+    
+    client = SODAClient()
+    sanitizer = DataSanitizer()
+    
+    # Fetch a few test records
+    records = await client.fetch_records(
+        endpoint=settings.api.endpoints['crashes'], 
+        limit=3
+    )
+    
+    print(f'✓ Fetched {len(records)} crash records')
+    
+    # Test data sanitization
+    for record in records[:1]:
+        clean = sanitizer.sanitize_crash_record(record)
+        print(f'✓ Processed crash {clean.get(\"crash_record_id\", \"N/A\")[:10]}...')
+
+asyncio.run(test())
+"
 ```
 
 ## Configuration
@@ -223,6 +268,30 @@ The pipeline is optimized for large-scale data processing:
 - **Bulk Inserts** - Uses PostgreSQL COPY for initial loads  
 - **Async Operations** - Non-blocking API calls
 - **Progress Tracking** - Real-time progress indicators
+
+## Troubleshooting
+
+### Common Issues
+
+**Import Errors with Relative Imports**
+- The pipeline modules use absolute imports when run as scripts
+- Always run Python commands from the project root directory
+- Ensure `sys.path.append('src')` when testing individual modules
+
+**Database Connection Issues**
+- Check your `.env` file contains correct database credentials
+- Ensure PostgreSQL is running and accessible
+- Verify PostGIS extension is installed: `CREATE EXTENSION IF NOT EXISTS postgis;`
+
+**API Rate Limits**
+- The Chicago Open Data Portal has rate limits
+- Default configuration respects these limits (1000 requests/hour)
+- Consider getting an API token from the Chicago Data Portal for higher limits
+
+**Memory Issues with Large Datasets**
+- Initial loads process millions of records
+- Use the batch_size setting in config.yaml to tune memory usage
+- Docker containers may need increased memory limits for large imports
 
 ## Contributing
 
