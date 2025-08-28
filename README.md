@@ -266,6 +266,13 @@ chicago-crash-pipeline/
 └── docs/            
 ```
 
+## Documentation
+
+- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation with examples
+- **[Development Guide](docs/DEVELOPMENT_GUIDE.md)** - Setup, coding standards, and contribution guidelines  
+- **[Deployment Guide](docs/DEPLOYMENT_GUIDE.md)** - Production deployment on Docker, Kubernetes, and cloud platforms
+- **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)** - Common issues and debugging procedures
+
 ## Data Sources
 
 All data comes from the [Chicago Data Portal](https://data.cityofchicago.org):
