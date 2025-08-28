@@ -16,12 +16,12 @@ class DatabaseSettings(BaseSettings):
     database: str = "chicago_crashes"
     username: str = "postgres"
     password: str = ""
-    
-    model_config = {"env_prefix": "DB_"}
     pool_size: int = 10
     max_overflow: int = 20
     bulk_insert_size: int = 1000
     use_copy: bool = True
+    
+    model_config = {"env_prefix": "DB_"}
     
     @property
     def url(self) -> str:
@@ -120,8 +120,7 @@ class Settings(BaseSettings):
     spatial: SpatialSettings = SpatialSettings()
     logging: LoggingSettings = LoggingSettings()
     
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 def load_config(config_path: Optional[Path] = None) -> Settings:
