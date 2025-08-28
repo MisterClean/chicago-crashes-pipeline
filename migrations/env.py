@@ -75,9 +75,7 @@ def run_migrations_online() -> None:
         )
 
         with context.begin_transaction():
-            # Enable PostGIS extension if it doesn't exist
-            connection.execute("CREATE EXTENSION IF NOT EXISTS postgis")
-            connection.execute("CREATE EXTENSION IF NOT EXISTS postgis_topology")
+            # PostGIS extensions are already enabled via Docker init
             context.run_migrations()
 
 

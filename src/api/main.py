@@ -23,6 +23,16 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting Chicago Crash Data Pipeline API")
     
+    # Initialize database tables
+    try:
+        from models.base import Base, engine
+        logger.info("Creating database tables...")
+        Base.metadata.create_all(engine)
+        logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error("Failed to create database tables", error=str(e))
+        # Continue startup even if table creation fails
+    
     # Initialize startup tasks
     sync_state["started_at"] = datetime.now()
     logger.info("API started successfully", startup_time=datetime.now())

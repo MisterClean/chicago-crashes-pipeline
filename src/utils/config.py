@@ -1,5 +1,6 @@
 """Configuration management for the Chicago crash data pipeline."""
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -123,6 +124,36 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
+def _resolve_template_strings(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Resolve ${ENV_VAR:default} template strings in configuration.
+    
+    Args:
+        config_dict: Configuration dictionary with potential template strings
+        
+    Returns:
+        Configuration dictionary with resolved template strings
+    """
+    def resolve_value(value):
+        if isinstance(value, str):
+            # Pattern matches ${ENV_VAR:default_value} or ${ENV_VAR}
+            pattern = r'\$\{([^}:]+)(?::([^}]*))?\}'
+            
+            def replace_match(match):
+                env_var = match.group(1)
+                default_value = match.group(2) if match.group(2) is not None else ""
+                return os.getenv(env_var, default_value)
+            
+            return re.sub(pattern, replace_match, value)
+        elif isinstance(value, dict):
+            return {k: resolve_value(v) for k, v in value.items()}
+        elif isinstance(value, list):
+            return [resolve_value(item) for item in value]
+        else:
+            return value
+    
+    return resolve_value(config_dict)
+
+
 def load_config(config_path: Optional[Path] = None) -> Settings:
     """Load configuration from YAML file and environment variables.
     
@@ -142,8 +173,9 @@ def load_config(config_path: Optional[Path] = None) -> Settings:
         with open(config_path) as f:
             yaml_config = yaml.safe_load(f)
             
-        # Update settings with YAML values
+        # Resolve template strings
         if yaml_config:
+            yaml_config = _resolve_template_strings(yaml_config)
             _update_settings_from_dict(settings, yaml_config)
     
     return settings

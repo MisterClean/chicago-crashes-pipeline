@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any
 
 from geoalchemy2 import Geometry
-from sqlalchemy import DateTime, MetaData, create_engine
+from sqlalchemy import Column, DateTime, MetaData, create_engine
 from sqlalchemy.ext.declarative import as_declarative, declared_attr
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -52,8 +52,8 @@ class Base:
 class TimestampMixin:
     """Mixin for created_at and updated_at timestamps."""
     
-    created_at = DateTime(default=func.now(), nullable=False)
-    updated_at = DateTime(default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
 
 def get_db():

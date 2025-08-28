@@ -27,17 +27,16 @@ This pipeline handles four interconnected datasets from the Chicago Open Data Po
 ### Prerequisites
 
 - Python 3.11+
-- PostgreSQL 15+ with PostGIS
-- Docker & Docker Compose (optional)
+- Docker & Docker Compose
 
-### Installation
+### Fast Setup (3 minutes)
 
 1. **Clone and setup:**
 ```bash
 git clone https://github.com/MisterClean/lakeview-crashes.git
 cd lakeview-crashes
 
-# Create virtual environment (recommended)
+# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
@@ -45,22 +44,62 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-2. **Configure environment:**
+2. **Start database:**
 ```bash
-cp .env.example .env
-# Edit .env with your database credentials and API token
+cd docker && docker-compose up -d postgres
+cd .. # Return to project root
 ```
 
-3. **Start with Docker (recommended):**
+3. **Configure environment:**
 ```bash
-make docker-up
+# Create .env file with database settings
+echo "DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=chicago_crashes
+DB_USER=postgres
+DB_PASSWORD=postgres" > .env
 ```
 
-Or manually setup PostgreSQL and run:
+4. **Start the application:**
 ```bash
-make migrate
-make initial-load START_DATE=2020-01-01
+source venv/bin/activate
+cd src && uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+**That's it!** The application will automatically:
+- Create all database tables on startup
+- Be ready to fetch data from Chicago's Open Data Portal
+- Serve the API at http://localhost:8000
+
+### Load Chicago Crash Data
+
+Once running, load crash data from Chicago:
+
+```bash
+# Load recent crashes (fast - for testing)
+curl -X POST http://localhost:8000/sync/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"endpoint": "crashes", "start_date": "2024-08-01", "end_date": "2024-08-28"}'
+
+# Load full 2024 data (takes a few minutes)
+curl -X POST http://localhost:8000/sync/trigger \
+  -H "Content-Type: application/json" \
+  -d '{"endpoint": "crashes", "start_date": "2024-01-01"}'
+
+# Monitor sync progress
+curl http://localhost:8000/sync/status
+
+# Test data fetching
+curl -X POST http://localhost:8000/sync/test
+```
+
+### What You Get
+
+- **Interactive API Documentation**: http://localhost:8000/docs
+- **Real Chicago Crash Data**: From the official Chicago Open Data Portal
+- **Spatial Analysis Ready**: PostGIS database with geographic indexing
+- **Multiple Data Tables**: crashes, people, vehicles, fatalities
+- **RESTful API**: Query and analyze data via HTTP endpoints
 
 ## Testing the Pipeline
 
