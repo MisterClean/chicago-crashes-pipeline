@@ -1,0 +1,47 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.7
+alembic==1.12.1
+geoalchemy2==0.14.1
+
+# HTTP Client
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Data Processing
+pandas==2.1.3
+geopandas==0.14.1
+shapely==2.0.2
+pyproj==3.6.1
+
+# Configuration
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+pyyaml==6.0.1
+
+# Utilities
+tqdm==4.66.1
+rich==13.7.0
+typer==0.9.0
+structlog==23.2.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-httpx==0.26.0
+httpx-mock==0.7.0
+
+# Development
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+mypy==1.7.1
+
+# Spatial Data
+fiona==1.9.5
+rasterio==1.3.9

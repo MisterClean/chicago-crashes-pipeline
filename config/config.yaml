@@ -1,0 +1,110 @@
+# Chicago Crash Data Pipeline Configuration
+
+api:
+  # SODA API endpoints
+  endpoints:
+    crashes: "https://data.cityofchicago.org/resource/85ca-t3if.json"
+    people: "https://data.cityofchicago.org/resource/u6pd-qa9d.json" 
+    vehicles: "https://data.cityofchicago.org/resource/68nd-jvt3.json"
+    fatalities: "https://data.cityofchicago.org/resource/gzaz-isa6.json"
+  
+  # Rate limiting (requests per hour)
+  rate_limit: 1000
+  
+  # Request settings
+  timeout: 30
+  max_retries: 3
+  backoff_factor: 2
+  
+  # Batch settings
+  batch_size: 50000
+  max_concurrent: 5
+
+database:
+  # Connection settings (use environment variables)
+  host: ${DB_HOST:localhost}
+  port: ${DB_PORT:5432}
+  database: ${DB_NAME:chicago_crashes}
+  username: ${DB_USER:postgres}
+  password: ${DB_PASSWORD:}
+  
+  # Pool settings
+  pool_size: 10
+  max_overflow: 20
+  
+  # Bulk operations
+  bulk_insert_size: 1000
+  use_copy: true
+
+sync:
+  # Default start date for initial load
+  default_start_date: "2017-09-01"
+  
+  # Incremental sync interval (hours)
+  sync_interval: 6
+  
+  # Sync settings
+  chunk_size: 50000
+  progress_bar: true
+  
+  # Data retention (days)
+  log_retention_days: 30
+
+validation:
+  # Geographic bounds for Chicago area
+  bounds:
+    min_latitude: 41.6
+    max_latitude: 42.1
+    min_longitude: -87.95
+    max_longitude: -87.5
+  
+  # Data validation rules
+  age_range:
+    min: 0
+    max: 120
+  
+  vehicle_year_range:
+    min: 1900
+    max: 2025
+  
+  # Required fields (will log warnings but not reject)
+  required_fields:
+    crashes: ["crash_record_id", "crash_date"]
+    people: ["crash_record_id", "person_id"]
+    vehicles: ["crash_record_id", "unit_no"]
+    fatalities: ["person_id"]
+
+spatial:
+  # Shapefile paths
+  shapefiles:
+    wards: "data/shapefiles/chicago_wards.shp"
+    community_areas: "data/shapefiles/community_areas.shp"
+    census_tracts: "data/shapefiles/census_tracts.shp"
+    police_beats: "data/shapefiles/police_beats.shp"
+    house_districts: "data/shapefiles/house_districts.shp" 
+    senate_districts: "data/shapefiles/senate_districts.shp"
+  
+  # Spatial reference system
+  srid: 4326  # WGS84
+
+logging:
+  level: INFO
+  format: json
+  
+  # Log files
+  files:
+    app: "logs/app.log"
+    etl: "logs/etl.log"
+    api: "logs/api.log"
+  
+  # Rotation
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+monitoring:
+  # Health check settings
+  health_check_timeout: 5
+  
+  # Metrics
+  enable_metrics: true
+  metrics_port: 9090
