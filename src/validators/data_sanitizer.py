@@ -142,6 +142,9 @@ class DataSanitizer:
         sanitized = {}
         
         # Required fields
+        sanitized['crash_unit_id'] = self._clean_string(
+            record.get('crash_unit_id')
+        )
         sanitized['crash_record_id'] = self._clean_string(
             record.get('crash_record_id')
         )
@@ -158,6 +161,9 @@ class DataSanitizer:
         integer_fields = ['num_passengers', 'occupant_cnt']
         for field in integer_fields:
             sanitized[field] = self._clean_integer(record.get(field))
+        
+        # Date fields - pass through as-is since they're already in ISO format
+        sanitized['crash_date'] = record.get('crash_date')
         
         # String fields
         string_fields = [

@@ -121,6 +121,10 @@ class CrashPerson(Base, TimestampMixin):
     crash_record_id = Column(String(128), ForeignKey('crashes.crash_record_id'), primary_key=True)
     person_id = Column(String(128), primary_key=True)
     
+    # Basic information
+    crash_date = Column(DateTime)
+    vehicle_id = Column(String(20))
+    
     # Person demographics
     person_type = Column(String(50))  # DRIVER, PASSENGER, PEDESTRIAN, etc.
     age = Column(Integer)
@@ -135,7 +139,7 @@ class CrashPerson(Base, TimestampMixin):
     injury_classification = Column(String(50))
     hospital = Column(String(100))
     ems_agency = Column(String(50))
-    ems_unit = Column(String(20))
+    ems_unit = Column(String(50))  # Increased from 20 to 50
     area_00_i = Column(String(1))
     area_01_i = Column(String(1))
     area_02_i = Column(String(1))
@@ -152,7 +156,9 @@ class CrashPerson(Base, TimestampMixin):
     
     # Driver information (if applicable)
     drivers_license_state = Column(String(10))
-    drivers_license_class = Column(String(20))
+    drivers_license_class = Column(String(50))  # Increased from 20 to 50
+    driver_action = Column(String(100))  # New field
+    driver_vision = Column(String(50))   # New field
     
     # Physical condition
     physical_condition = Column(String(50))
@@ -161,7 +167,7 @@ class CrashPerson(Base, TimestampMixin):
     pedpedal_action = Column(String(100))
     pedpedal_visibility = Column(String(50))
     pedpedal_location = Column(String(100))
-    bac_result = Column(String(20))
+    bac_result = Column(String(50))  # Increased from 20 to 50
     bac_result_value = Column(Float)
     
     # Cell phone usage
@@ -183,9 +189,15 @@ class CrashVehicle(Base, TimestampMixin):
     
     __tablename__ = "crash_vehicles"
     
-    # Composite primary key  
-    crash_record_id = Column(String(128), ForeignKey('crashes.crash_record_id'), primary_key=True)
-    unit_no = Column(String(10), primary_key=True)
+    # Primary key - CRASH_UNIT_ID is unique identifier for each vehicle record
+    crash_unit_id = Column(String(20), primary_key=True)
+    
+    # Foreign key to crashes table
+    crash_record_id = Column(String(128), ForeignKey('crashes.crash_record_id'), nullable=False, index=True)
+    unit_no = Column(String(10))
+    
+    # Basic information
+    crash_date = Column(DateTime)
     
     # Unit information
     unit_type = Column(String(50))
@@ -194,15 +206,15 @@ class CrashVehicle(Base, TimestampMixin):
     # Vehicle information
     vehicle_id = Column(String(50))
     cmv_id = Column(String(50))
-    make = Column(String(50))
-    model = Column(String(50))
+    make = Column(String(100))  # Increased from 50 to 100
+    model = Column(String(100))  # Increased from 50 to 100
     lic_plate_state = Column(String(10))
     vehicle_year = Column(Integer)
     vehicle_defect = Column(String(100))
-    vehicle_type = Column(String(50))
+    vehicle_type = Column(String(100))  # Increased from 50 to 100
     vehicle_use = Column(String(50))
-    travel_direction = Column(String(5))
-    maneuver = Column(String(100))
+    travel_direction = Column(String(10))  # Increased from 5 to 10
+    maneuver = Column(String(100))  # Keep at 100 for longer maneuver descriptions
     towed_i = Column(String(1))
     fire_i = Column(String(1))
     

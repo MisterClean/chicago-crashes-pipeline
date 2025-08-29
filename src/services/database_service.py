@@ -291,6 +291,8 @@ class DatabaseService:
         return CrashPerson(
             crash_record_id=record.get('crash_record_id'),
             person_id=record.get('person_id'),
+            crash_date=self._parse_datetime(record.get('crash_date')),
+            vehicle_id=record.get('vehicle_id'),
             person_type=record.get('person_type'),
             age=self._parse_int(record.get('age')),
             sex=record.get('sex'),
@@ -303,6 +305,8 @@ class DatabaseService:
             ems_unit=record.get('ems_unit'),
             drivers_license_state=record.get('drivers_license_state'),
             drivers_license_class=record.get('drivers_license_class'),
+            driver_action=record.get('driver_action'),
+            driver_vision=record.get('driver_vision'),
             physical_condition=record.get('physical_condition'),
             pedpedal_action=record.get('pedpedal_action'),
             pedpedal_visibility=record.get('pedpedal_visibility'),
@@ -314,10 +318,14 @@ class DatabaseService:
     
     def _update_person_record(self, existing: CrashPerson, record: Dict[str, Any], db: Session):
         """Update an existing person record with new data."""
+        existing.crash_date = self._parse_datetime(record.get('crash_date'))
+        existing.vehicle_id = record.get('vehicle_id')
         existing.injury_classification = record.get('injury_classification')
         existing.hospital = record.get('hospital')
         existing.ems_agency = record.get('ems_agency')
         existing.ems_unit = record.get('ems_unit')
+        existing.driver_action = record.get('driver_action')
+        existing.driver_vision = record.get('driver_vision')
         existing.physical_condition = record.get('physical_condition')
         existing.bac_result = record.get('bac_result')
         existing.bac_result_value = self._parse_float(record.get('bac_result_value'))
@@ -333,16 +341,15 @@ class DatabaseService:
         
         try:
             for record in records:
-                crash_id = record.get('crash_record_id')
-                unit_no = record.get('unit_no')
+                crash_unit_id = record.get('crash_unit_id')
                 
-                if not crash_id or not unit_no:
+                if not crash_unit_id:
+                    logger.warning("Skipping vehicle record without crash_unit_id")
                     skipped_count += 1
                     continue
                 
                 existing = db.query(CrashVehicle).filter(
-                    CrashVehicle.crash_record_id == crash_id,
-                    CrashVehicle.unit_no == unit_no
+                    CrashVehicle.crash_unit_id == crash_unit_id
                 ).first()
                 
                 if existing:
@@ -375,8 +382,10 @@ class DatabaseService:
     def _create_vehicle_record(self, record: Dict[str, Any]) -> CrashVehicle:
         """Create a new CrashVehicle object from record data."""
         return CrashVehicle(
+            crash_unit_id=record.get('crash_unit_id'),
             crash_record_id=record.get('crash_record_id'),
             unit_no=record.get('unit_no'),
+            crash_date=self._parse_datetime(record.get('crash_date')),
             unit_type=record.get('unit_type'),
             num_passengers=self._parse_int(record.get('num_passengers')),
             vehicle_id=record.get('vehicle_id'),
@@ -401,6 +410,7 @@ class DatabaseService:
     
     def _update_vehicle_record(self, existing: CrashVehicle, record: Dict[str, Any], db: Session):
         """Update an existing vehicle record with new data."""
+        existing.crash_date = self._parse_datetime(record.get('crash_date'))
         existing.vehicle_defect = record.get('vehicle_defect')
         existing.towed_i = record.get('towed_i')
         existing.fire_i = record.get('fire_i')

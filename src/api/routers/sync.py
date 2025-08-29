@@ -226,6 +226,8 @@ async def run_sync_operation(
                 result = db_service.insert_vehicle_records(processed_records)
             elif endpoint_name == "fatalities":
                 processed_records = [sanitizer.sanitize_fatality_record(r) for r in records]
+                # Remove duplicates by person_id
+                processed_records = sanitizer.remove_duplicates(processed_records, 'person_id')
                 sync_state["current_operation"] = f"Saving {endpoint_name} to database"
                 result = db_service.insert_fatality_records(processed_records)
             else:
