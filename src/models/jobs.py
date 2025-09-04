@@ -28,6 +28,7 @@ class JobType(str, Enum):
     FULL_REFRESH = "full_refresh"
     LAST_30_DAYS_CRASHES = "last_30_days_crashes"
     LAST_30_DAYS_PEOPLE = "last_30_days_people"
+    LAST_30_DAYS_VEHICLES = "last_30_days_vehicles"
     LAST_6_MONTHS_FATALITIES = "last_6_months_fatalities"
     CUSTOM = "custom"
 
@@ -192,6 +193,20 @@ def get_default_jobs():
             "recurrence_type": RecurrenceType.DAILY,
             "config": {
                 "endpoints": ["people"],
+                "date_range_days": 30,
+                "force": True
+            },
+            "timeout_minutes": 60,
+            "max_retries": 3
+        },
+        {
+            "name": "Last 30 Days - Vehicle Data",
+            "description": "Refresh vehicle data from the last 30 days",
+            "job_type": JobType.LAST_30_DAYS_VEHICLES,
+            "enabled": True,
+            "recurrence_type": RecurrenceType.DAILY,
+            "config": {
+                "endpoints": ["vehicles"],
                 "date_range_days": 30,
                 "force": True
             },
