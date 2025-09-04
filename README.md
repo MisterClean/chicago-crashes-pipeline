@@ -17,61 +17,59 @@ The pipeline follows a modern, microservices-inspired architecture with clear se
 
 ```mermaid
 graph TB
-    subgraph "External Data Sources"
-        CDA[Chicago Data Portal<br/>SODA API Endpoints]
-        SHP[Shapefiles<br/>Geographic Boundaries]
+    subgraph External["External Data Sources"]
+        CDA[Chicago Data Portal - SODA API]
+        SHP[Shapefiles - Geographic Boundaries]
     end
     
-    subgraph "Web Interface"
-        ADMIN[Admin Portal<br/>HTML/CSS/JS]
-        API_DOCS[API Documentation<br/>Swagger/OpenAPI]
+    subgraph WebUI["Web Interface"]
+        ADMIN[Admin Portal]
+        API_DOCS[API Documentation]
     end
     
-    subgraph "API Layer"
-        FASTAPI[FastAPI Application<br/>Python 3.11+]
-        ROUTERS{API Routers}
-        FASTAPI --> ROUTERS
-        ROUTERS --> SYNC_R[/sync - Data Sync]
-        ROUTERS --> JOBS_R[/jobs - Job Management] 
-        ROUTERS --> HEALTH_R[/health - Health Checks]
-        ROUTERS --> SPATIAL_R[/spatial - Geographic Data]
+    subgraph API["API Layer"]
+        FASTAPI[FastAPI Application]
+        SYNC_R[Sync Router]
+        JOBS_R[Jobs Router]
+        HEALTH_R[Health Router]
+        SPATIAL_R[Spatial Router]
     end
     
-    subgraph "Business Logic Layer"
-        ETL[ETL Service<br/>SODA Client]
-        VALIDATOR[Data Validator<br/>Sanitization & Cleaning]
-        JOB_SVC[Job Service<br/>Execution & Management]
-        SCHEDULER[Job Scheduler<br/>Cron-like Scheduling]
-        DB_SVC[Database Service<br/>CRUD Operations]
-        SPATIAL_SVC[Spatial Service<br/>Shapefile Processing]
+    subgraph Services["Business Logic"]
+        ETL[ETL Service]
+        VALIDATOR[Data Validator]
+        JOB_SVC[Job Service]
+        SCHEDULER[Job Scheduler]
+        DB_SVC[Database Service]
+        SPATIAL_SVC[Spatial Service]
     end
     
-    subgraph "Data Processing"
-        SANITIZER[Data Sanitizer<br/>• Coordinate Validation<br/>• Date Parsing<br/>• Type Conversion<br/>• Duplicate Removal]
-        RATE_LIMITER[Rate Limiter<br/>API Throttling]
+    subgraph Processing["Data Processing"]
+        SANITIZER[Data Sanitizer]
+        RATE_LIMITER[Rate Limiter]
     end
     
-    subgraph "Data Storage"
-        PG[(PostgreSQL 15<br/>with PostGIS)]
-        PG_TABLES{Database Tables}
-        PG --> PG_TABLES
-        PG_TABLES --> CRASHES[(crashes<br/>~1M+ records)]
-        PG_TABLES --> PEOPLE[(crash_people<br/>Person data)]
-        PG_TABLES --> VEHICLES[(crash_vehicles<br/>Vehicle data)]
-        PG_TABLES --> FATALITIES[(vision_zero_fatalities<br/>Fatality data)]
-        PG_TABLES --> JOBS[(scheduled_jobs<br/>Job configs)]
-        PG_TABLES --> EXECUTIONS[(job_executions<br/>Execution history)]
-        PG_TABLES --> SPATIAL_TABLES[(Spatial Tables<br/>wards, districts, etc.)]
+    subgraph Storage["Data Storage"]
+        PG[(PostgreSQL with PostGIS)]
+        CRASHES[(Crashes Table)]
+        PEOPLE[(People Table)]
+        VEHICLES[(Vehicles Table)]
+        FATALITIES[(Fatalities Table)]
+        JOBS[(Jobs Table)]
+        EXECUTIONS[(Executions Table)]
     end
     
-    subgraph "Infrastructure"
-        DOCKER[Docker Container<br/>PostgreSQL + PostGIS]
-        VENV[Python Virtual Environment<br/>Dependencies]
+    subgraph Infra["Infrastructure"]
+        DOCKER[Docker Container]
+        VENV[Python Environment]
     end
 
-    %% Data Flow Connections
     ADMIN --> FASTAPI
     API_DOCS --> FASTAPI
+    FASTAPI --> SYNC_R
+    FASTAPI --> JOBS_R
+    FASTAPI --> HEALTH_R
+    FASTAPI --> SPATIAL_R
     
     SYNC_R --> ETL
     JOBS_R --> JOB_SVC
@@ -90,26 +88,15 @@ graph TB
     SPATIAL_SVC --> DB_SVC
     
     DB_SVC --> PG
+    PG --> CRASHES
+    PG --> PEOPLE
+    PG --> VEHICLES
+    PG --> FATALITIES
+    PG --> JOBS
+    PG --> EXECUTIONS
     
     PG -.-> DOCKER
     FASTAPI -.-> VENV
-
-    %% Styling
-    classDef external fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
-    classDef web fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
-    classDef api fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
-    classDef service fill:#fff3e0,stroke:#f57c00,stroke-width:2px
-    classDef data fill:#fce4ec,stroke:#c2185b,stroke-width:2px
-    classDef storage fill:#e0f2f1,stroke:#00695c,stroke-width:2px
-    classDef infra fill:#f1f8e9,stroke:#33691e,stroke-width:2px
-    
-    class CDA,SHP external
-    class ADMIN,API_DOCS web
-    class FASTAPI,ROUTERS,SYNC_R,JOBS_R,HEALTH_R,SPATIAL_R api
-    class ETL,VALIDATOR,JOB_SVC,SCHEDULER,DB_SVC,SPATIAL_SVC service
-    class SANITIZER,RATE_LIMITER data
-    class PG,PG_TABLES,CRASHES,PEOPLE,VEHICLES,FATALITIES,JOBS,EXECUTIONS,SPATIAL_TABLES storage
-    class DOCKER,VENV infra
 ```
 
 **Key Components:**
