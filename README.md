@@ -36,8 +36,8 @@ This pipeline handles four interconnected datasets from the Chicago Open Data Po
 
 1. **Clone and setup:**
 ```bash
-git clone https://github.com/MisterClean/lakeview-crashes.git
-cd lakeview-crashes
+git clone https://github.com/MisterClean/chicago-crashes-pipeline.git
+cd chicago-crashes-pipeline
 
 # Create virtual environment
 python3 -m venv venv

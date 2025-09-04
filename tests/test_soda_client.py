@@ -4,7 +4,8 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import sys
-sys.path.append('/Users/mmclean/dev/r/lakeview-crashes/src')
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent / 'src'))
 
 from etl.soda_client import SODAClient
 
