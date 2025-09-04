@@ -11,6 +11,117 @@ This pipeline handles four interconnected datasets from the Chicago Open Data Po
 3. **Traffic Crashes - Vehicles** - Vehicle/unit information
 4. **Traffic Crashes - Vision Zero Fatalities** - Curated fatality dataset
 
+## Architecture
+
+The pipeline follows a modern, microservices-inspired architecture with clear separation of concerns:
+
+```mermaid
+graph TB
+    subgraph "External Data Sources"
+        CDA[Chicago Data Portal<br/>SODA API Endpoints]
+        SHP[Shapefiles<br/>Geographic Boundaries]
+    end
+    
+    subgraph "Web Interface"
+        ADMIN[Admin Portal<br/>HTML/CSS/JS]
+        API_DOCS[API Documentation<br/>Swagger/OpenAPI]
+    end
+    
+    subgraph "API Layer"
+        FASTAPI[FastAPI Application<br/>Python 3.11+]
+        ROUTERS{API Routers}
+        FASTAPI --> ROUTERS
+        ROUTERS --> SYNC_R[/sync - Data Sync]
+        ROUTERS --> JOBS_R[/jobs - Job Management] 
+        ROUTERS --> HEALTH_R[/health - Health Checks]
+        ROUTERS --> SPATIAL_R[/spatial - Geographic Data]
+    end
+    
+    subgraph "Business Logic Layer"
+        ETL[ETL Service<br/>SODA Client]
+        VALIDATOR[Data Validator<br/>Sanitization & Cleaning]
+        JOB_SVC[Job Service<br/>Execution & Management]
+        SCHEDULER[Job Scheduler<br/>Cron-like Scheduling]
+        DB_SVC[Database Service<br/>CRUD Operations]
+        SPATIAL_SVC[Spatial Service<br/>Shapefile Processing]
+    end
+    
+    subgraph "Data Processing"
+        SANITIZER[Data Sanitizer<br/>• Coordinate Validation<br/>• Date Parsing<br/>• Type Conversion<br/>• Duplicate Removal]
+        RATE_LIMITER[Rate Limiter<br/>API Throttling]
+    end
+    
+    subgraph "Data Storage"
+        PG[(PostgreSQL 15<br/>with PostGIS)]
+        PG_TABLES{Database Tables}
+        PG --> PG_TABLES
+        PG_TABLES --> CRASHES[(crashes<br/>~1M+ records)]
+        PG_TABLES --> PEOPLE[(crash_people<br/>Person data)]
+        PG_TABLES --> VEHICLES[(crash_vehicles<br/>Vehicle data)]
+        PG_TABLES --> FATALITIES[(vision_zero_fatalities<br/>Fatality data)]
+        PG_TABLES --> JOBS[(scheduled_jobs<br/>Job configs)]
+        PG_TABLES --> EXECUTIONS[(job_executions<br/>Execution history)]
+        PG_TABLES --> SPATIAL_TABLES[(Spatial Tables<br/>wards, districts, etc.)]
+    end
+    
+    subgraph "Infrastructure"
+        DOCKER[Docker Container<br/>PostgreSQL + PostGIS]
+        VENV[Python Virtual Environment<br/>Dependencies]
+    end
+
+    %% Data Flow Connections
+    ADMIN --> FASTAPI
+    API_DOCS --> FASTAPI
+    
+    SYNC_R --> ETL
+    JOBS_R --> JOB_SVC
+    SPATIAL_R --> SPATIAL_SVC
+    
+    ETL --> CDA
+    ETL --> RATE_LIMITER
+    ETL --> VALIDATOR
+    VALIDATOR --> SANITIZER
+    
+    JOB_SVC --> SCHEDULER
+    JOB_SVC --> DB_SVC
+    SCHEDULER --> ETL
+    
+    SPATIAL_SVC --> SHP
+    SPATIAL_SVC --> DB_SVC
+    
+    DB_SVC --> PG
+    
+    PG -.-> DOCKER
+    FASTAPI -.-> VENV
+
+    %% Styling
+    classDef external fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    classDef web fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef api fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef service fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef data fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef storage fill:#e0f2f1,stroke:#00695c,stroke-width:2px
+    classDef infra fill:#f1f8e9,stroke:#33691e,stroke-width:2px
+    
+    class CDA,SHP external
+    class ADMIN,API_DOCS web
+    class FASTAPI,ROUTERS,SYNC_R,JOBS_R,HEALTH_R,SPATIAL_R api
+    class ETL,VALIDATOR,JOB_SVC,SCHEDULER,DB_SVC,SPATIAL_SVC service
+    class SANITIZER,RATE_LIMITER data
+    class PG,PG_TABLES,CRASHES,PEOPLE,VEHICLES,FATALITIES,JOBS,EXECUTIONS,SPATIAL_TABLES storage
+    class DOCKER,VENV infra
+```
+
+**Key Components:**
+
+- **Admin Portal**: Web-based interface for job management and system monitoring
+- **FastAPI**: RESTful API with automatic OpenAPI documentation
+- **ETL Pipeline**: Async data fetching with rate limiting and validation
+- **Job System**: Cron-like scheduling with execution tracking and retry logic
+- **PostGIS Database**: Spatial-enabled PostgreSQL for geographic analysis
+- **Data Validation**: Multi-stage sanitization ensuring data quality
+- **Docker Integration**: Containerized PostgreSQL with PostGIS extension
+
 ## Features
 
 - 🎛️ **Admin Portal** - Complete web-based management interface for job orchestration

@@ -422,6 +422,14 @@ class JobService:
                 "end_date": now.strftime("%Y-%m-%d"),
                 "force": config.get("force", True)
             }
+        elif job_type == JobType.LAST_30_DAYS_VEHICLES:
+            start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+            return {
+                "endpoints": ["vehicles"],
+                "start_date": start_date,
+                "end_date": now.strftime("%Y-%m-%d"),
+                "force": config.get("force", True)
+            }
         elif job_type == JobType.LAST_6_MONTHS_FATALITIES:
             start_date = (now - timedelta(days=180)).strftime("%Y-%m-%d")
             return {
