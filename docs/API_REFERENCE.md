@@ -293,6 +293,212 @@ Returns information about loaded spatial tables.
 }
 ```
 
+## Job Management Endpoints
+
+### List Jobs
+
+**GET /jobs/**
+
+Returns all scheduled jobs in the system.
+
+**Query Parameters:**
+- `enabled_only` (boolean, optional): Filter to only enabled jobs
+
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "name": "Full Data Refresh",
+    "description": "Complete refresh of all data from Chicago Open Data Portal",
+    "job_type": "full_refresh",
+    "enabled": false,
+    "recurrence_type": "once",
+    "cron_expression": null,
+    "next_run": null,
+    "last_run": null,
+    "config": {
+      "endpoints": ["crashes", "people", "vehicles", "fatalities"],
+      "force": true
+    },
+    "timeout_minutes": 300,
+    "max_retries": 1,
+    "retry_delay_minutes": 5,
+    "created_by": "system",
+    "created_at": "2024-09-04T02:44:40.450000Z",
+    "updated_at": "2024-09-04T02:44:40.450000Z"
+  }
+]
+```
+
+### Create Job
+
+**POST /jobs/**
+
+Creates a new scheduled job.
+
+**Request Body:**
+```json
+{
+  "name": "Custom Sync Job",
+  "description": "Custom data synchronization job",
+  "job_type": "custom",
+  "enabled": true,
+  "recurrence_type": "daily",
+  "config": {
+    "endpoints": ["crashes"],
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
+    "force": false
+  },
+  "timeout_minutes": 60,
+  "max_retries": 3,
+  "retry_delay_minutes": 5
+}
+```
+
+### Get Job
+
+**GET /jobs/{job_id}**
+
+Returns details for a specific job.
+
+### Update Job
+
+**PUT /jobs/{job_id}**
+
+Updates an existing job configuration.
+
+### Delete Job
+
+**DELETE /jobs/{job_id}**
+
+Deletes a job and all its execution history.
+
+### Execute Job
+
+**POST /jobs/{job_id}/execute**
+
+Manually executes a job.
+
+**Request Body:**
+```json
+{
+  "force": true,
+  "override_config": {
+    "endpoints": ["crashes"],
+    "start_date": "2024-08-01"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Job 1 execution started",
+  "execution_id": "exec_1_1725413040",
+  "job_id": 1,
+  "status": "pending",
+  "started_at": "2024-09-04T02:44:00Z"
+}
+```
+
+### Job Execution History
+
+**GET /jobs/{job_id}/executions**
+
+Returns execution history for a specific job.
+
+**GET /jobs/executions/recent**
+
+Returns recent execution history across all jobs.
+
+**Query Parameters:**
+- `limit` (integer, optional): Maximum number of executions to return (1-200, default: 50)
+
+### Job Summary
+
+**GET /jobs/summary**
+
+Returns summary statistics for all jobs.
+
+**Response:**
+```json
+{
+  "total_jobs": 4,
+  "active_jobs": 3,
+  "running_jobs": 0,
+  "failed_jobs_24h": 0,
+  "last_execution": "2024-09-04T02:44:00Z"
+}
+```
+
+### Data Deletion
+
+**POST /jobs/data/delete**
+
+Safely deletes data from database tables.
+
+**Request Body:**
+```json
+{
+  "table_name": "crashes",
+  "confirm": true,
+  "backup": true,
+  "date_range": {
+    "start": "2024-01-01",
+    "end": "2024-01-31"
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Successfully deleted 1500 records from crashes",
+  "table_name": "crashes",
+  "records_deleted": 1500,
+  "execution_time_seconds": 2.34,
+  "backup_location": null,
+  "can_restore": false
+}
+```
+
+### Job Types and Configuration
+
+**GET /jobs/types**
+
+Returns available job types, recurrence types, and valid configuration options.
+
+**Response:**
+```json
+{
+  "job_types": [
+    {"value": "full_refresh", "label": "Full Refresh"},
+    {"value": "last_30_days_crashes", "label": "Last 30 Days Crashes"},
+    {"value": "last_30_days_people", "label": "Last 30 Days People"},
+    {"value": "last_6_months_fatalities", "label": "Last 6 Months Fatalities"},
+    {"value": "custom", "label": "Custom"}
+  ],
+  "recurrence_types": [
+    {"value": "once", "label": "Once"},
+    {"value": "daily", "label": "Daily"},
+    {"value": "weekly", "label": "Weekly"},
+    {"value": "monthly", "label": "Monthly"}
+  ],
+  "valid_endpoints": ["crashes", "people", "vehicles", "fatalities"],
+  "valid_tables": ["crashes", "crash_people", "crash_vehicles", "vision_zero_fatalities"]
+}
+```
+
+## Admin Portal
+
+The admin portal provides a web-based interface for managing the system and is available at:
+
+**URL:** http://localhost:8000/admin
+
+See [ADMIN_PORTAL.md](./ADMIN_PORTAL.md) for complete documentation.
+
 ## Error Responses
 
 The API uses standard HTTP status codes and returns error details in JSON format.

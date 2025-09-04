@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chicago Crashes Pipeline - Admin Portal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- Header -->
+        <header class="bg-primary text-white p-3 mb-4 rounded-bottom">
+            <div class="d-flex justify-content-between align-items-center">
+                <h1><i class="bi bi-gear-fill"></i> Chicago Crashes Pipeline Admin</h1>
+                <div>
+                    <span class="badge bg-success me-2" id="api-status">API Connected</span>
+                    <button class="btn btn-outline-light btn-sm" onclick="refreshData()">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard" type="button" role="tab">
+                    <i class="bi bi-speedometer2"></i> Dashboard
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="jobs-tab" data-bs-toggle="tab" data-bs-target="#jobs" type="button" role="tab">
+                    <i class="bi bi-calendar-check"></i> Scheduled Jobs
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="executions-tab" data-bs-toggle="tab" data-bs-target="#executions" type="button" role="tab">
+                    <i class="bi bi-clock-history"></i> Execution History
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="data-management-tab" data-bs-toggle="tab" data-bs-target="#data-management" type="button" role="tab">
+                    <i class="bi bi-database"></i> Data Management
+                </button>
+            </li>
+        </ul>
+
+        <!-- Tab Content -->
+        <div class="tab-content" id="mainTabContent">
+            <!-- Dashboard Tab -->
+            <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
+                <div class="row mb-4">
+                    <div class="col-md-3">
+                        <div class="card text-center border-primary">
+                            <div class="card-body">
+                                <i class="bi bi-calendar-check text-primary fs-1"></i>
+                                <h5 class="card-title">Total Jobs</h5>
+                                <h3 class="text-primary" id="total-jobs">--</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center border-success">
+                            <div class="card-body">
+                                <i class="bi bi-play-circle text-success fs-1"></i>
+                                <h5 class="card-title">Active Jobs</h5>
+                                <h3 class="text-success" id="active-jobs">--</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center border-warning">
+                            <div class="card-body">
+                                <i class="bi bi-arrow-repeat text-warning fs-1"></i>
+                                <h5 class="card-title">Running Jobs</h5>
+                                <h3 class="text-warning" id="running-jobs">--</h3>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="card text-center border-danger">
+                            <div class="card-body">
+                                <i class="bi bi-exclamation-triangle text-danger fs-1"></i>
+                                <h5 class="card-title">Failed (24h)</h5>
+                                <h3 class="text-danger" id="failed-jobs">--</h3>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-lightning-charge"></i> Quick Actions</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="d-grid gap-2">
+                                    <button class="btn btn-primary" onclick="executeJob('full_refresh')">
+                                        <i class="bi bi-arrow-clockwise"></i> Run Full Data Refresh
+                                    </button>
+                                    <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_crashes')">
+                                        <i class="bi bi-calendar-week"></i> Refresh Last 30 Days - Crashes
+                                    </button>
+                                    <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_people')">
+                                        <i class="bi bi-people"></i> Refresh Last 30 Days - People
+                                    </button>
+                                    <button class="btn btn-outline-primary" onclick="executeJob('last_6_months_fatalities')">
+                                        <i class="bi bi-exclamation-diamond"></i> Refresh Fatalities (6 Months)
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-clock"></i> Recent Activity</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="recent-executions" class="list-group list-group-flush">
+                                    <div class="text-muted text-center">Loading recent activity...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Jobs Tab -->
+            <div class="tab-pane fade" id="jobs" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3>Scheduled Jobs</h3>
+                    <button class="btn btn-success" onclick="showCreateJobModal()">
+                        <i class="bi bi-plus-circle"></i> Create New Job
+                    </button>
+                </div>
+
+                <!-- Jobs Table -->
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Schedule</th>
+                                <th>Next Run</th>
+                                <th>Last Run</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="jobs-table-body">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">Loading jobs...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Executions Tab -->
+            <div class="tab-pane fade" id="executions" role="tabpanel">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3>Execution History</h3>
+                    <div>
+                        <select class="form-select d-inline-block w-auto me-2" id="execution-filter">
+                            <option value="">All Jobs</option>
+                        </select>
+                        <button class="btn btn-outline-secondary" onclick="loadExecutions()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Executions Table -->
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Execution ID</th>
+                                <th>Job</th>
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Duration</th>
+                                <th>Records Processed</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="executions-table-body">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">Loading executions...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Data Management Tab -->
+            <div class="tab-pane fade" id="data-management" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header bg-warning text-dark">
+                                <h5><i class="bi bi-exclamation-triangle"></i> Danger Zone: Data Deletion</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="alert alert-danger">
+                                    <strong>Warning:</strong> Data deletion is permanent and cannot be undone. Please use with extreme caution.
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="delete-table-select" class="form-label">Select Table:</label>
+                                    <select class="form-select" id="delete-table-select">
+                                        <option value="">Choose table to delete data from...</option>
+                                        <option value="crashes">Crashes</option>
+                                        <option value="crash_people">Crash People</option>
+                                        <option value="crash_vehicles">Crash Vehicles</option>
+                                        <option value="vision_zero_fatalities">Vision Zero Fatalities</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Date Range (Optional):</label>
+                                    <div class="row">
+                                        <div class="col">
+                                            <input type="date" class="form-control" id="delete-start-date" placeholder="Start Date">
+                                        </div>
+                                        <div class="col">
+                                            <input type="date" class="form-control" id="delete-end-date" placeholder="End Date">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="confirm-deletion">
+                                        <label class="form-check-label text-danger" for="confirm-deletion">
+                                            I understand this action is permanent and cannot be undone
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <button class="btn btn-danger w-100" onclick="deleteTableData()" disabled id="delete-data-btn">
+                                    <i class="bi bi-trash"></i> Delete Data
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="bi bi-bar-chart"></i> Data Statistics</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="data-stats" class="row">
+                                    <div class="col-12">
+                                        <p class="text-muted text-center">Loading data statistics...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+    
+    <!-- Create/Edit Job Modal -->
+    <div class="modal fade" id="jobModal" tabindex="-1" aria-labelledby="jobModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="jobModalLabel">Create New Job</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="jobForm">
+                        <div class="mb-3">
+                            <label for="job-name" class="form-label">Job Name</label>
+                            <input type="text" class="form-control" id="job-name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="job-description" class="form-label">Description</label>
+                            <textarea class="form-control" id="job-description" rows="2"></textarea>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="job-type" class="form-label">Job Type</label>
+                                    <select class="form-select" id="job-type" required>
+                                        <option value="">Select job type...</option>
+                                        <option value="custom">Custom</option>
+                                        <option value="full_refresh">Full Refresh</option>
+                                        <option value="last_30_days_crashes">Last 30 Days - Crashes</option>
+                                        <option value="last_30_days_people">Last 30 Days - People</option>
+                                        <option value="last_6_months_fatalities">Last 6 Months - Fatalities</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="job-recurrence" class="form-label">Schedule</label>
+                                    <select class="form-select" id="job-recurrence" required>
+                                        <option value="once">Run Once</option>
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                        <option value="monthly">Monthly</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3" id="job-endpoints-group">
+                            <label class="form-label">Endpoints to Sync</label>
+                            <div class="form-check">
+                                <input class="form-check-input job-endpoint" type="checkbox" value="crashes" id="endpoint-crashes">
+                                <label class="form-check-label" for="endpoint-crashes">Crashes</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input job-endpoint" type="checkbox" value="people" id="endpoint-people">
+                                <label class="form-check-label" for="endpoint-people">People</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input job-endpoint" type="checkbox" value="vehicles" id="endpoint-vehicles">
+                                <label class="form-check-label" for="endpoint-vehicles">Vehicles</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input job-endpoint" type="checkbox" value="fatalities" id="endpoint-fatalities">
+                                <label class="form-check-label" for="endpoint-fatalities">Fatalities</label>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="job-start-date" class="form-label">Start Date (Optional)</label>
+                                    <input type="date" class="form-control" id="job-start-date">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="job-end-date" class="form-label">End Date (Optional)</label>
+                                    <input type="date" class="form-control" id="job-end-date">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="job-timeout" class="form-label">Timeout (minutes)</label>
+                                    <input type="number" class="form-control" id="job-timeout" value="60" min="1" max="480">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label for="job-retries" class="form-label">Max Retries</label>
+                                    <input type="number" class="form-control" id="job-retries" value="3" min="0" max="10">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <div class="form-check mt-4">
+                                        <input class="form-check-input" type="checkbox" id="job-enabled" checked>
+                                        <label class="form-check-label" for="job-enabled">Enabled</label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveJob()">Save Job</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Execution Details Modal -->
+    <div class="modal fade" id="executionModal" tabindex="-1" aria-labelledby="executionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="executionModalLabel">Execution Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="execution-details">
+                    <div class="text-center">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3">
+        <div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <strong class="me-auto" id="toast-title">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="toast-body">
+                Message
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

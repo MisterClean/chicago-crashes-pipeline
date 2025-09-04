@@ -1,0 +1,346 @@
+/* Custom styles for Chicago Crashes Pipeline Admin Portal */
+
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.container-fluid {
+    max-width: 1400px;
+}
+
+/* Header Styles */
+header {
+    background: linear-gradient(135deg, #0d6efd 0%, #6610f2 100%) !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Card Enhancements */
+.card {
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+}
+
+.card-header {
+    background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+    border-bottom: 2px solid #e9ecef;
+    font-weight: 600;
+}
+
+/* Status Badges */
+.badge.status-running {
+    background-color: #ffc107 !important;
+    color: #000;
+}
+
+.badge.status-completed {
+    background-color: #198754 !important;
+}
+
+.badge.status-failed {
+    background-color: #dc3545 !important;
+}
+
+.badge.status-pending {
+    background-color: #6c757d !important;
+}
+
+.badge.status-cancelled {
+    background-color: #adb5bd !important;
+    color: #000;
+}
+
+/* Job Status Indicators */
+.job-enabled {
+    color: #198754;
+}
+
+.job-disabled {
+    color: #6c757d;
+}
+
+/* Table Enhancements */
+.table-hover tbody tr:hover {
+    background-color: rgba(0,123,255,0.05);
+}
+
+.table th {
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.875rem;
+    letter-spacing: 0.5px;
+}
+
+/* Button Styles */
+.btn {
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    transition: all 0.2s ease;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+}
+
+.btn-outline-primary:hover,
+.btn-outline-secondary:hover,
+.btn-outline-success:hover,
+.btn-outline-warning:hover,
+.btn-outline-danger:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Dashboard Statistics */
+.card .fs-1 {
+    font-size: 3rem !important;
+    margin-bottom: 0.5rem;
+}
+
+/* Modal Enhancements */
+.modal-content {
+    border: none;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-bottom: 2px solid #dee2e6;
+}
+
+/* Form Styles */
+.form-control:focus,
+.form-select:focus {
+    border-color: #0d6efd;
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+}
+
+.form-check-input:checked {
+    background-color: #0d6efd;
+    border-color: #0d6efd;
+}
+
+/* Alert Styles */
+.alert {
+    border: none;
+    border-left: 4px solid;
+}
+
+.alert-danger {
+    border-left-color: #dc3545;
+    background-color: #f8d7da;
+}
+
+.alert-warning {
+    border-left-color: #ffc107;
+    background-color: #fff3cd;
+}
+
+.alert-success {
+    border-left-color: #198754;
+    background-color: #d1e7dd;
+}
+
+.alert-info {
+    border-left-color: #0dcaf0;
+    background-color: #cff4fc;
+}
+
+/* Navigation Tabs */
+.nav-tabs .nav-link {
+    border: none;
+    color: #6c757d;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.nav-tabs .nav-link:hover {
+    border-color: transparent;
+    color: #0d6efd;
+}
+
+.nav-tabs .nav-link.active {
+    background: linear-gradient(135deg, #0d6efd 0%, #6610f2 100%);
+    color: white !important;
+    border: none;
+}
+
+/* Loading States */
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.spinner-border-sm {
+    width: 1rem;
+    height: 1rem;
+}
+
+/* Responsive Improvements */
+@media (max-width: 768px) {
+    .container-fluid {
+        padding: 0.5rem;
+    }
+    
+    header {
+        padding: 1rem !important;
+        margin-bottom: 1rem !important;
+    }
+    
+    .card .fs-1 {
+        font-size: 2rem !important;
+    }
+    
+    .table-responsive {
+        font-size: 0.875rem;
+    }
+}
+
+/* Custom Animation */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.fade-in {
+    animation: fadeIn 0.3s ease forwards;
+}
+
+/* Status Icons */
+.status-icon {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 0.5rem;
+}
+
+.status-icon.running {
+    background-color: #ffc107;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.status-icon.completed {
+    background-color: #198754;
+}
+
+.status-icon.failed {
+    background-color: #dc3545;
+}
+
+.status-icon.pending {
+    background-color: #6c757d;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Data Management Warning Zone */
+.card-header.bg-warning {
+    background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%) !important;
+    border-bottom: 2px solid #ffecb5;
+}
+
+/* Execution Details */
+.execution-metric {
+    background-color: #f8f9fa;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.execution-metric h6 {
+    margin: 0;
+    color: #6c757d;
+    font-size: 0.875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.execution-metric .display-6 {
+    margin: 0;
+    font-weight: 700;
+}
+
+/* Recent Activity List */
+.list-group-item {
+    border-left: 3px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.list-group-item:hover {
+    background-color: #f8f9fa;
+    border-left-color: #0d6efd;
+}
+
+.list-group-item.execution-completed {
+    border-left-color: #198754;
+}
+
+.list-group-item.execution-failed {
+    border-left-color: #dc3545;
+}
+
+.list-group-item.execution-running {
+    border-left-color: #ffc107;
+}
+
+/* Toast Notifications */
+.toast {
+    border: none;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.toast-header {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+/* Action Buttons */
+.action-buttons .btn {
+    margin-right: 0.25rem;
+    margin-bottom: 0.25rem;
+}
+
+/* Job Type Labels */
+.job-type-badge {
+    font-size: 0.75rem;
+    font-weight: 500;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.375rem;
+}
+
+.job-type-full-refresh {
+    background-color: #e7f3ff;
+    color: #0956af;
+}
+
+.job-type-custom {
+    background-color: #f3e8ff;
+    color: #7c2d12;
+}
+
+.job-type-last-30-days {
+    background-color: #ecfdf5;
+    color: #065f46;
+}

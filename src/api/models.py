@@ -69,3 +69,122 @@ class EndpointInfo(BaseModel):
     description: str
     record_count_estimate: Optional[int] = None
     last_updated: Optional[datetime] = None
+
+
+# Job Management API Models
+
+class JobConfig(BaseModel):
+    """Job configuration parameters."""
+    endpoints: Optional[List[str]] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    date_range_days: Optional[int] = None
+    force: bool = False
+    description: Optional[str] = None
+
+
+class CreateJobRequest(BaseModel):
+    """Request model for creating a new job."""
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    job_type: str
+    enabled: bool = True
+    recurrence_type: str
+    cron_expression: Optional[str] = None
+    config: JobConfig
+    timeout_minutes: int = Field(default=60, gt=0, le=480)  # Max 8 hours
+    max_retries: int = Field(default=3, ge=0, le=10)
+    retry_delay_minutes: int = Field(default=5, ge=1, le=60)
+
+
+class UpdateJobRequest(BaseModel):
+    """Request model for updating an existing job."""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    enabled: Optional[bool] = None
+    recurrence_type: Optional[str] = None
+    cron_expression: Optional[str] = None
+    config: Optional[JobConfig] = None
+    timeout_minutes: Optional[int] = Field(None, gt=0, le=480)
+    max_retries: Optional[int] = Field(None, ge=0, le=10)
+    retry_delay_minutes: Optional[int] = Field(None, ge=1, le=60)
+
+
+class JobResponse(BaseModel):
+    """Response model for job operations."""
+    id: int
+    name: str
+    description: Optional[str]
+    job_type: str
+    enabled: bool
+    recurrence_type: str
+    cron_expression: Optional[str]
+    next_run: Optional[datetime]
+    last_run: Optional[datetime]
+    config: Dict[str, Any]
+    timeout_minutes: int
+    max_retries: int
+    retry_delay_minutes: int
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobExecutionResponse(BaseModel):
+    """Response model for job execution details."""
+    id: int
+    execution_id: str
+    job_id: int
+    status: str
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    duration_seconds: Optional[int]
+    records_processed: int
+    records_inserted: int
+    records_updated: int
+    records_skipped: int
+    error_message: Optional[str]
+    retry_count: int
+    created_at: datetime
+
+
+class ExecuteJobRequest(BaseModel):
+    """Request model for manual job execution."""
+    force: bool = False
+    override_config: Optional[JobConfig] = None
+
+
+class ExecuteJobResponse(BaseModel):
+    """Response model for job execution trigger."""
+    message: str
+    execution_id: str
+    job_id: int
+    status: str
+    started_at: datetime
+
+
+class DataDeletionRequest(BaseModel):
+    """Request model for data deletion operations."""
+    table_name: str
+    confirm: bool = False
+    backup: bool = True
+    date_range: Optional[Dict[str, str]] = None  # {"start": "2023-01-01", "end": "2023-12-31"}
+    
+    
+class DataDeletionResponse(BaseModel):
+    """Response model for data deletion operations."""
+    message: str
+    table_name: str
+    records_deleted: int
+    execution_time_seconds: float
+    backup_location: Optional[str]
+    can_restore: bool
+
+
+class JobSummaryResponse(BaseModel):
+    """Summary response for all jobs."""
+    total_jobs: int
+    active_jobs: int
+    running_jobs: int
+    failed_jobs_24h: int
+    last_execution: Optional[datetime]

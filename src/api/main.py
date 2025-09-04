@@ -4,14 +4,18 @@ from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.config import settings
 from utils.logging import get_logger, setup_logging
-from api.routers import sync, health, validation, spatial
+from api.routers import sync, health, validation, jobs
+# Temporarily disabled spatial import to avoid geopandas dependency
+# from api.routers import spatial
 from api.dependencies import sync_state
+from services.job_scheduler import start_job_scheduler, stop_job_scheduler
 
 # Setup logging
 setup_logging("api", settings.logging.level)
@@ -25,22 +29,49 @@ async def lifespan(app: FastAPI):
     
     # Initialize database tables
     try:
+        # Import models to register all tables with Base.metadata
+        import models  # This imports all models including jobs
         from models.base import Base, engine
         logger.info("Creating database tables...")
         Base.metadata.create_all(engine)
-        logger.info("Database tables created successfully")
+        logger.info("Database tables created successfully (including job management tables)")
     except Exception as e:
         logger.error("Failed to create database tables", error=str(e))
         # Continue startup even if table creation fails
     
     # Initialize startup tasks
     sync_state["started_at"] = datetime.now()
+    
+    # Initialize default jobs
+    try:
+        from services.job_service import JobService
+        job_service = JobService()
+        created_jobs = job_service.initialize_default_jobs()
+        if created_jobs:
+            logger.info(f"Initialized {len(created_jobs)} default jobs")
+    except Exception as e:
+        logger.error("Failed to initialize default jobs", error=str(e))
+    
+    # Start job scheduler
+    try:
+        await start_job_scheduler()
+        logger.info("Job scheduler started successfully")
+    except Exception as e:
+        logger.error("Failed to start job scheduler", error=str(e))
+    
     logger.info("API started successfully", startup_time=datetime.now())
     
     yield
     
     # Cleanup tasks
     logger.info("Shutting down Chicago Crash Data Pipeline API")
+    
+    # Stop job scheduler
+    try:
+        await stop_job_scheduler()
+        logger.info("Job scheduler stopped successfully")
+    except Exception as e:
+        logger.error("Failed to stop job scheduler", error=str(e))
 
 
 # Create FastAPI app
@@ -60,11 +91,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount static files for admin portal
+import os
+static_path = os.path.join(os.path.dirname(__file__), "..", "static", "admin")
+app.mount("/admin", StaticFiles(directory=static_path, html=True), name="admin")
+
 # Include routers
 app.include_router(health.router)
 app.include_router(sync.router)
 app.include_router(validation.router)
-app.include_router(spatial.router)
+# app.include_router(spatial.router)  # Temporarily disabled
+app.include_router(jobs.router)
 
 
 if __name__ == "__main__":

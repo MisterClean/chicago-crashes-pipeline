@@ -3,6 +3,7 @@
 from .base import Base
 from .crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from .spatial import Ward, CommunityArea, CensusTract, PoliceBeat, HouseDistrict, SenateDistrict
+from .jobs import ScheduledJob, JobExecution, DataDeletionLog, JobStatus, JobType, RecurrenceType
 
 __all__ = [
     "Base",
@@ -15,5 +16,11 @@ __all__ = [
     "CensusTract",
     "PoliceBeat",
     "HouseDistrict",
-    "SenateDistrict"
+    "SenateDistrict",
+    "ScheduledJob",
+    "JobExecution",
+    "DataDeletionLog",
+    "JobStatus",
+    "JobType",
+    "RecurrenceType"
 ]

@@ -13,14 +13,17 @@ This pipeline handles four interconnected datasets from the Chicago Open Data Po
 
 ## Features
 
-- 🔄 **Automated ETL Pipeline** - Initial load and incremental sync capabilities
+- 🎛️ **Admin Portal** - Complete web-based management interface for job orchestration
+- 🔄 **Automated ETL Pipeline** - Initial load and incremental sync capabilities with scheduling
+- 📅 **Job Scheduler** - Cron-like scheduling for automated data refreshes
 - 🗄️ **PostGIS Database** - Spatial data storage with geographic indexing
 - 🚦 **Rate Limiting** - Respects Chicago Open Data API limits
 - ✅ **Data Validation** - Comprehensive sanitization and quality checks
 - 📊 **Spatial Support** - Handles shapefiles for districts and boundaries
 - 🐳 **Docker Ready** - Complete containerized deployment
-- 📈 **Progress Tracking** - Visual progress bars for long-running operations
+- 📈 **Progress Tracking** - Visual progress bars and execution monitoring
 - 🔧 **FastAPI Service** - REST API for data access and monitoring
+- 🗑️ **Data Management** - Safe data deletion with confirmation prompts
 
 ## Quick Start
 
@@ -68,12 +71,26 @@ cd src && uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 **That's it!** The application will automatically:
 - Create all database tables on startup
+- Initialize default scheduled jobs for data refreshes
 - Be ready to fetch data from Chicago's Open Data Portal
 - Serve the API at http://localhost:8000
+- Launch the Admin Portal at http://localhost:8000/admin
 
 ### Load Chicago Crash Data
 
-Once running, load crash data from Chicago:
+#### Option 1: Use the Admin Portal (Recommended)
+
+1. **Open the Admin Portal**: http://localhost:8000/admin
+2. **Dashboard**: View job statistics and system status
+3. **Quick Actions**: Execute pre-configured jobs instantly:
+   - **Full Data Refresh**: Loads all available crash data (disabled by default)
+   - **Last 30 Days - Crashes**: Daily refresh of recent crash data
+   - **Last 30 Days - People**: Daily refresh of recent people data
+   - **Last 6 Months - Fatalities**: Weekly refresh of Vision Zero fatality data
+4. **Scheduled Jobs**: Create custom jobs with specific date ranges and schedules
+5. **Data Management**: View database statistics and safely delete data
+
+#### Option 2: Use the API directly
 
 ```bash
 # Load recent crashes (fast - for testing)
@@ -95,11 +112,14 @@ curl -X POST http://localhost:8000/sync/test
 
 ### What You Get
 
-- **Interactive API Documentation**: http://localhost:8000/docs
+- **Admin Portal**: http://localhost:8000/admin - Complete web-based management interface
+- **Interactive API Documentation**: http://localhost:8000/docs - Full API reference
 - **Real Chicago Crash Data**: From the official Chicago Open Data Portal
+- **Automated Job Scheduling**: Set up recurring data refreshes
 - **Spatial Analysis Ready**: PostGIS database with geographic indexing
 - **Multiple Data Tables**: crashes, people, vehicles, fatalities
 - **RESTful API**: Query and analyze data via HTTP endpoints
+- **Real-time Monitoring**: Track job progress and system health
 
 ## Testing the Pipeline
 
@@ -139,6 +159,62 @@ async def test():
 asyncio.run(test())
 "
 ```
+
+## Admin Portal
+
+The Chicago Crashes Pipeline includes a comprehensive web-based admin portal for managing data synchronization jobs and monitoring the system.
+
+### Features
+
+#### 🎛️ Dashboard
+- **System Overview**: Real-time statistics on total jobs, active jobs, running jobs, and failed jobs in the last 24 hours
+- **Quick Actions**: One-click execution of common data refresh operations
+- **Recent Activity**: Live feed of recent job executions with status indicators
+
+#### 📅 Scheduled Jobs Management
+- **Pre-configured Jobs**: Four default jobs ready for deployment:
+  - Full Data Refresh (all endpoints, disabled by default)
+  - Last 30 Days - Crash Data (daily refresh)
+  - Last 30 Days - People Data (daily refresh) 
+  - Last 6 Months - Vision Zero Fatalities (weekly refresh)
+- **Custom Jobs**: Create, edit, and delete custom synchronization jobs
+- **Job Configuration**: Set endpoints, date ranges, schedules, timeouts, and retry policies
+- **Enable/Disable**: Toggle jobs on/off without deletion
+
+#### 📊 Execution Monitoring
+- **Real-time Tracking**: Monitor job progress and status
+- **Execution History**: Complete log of all job runs with detailed metrics
+- **Performance Metrics**: Records processed, inserted, updated, and execution duration
+- **Error Handling**: Detailed error messages and retry tracking
+
+#### 🗑️ Data Management
+- **Database Statistics**: View record counts for all tables
+- **Safe Deletion**: Delete data from specific tables with confirmation prompts
+- **Date Range Filtering**: Delete data within specific date ranges
+- **Backup Options**: Track backup locations for recovery
+
+### Accessing the Admin Portal
+
+1. **Start the application**: `uvicorn api.main:app --reload --host 0.0.0.0 --port 8000`
+2. **Open in browser**: http://localhost:8000/admin
+3. **Navigate tabs**:
+   - **Dashboard**: System overview and quick actions
+   - **Scheduled Jobs**: Job management interface
+   - **Execution History**: Monitor job runs
+   - **Data Management**: Database administration
+
+### Default Job Schedule
+
+The portal initializes with four pre-configured jobs:
+
+| Job | Schedule | Enabled | Description |
+|-----|----------|---------|-------------|
+| Full Data Refresh | Manual | ❌ Disabled | Fetches all available data from all endpoints |
+| Last 30 Days - Crashes | Daily | ✅ Enabled | Daily refresh of recent crash data |
+| Last 30 Days - People | Daily | ✅ Enabled | Daily refresh of recent people data |
+| Last 6 Months - Fatalities | Weekly | ✅ Enabled | Weekly refresh of Vision Zero fatality data |
+
+> **Note**: The Full Data Refresh job is disabled by default as requested, since it fetches large amounts of data.
 
 ## Configuration
 

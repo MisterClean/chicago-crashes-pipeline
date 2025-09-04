@@ -518,9 +518,65 @@ spec:
           periodSeconds: 10
 ```
 
+## Post-Deployment Verification
+
+### 1. Service Health Checks
+
+After deployment, verify all services are running:
+
+```bash
+# Check API health
+curl http://localhost:8000/health
+
+# Check database connectivity
+curl http://localhost:8000/sync/status
+
+# Verify admin portal
+curl http://localhost:8000/admin/
+```
+
+### 2. Admin Portal Access
+
+The admin portal is automatically available at:
+- **Development**: http://localhost:8000/admin
+- **Production**: https://yourdomain.com/admin
+
+**Features available:**
+- Job management and scheduling
+- Real-time execution monitoring
+- Database administration
+- System health dashboard
+
+**Security considerations:**
+- In production, restrict admin portal access via firewall rules
+- Consider implementing authentication for admin portal access
+- Use HTTPS for production deployments
+
+### 3. Default Job Initialization
+
+The system automatically creates four default jobs:
+- Full Data Refresh (disabled by default)
+- Last 30 Days - Crashes (enabled, daily)
+- Last 30 Days - People (enabled, daily)  
+- Last 6 Months - Fatalities (enabled, weekly)
+
+Monitor job status via the admin portal or API endpoints.
+
 ## Security Configuration
 
-### 1. SSL/TLS Setup
+### 1. Admin Portal Security
+
+**Development:**
+- Admin portal accessible without authentication
+- Suitable for local development and testing
+
+**Production Recommendations:**
+- Implement reverse proxy with authentication
+- Restrict access to admin portal via IP whitelist
+- Use HTTPS/TLS encryption
+- Regular security audits
+
+### 2. SSL/TLS Setup
 
 ```nginx
 # nginx.conf
