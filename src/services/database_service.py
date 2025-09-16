@@ -504,11 +504,13 @@ class DatabaseService:
         """Get current record counts for all tables."""
         db = self.session_factory()
         try:
+            # Use table-aligned keys so API consumers can display counts without
+            # guessing the mapping between logical names and actual tables.
             counts = {
                 'crashes': db.query(Crash).count(),
-                'people': db.query(CrashPerson).count(),
-                'vehicles': db.query(CrashVehicle).count(),
-                'fatalities': db.query(VisionZeroFatality).count()
+                'crash_people': db.query(CrashPerson).count(),
+                'crash_vehicles': db.query(CrashVehicle).count(),
+                'vision_zero_fatalities': db.query(VisionZeroFatality).count()
             }
             return counts
         except Exception as e:
