@@ -8,7 +8,9 @@ const REFRESH_INTERVAL = 30000; // 30 seconds
 // Global variables
 let jobs = [];
 let executions = [];
+let spatialLayers = [];
 let currentJobId = null;
+let currentSpatialLayerId = null;
 let refreshTimer = null;
 
 // Initialize the application
@@ -22,6 +24,7 @@ async function initializeApp() {
         await loadJobs();
         await loadExecutions();
         await loadDataStatistics();
+        await loadSpatialLayers();
         
         // Set up event listeners
         setupEventListeners();
@@ -49,6 +52,15 @@ function setupEventListeners() {
     document.getElementById('job-type').addEventListener('change', function() {
         updateJobFormForType(this.value);
     });
+
+    // Spatial layer upload form
+    const spatialForm = document.getElementById('spatial-layer-upload-form');
+    if (spatialForm) {
+        spatialForm.addEventListener('submit', function(event) {
+            event.preventDefault();
+            uploadSpatialLayer();
+        });
+    }
     
     // Tab change handlers
     document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
@@ -58,6 +70,8 @@ function setupEventListeners() {
                 loadExecutions();
             } else if (target === '#data-management') {
                 loadDataStatistics();
+            } else if (target === '#spatial-layers') {
+                loadSpatialLayers();
             }
         });
     });
@@ -66,20 +80,38 @@ function setupEventListeners() {
 // API Helper Functions
 async function apiRequest(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
-    const defaultOptions = {
-        headers: {
-            'Content-Type': 'application/json',
-        }
-    };
-    
-    const response = await fetch(url, { ...defaultOptions, ...options });
-    
+    const isFormData = options.body instanceof FormData;
+    const defaultHeaders = isFormData ? {} : { 'Content-Type': 'application/json' };
+    const headers = { ...defaultHeaders, ...(options.headers || {}) };
+    const fetchOptions = { ...options, headers };
+
+    const response = await fetch(url, fetchOptions);
+
     if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(error.detail || `HTTP ${response.status}`);
+        let detail = `HTTP ${response.status}`;
+        try {
+            const error = await response.json();
+            detail = error.detail || detail;
+        } catch (parseError) {
+            // Ignore parsing failure and fall back to default detail
+        }
+        throw new Error(detail);
     }
-    
-    return response.json();
+
+    if (response.status === 204) {
+        return null;
+    }
+
+    const text = await response.text();
+    if (!text) {
+        return {};
+    }
+
+    try {
+        return JSON.parse(text);
+    } catch (error) {
+        throw new Error('Failed to parse response JSON');
+    }
 }
 
 // Dashboard Functions
@@ -588,6 +620,274 @@ async function deleteTableData() {
     }
 }
 
+// Spatial Layer Management Functions
+async function loadSpatialLayers() {
+    try {
+        const layers = await apiRequest('/spatial/layers');
+        spatialLayers = layers || [];
+        displaySpatialLayers(spatialLayers);
+    } catch (error) {
+        console.error('Failed to load spatial layers:', error);
+        showToast('Error', 'Failed to load spatial layers', 'danger');
+    }
+}
+
+function displaySpatialLayers(layers) {
+    const tbody = document.getElementById('spatial-layer-table-body');
+    if (!tbody) {
+        return;
+    }
+
+    if (!layers || layers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No spatial layers uploaded yet</td></tr>';
+        return;
+    }
+
+    const rows = layers.map(layer => {
+        const statusBadge = layer.is_active ?
+            '<span class="badge bg-success">Active</span>' :
+            '<span class="badge bg-secondary">Inactive</span>';
+        const updated = layer.updated_at ? new Date(layer.updated_at).toLocaleString() : '—';
+        const featureCount = layer.feature_count?.toLocaleString() || '0';
+        const source = layer.original_filename ? layer.original_filename : '<span class="text-muted">Uploaded</span>';
+
+        return `
+            <tr>
+                <td>
+                    <strong>${layer.name}</strong><br>
+                    <small class="text-muted">${layer.geometry_type} • SRID ${layer.srid}</small>
+                </td>
+                <td>${featureCount}</td>
+                <td>${statusBadge}</td>
+                <td>${source}</td>
+                <td>${updated}</td>
+                <td class="action-buttons">
+                    <button class="btn btn-sm btn-outline-primary" onclick="openSpatialLayerModal(${layer.id})" title="View & Edit">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="promptSpatialLayerReplace(${layer.id})" title="Replace data">
+                        <i class="bi bi-arrow-repeat"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteSpatialLayer(${layer.id})" title="Delete layer">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    tbody.innerHTML = rows;
+}
+
+async function uploadSpatialLayer() {
+    const form = document.getElementById('spatial-layer-upload-form');
+    const fileInput = document.getElementById('spatial-layer-file');
+    const uploadBtn = document.getElementById('spatial-layer-upload-btn');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        showToast('Error', 'Please select a GeoJSON file to upload', 'warning');
+        return;
+    }
+
+    const formData = new FormData(form);
+
+    const originalButtonText = uploadBtn.innerHTML;
+    uploadBtn.disabled = true;
+    uploadBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading';
+
+    try {
+        await apiRequest('/spatial/layers', {
+            method: 'POST',
+            body: formData
+        });
+
+        showToast('Success', 'Spatial layer uploaded successfully', 'success');
+        form.reset();
+        document.getElementById('spatial-layer-srid').value = '4326';
+        await loadSpatialLayers();
+    } catch (error) {
+        console.error('Failed to upload spatial layer:', error);
+        showToast('Error', error.message || 'Unable to upload layer', 'danger');
+    } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.innerHTML = originalButtonText;
+    }
+}
+
+async function openSpatialLayerModal(layerId) {
+    try {
+        const layer = await apiRequest(`/spatial/layers/${layerId}`);
+        if (!layer) {
+            showToast('Error', 'Spatial layer not found', 'warning');
+            return;
+        }
+
+        currentSpatialLayerId = layerId;
+        populateSpatialLayerModal(layer);
+
+        const modalElement = document.getElementById('spatialLayerModal');
+        const modal = new bootstrap.Modal(modalElement);
+        modal.show();
+    } catch (error) {
+        console.error('Failed to load spatial layer:', error);
+        showToast('Error', 'Failed to load spatial layer details', 'danger');
+    }
+}
+
+function populateSpatialLayerModal(layer) {
+    document.getElementById('spatial-layer-modal-title').textContent = layer.name;
+    document.getElementById('spatial-layer-edit-name').value = layer.name;
+    document.getElementById('spatial-layer-edit-description').value = layer.description || '';
+    document.getElementById('spatial-layer-edit-active').checked = !!layer.is_active;
+
+    const meta = document.getElementById('spatial-layer-meta');
+    meta.innerHTML = `
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div class="text-muted small">Geometry Type</div>
+                <div class="fw-bold">${layer.geometry_type}</div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-muted small">Features</div>
+                <div class="fw-bold">${layer.feature_count?.toLocaleString() || 0}</div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-muted small">SRID</div>
+                <div class="fw-bold">${layer.srid}</div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-muted small">Original File</div>
+                <div class="fw-bold">${layer.original_filename || '—'}</div>
+            </div>
+        </div>
+    `;
+
+    const samplesContainer = document.getElementById('spatial-layer-samples');
+    if (!layer.feature_samples || layer.feature_samples.length === 0) {
+        samplesContainer.innerHTML = '<p class="text-muted">No sample features available.</p>';
+    } else {
+        samplesContainer.innerHTML = layer.feature_samples.map(sample => `
+            <div class="sample-feature mb-3">
+                <div class="small text-muted">Feature ID ${sample.id}</div>
+                <pre class="bg-light p-2 rounded">${JSON.stringify(sample.properties, null, 2)}</pre>
+            </div>
+        `).join('');
+    }
+}
+
+async function saveSpatialLayerChanges() {
+    if (!currentSpatialLayerId) {
+        return;
+    }
+
+    const nameInput = document.getElementById('spatial-layer-edit-name');
+    const descriptionInput = document.getElementById('spatial-layer-edit-description');
+    const activeInput = document.getElementById('spatial-layer-edit-active');
+    const saveBtn = document.getElementById('spatial-layer-save-btn');
+
+    const name = nameInput.value.trim();
+    if (!name) {
+        showToast('Error', 'Layer name is required', 'warning');
+        return;
+    }
+
+    const payload = {
+        name,
+        description: descriptionInput.value,
+        is_active: activeInput.checked
+    };
+
+    saveBtn.disabled = true;
+
+    try {
+        await apiRequest(`/spatial/layers/${currentSpatialLayerId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload)
+        });
+
+        showToast('Success', 'Spatial layer updated', 'success');
+        await loadSpatialLayers();
+
+        const refreshed = await apiRequest(`/spatial/layers/${currentSpatialLayerId}`);
+        if (refreshed) {
+            populateSpatialLayerModal(refreshed);
+        }
+    } catch (error) {
+        console.error('Failed to update spatial layer:', error);
+        showToast('Error', error.message || 'Unable to update layer', 'danger');
+    } finally {
+        saveBtn.disabled = false;
+    }
+}
+
+function promptSpatialLayerReplace(layerId) {
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.geojson,.json,application/geo+json,application/json';
+    fileInput.style.display = 'none';
+
+    fileInput.addEventListener('change', async () => {
+        if (fileInput.files && fileInput.files[0]) {
+            await replaceSpatialLayer(layerId, fileInput.files[0]);
+        }
+        fileInput.remove();
+    });
+
+    document.body.appendChild(fileInput);
+    fileInput.click();
+}
+
+async function replaceSpatialLayer(layerId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        await apiRequest(`/spatial/layers/${layerId}/replace`, {
+            method: 'POST',
+            body: formData
+        });
+
+        showToast('Success', 'Spatial layer replaced successfully', 'success');
+        await loadSpatialLayers();
+
+        if (currentSpatialLayerId === layerId) {
+            const refreshed = await apiRequest(`/spatial/layers/${layerId}`);
+            if (refreshed) {
+                populateSpatialLayerModal(refreshed);
+            }
+        }
+    } catch (error) {
+        console.error('Failed to replace spatial layer:', error);
+        showToast('Error', error.message || 'Unable to replace layer', 'danger');
+    }
+}
+
+async function deleteSpatialLayer(layerId) {
+    if (!confirm('This will delete the spatial layer and all of its features. Continue?')) {
+        return;
+    }
+
+    try {
+        await apiRequest(`/spatial/layers/${layerId}`, {
+            method: 'DELETE'
+        });
+        showToast('Deleted', 'Spatial layer removed', 'success');
+        await loadSpatialLayers();
+
+        if (currentSpatialLayerId === layerId) {
+            const modalElement = document.getElementById('spatialLayerModal');
+            const modal = bootstrap.Modal.getInstance(modalElement);
+            if (modal) {
+                modal.hide();
+            }
+            currentSpatialLayerId = null;
+        }
+    } catch (error) {
+        console.error('Failed to delete spatial layer:', error);
+        showToast('Error', error.message || 'Unable to delete layer', 'danger');
+    }
+}
+
 // Helper Functions
 function updateJobFormForType(jobType) {
     const endpointsGroup = document.getElementById('job-endpoints-group');
@@ -697,6 +997,8 @@ function startAutoRefresh() {
                 await loadJobs();
             } else if (activeTab.id === 'executions') {
                 await loadExecutions();
+            } else if (activeTab.id === 'spatial-layers') {
+                await loadSpatialLayers();
             }
         } catch (error) {
             console.error('Auto-refresh failed:', error);
@@ -709,5 +1011,6 @@ function refreshData() {
     loadJobs();
     loadExecutions();
     loadDataStatistics();
+    loadSpatialLayers();
     showToast('Refreshed', 'Data refreshed successfully', 'success');
 }

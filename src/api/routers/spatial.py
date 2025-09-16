@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from spatial.simple_loader import SimpleShapefileLoader
+try:
+    from spatial.simple_loader import SimpleShapefileLoader
+except ModuleNotFoundError:  # pragma: no cover - optional dependency path
+    SimpleShapefileLoader = None
 from utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -15,6 +18,9 @@ router = APIRouter(prefix="/spatial", tags=["spatial"])
 @router.get("/tables")
 async def list_spatial_tables():
     """List all loaded spatial tables."""
+    if SimpleShapefileLoader is None:
+        raise HTTPException(status_code=500, detail="Spatial loader dependencies are not installed")
+
     loader = SimpleShapefileLoader()
     try:
         result = loader.list_loaded_tables()
@@ -31,6 +37,9 @@ async def get_table_info(
     limit: int = Query(10, description="Number of sample records to return", ge=1, le=100)
 ):
     """Get information about a specific spatial table."""
+    if SimpleShapefileLoader is None:
+        raise HTTPException(status_code=500, detail="Spatial loader dependencies are not installed")
+
     loader = SimpleShapefileLoader()
     try:
         result = loader.query_table(table_name, limit)
@@ -46,6 +55,9 @@ async def load_shapefiles(
     directory: str = Query("data/shapefiles", description="Directory containing shapefiles")
 ):
     """Load all shapefiles from the specified directory."""
+    if SimpleShapefileLoader is None:
+        raise HTTPException(status_code=500, detail="Spatial loader dependencies are not installed")
+
     loader = SimpleShapefileLoader()
     try:
         result = loader.load_all_shapefiles(directory)

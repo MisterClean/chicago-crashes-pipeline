@@ -45,6 +45,11 @@
                     <i class="bi bi-database"></i> Data Management
                 </button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="spatial-layers-tab" data-bs-toggle="tab" data-bs-target="#spatial-layers" type="button" role="tab">
+                    <i class="bi bi-map"></i> Spatial Layers
+                </button>
+            </li>
         </ul>
 
         <!-- Tab Content -->
@@ -269,11 +274,132 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Spatial Layers Tab -->
+            <div class="tab-pane fade" id="spatial-layers" role="tabpanel">
+                <div class="row">
+                    <div class="col-lg-4">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5><i class="bi bi-upload"></i> Upload GeoJSON Layer</h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="spatial-layer-upload-form">
+                                    <div class="mb-3">
+                                        <label for="spatial-layer-name" class="form-label">Display Name</label>
+                                        <input type="text" class="form-control" id="spatial-layer-name" name="name" placeholder="e.g. Senate Districts" required>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="spatial-layer-description" class="form-label">Description (optional)</label>
+                                        <textarea class="form-control" id="spatial-layer-description" name="description" rows="2" placeholder="Describe this spatial layer"></textarea>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="spatial-layer-srid" class="form-label">SRID</label>
+                                        <input type="number" class="form-control" id="spatial-layer-srid" name="srid" value="4326" min="2000" max="999999" required>
+                                        <div class="form-text">Default is WGS84 / EPSG:4326</div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="spatial-layer-file" class="form-label">GeoJSON File</label>
+                                        <input type="file" class="form-control" id="spatial-layer-file" name="file" accept=".geojson,.json,.zip,application/geo+json,application/json,application/zip" required>
+                                        <div class="form-text">Upload GeoJSON or a zipped ESRI Shapefile (.zip with .shp/.shx/.dbf/.prj)</div>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100" id="spatial-layer-upload-btn">
+                                        <i class="bi bi-cloud-upload"></i> Upload Layer
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                        <div class="alert alert-info">
+                            <strong>Tip:</strong> Upload GeoJSON or zipped shapefiles to create queryable PostGIS layers for spatial analysis and joins.
+                        </div>
+                    </div>
+                    <div class="col-lg-8">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0"><i class="bi bi-layers"></i> Managed Spatial Layers</h5>
+                                <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadSpatialLayers()">
+                                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover align-middle">
+                                        <thead class="table-dark">
+                                            <tr>
+                                                <th>Layer</th>
+                                                <th>Features</th>
+                                                <th>Status</th>
+                                                <th>Source</th>
+                                                <th>Updated</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="spatial-layer-table-body">
+                                            <tr>
+                                                <td colspan="6" class="text-center text-muted">Loading layers...</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
     <!-- Modals -->
-    
+
+    <!-- Spatial Layer Modal -->
+    <div class="modal fade" id="spatialLayerModal" tabindex="-1" aria-labelledby="spatialLayerModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="spatialLayerModalLabel">Spatial Layer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="spatial-layer-edit-name" class="form-label">Display Name</label>
+                        <input type="text" class="form-control" id="spatial-layer-edit-name" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-8">
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-description" class="form-label">Description</label>
+                                <textarea class="form-control" id="spatial-layer-edit-description" rows="2"></textarea>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="form-check mt-4">
+                                <input class="form-check-input" type="checkbox" id="spatial-layer-edit-active">
+                                <label class="form-check-label" for="spatial-layer-edit-active">Active</label>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <button type="button" class="btn btn-primary" id="spatial-layer-save-btn" onclick="saveSpatialLayerChanges()">
+                            <i class="bi bi-save"></i> Save Changes
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary" onclick="promptSpatialLayerReplace(currentSpatialLayerId)">
+                            <i class="bi bi-arrow-repeat"></i> Replace GeoJSON
+                        </button>
+                    </div>
+                    <div id="spatial-layer-meta" class="mb-4"></div>
+                    <h6>Sample Features</h6>
+                    <div id="spatial-layer-samples" class="spatial-layer-samples"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-danger me-auto" onclick="deleteSpatialLayer(currentSpatialLayerId)">
+                        <i class="bi bi-trash"></i> Delete Layer
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Create/Edit Job Modal -->
     <div class="modal fade" id="jobModal" tabindex="-1" aria-labelledby="jobModalLabel" aria-hidden="true">
         <div class="modal-dialog modal-lg">

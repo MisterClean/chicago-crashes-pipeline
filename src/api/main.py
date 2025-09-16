@@ -11,9 +11,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 from utils.config import settings
 from utils.logging import get_logger, setup_logging
-from api.routers import sync, health, validation, jobs
-# Temporarily disabled spatial import to avoid geopandas dependency
-# from api.routers import spatial
+from api.routers import sync, health, validation, jobs, spatial, spatial_layers
 from api.dependencies import sync_state
 from services.job_scheduler import start_job_scheduler, stop_job_scheduler
 
@@ -100,8 +98,9 @@ app.mount("/admin", StaticFiles(directory=static_path, html=True), name="admin")
 app.include_router(health.router)
 app.include_router(sync.router)
 app.include_router(validation.router)
-# app.include_router(spatial.router)  # Temporarily disabled
 app.include_router(jobs.router)
+app.include_router(spatial.router)
+app.include_router(spatial_layers.router)
 
 
 if __name__ == "__main__":

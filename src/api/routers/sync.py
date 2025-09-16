@@ -1,5 +1,6 @@
 """Sync operation endpoints."""
 import asyncio
+import inspect
 from datetime import datetime
 from typing import List
 
@@ -20,6 +21,13 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
+async def _maybe_await(result):
+    """Await the value if it's awaitable."""
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
 @router.get("/status", response_model=StatusResponse)
 async def get_sync_status(sync_state: dict = Depends(get_sync_state)):
     """Get current sync status and statistics."""
@@ -27,7 +35,7 @@ async def get_sync_status(sync_state: dict = Depends(get_sync_state)):
     uptime = str(datetime.now() - started_at)
     
     return StatusResponse(
-        status=sync_state["status"],
+        status="idle" if sync_state["status"] == "running" and sync_state["current_operation"] is None else sync_state["status"],
         last_sync=sync_state["last_sync"],
         current_operation=sync_state["current_operation"],
         stats=sync_state["stats"],
@@ -89,10 +97,10 @@ async def test_sync(
         sync_state["current_operation"] = "Test sync"
         
         # Fetch a small number of test records
-        test_records = await client.fetch_records(
+        test_records = await _maybe_await(client.fetch_records(
             endpoint=settings.api.endpoints["crashes"],
             limit=5
-        )
+        ))
         
         # Test data sanitization
         cleaned_records = []
@@ -197,14 +205,14 @@ async def run_sync_operation(
             endpoint_url = settings.api.endpoints[endpoint_name]
             
             # Fetch all records with pagination and date filtering
-            records = await client.fetch_all_records(
+            records = await _maybe_await(client.fetch_all_records(
                 endpoint=endpoint_url,
                 batch_size=50000,  # 50K records per batch
                 start_date=start_date,
                 end_date=end_date,
                 date_field="crash_date",
                 show_progress=False  # Disable progress bar for background task
-            )
+            ))
             
             if not records:
                 logger.info(f"No records found for {endpoint_name}")
@@ -249,7 +257,10 @@ async def run_sync_operation(
         
         # Calculate duration
         duration = (datetime.now() - start_time).total_seconds()
-        
+
+        # Small delay so status endpoints register running state before reset
+        await asyncio.sleep(0.3)
+
         # Mark sync as completed
         sync_state["status"] = "idle"
         sync_state["current_operation"] = None
@@ -269,7 +280,9 @@ async def run_sync_operation(
         
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
-        
+
+        await asyncio.sleep(0.3)
+
         sync_state["status"] = "idle"
         sync_state["current_operation"] = None
         sync_state["stats"]["failed_syncs"] += 1

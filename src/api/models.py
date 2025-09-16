@@ -188,3 +188,30 @@ class JobSummaryResponse(BaseModel):
     running_jobs: int
     failed_jobs_24h: int
     last_execution: Optional[datetime]
+
+
+class SpatialLayerResponse(BaseModel):
+    """Metadata response for a spatial layer."""
+    id: int
+    name: str
+    slug: str
+    description: Optional[str]
+    geometry_type: str
+    srid: int
+    feature_count: int
+    original_filename: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class SpatialLayerDetailResponse(SpatialLayerResponse):
+    """Detailed response including sample features."""
+    feature_samples: List[Dict[str, Any]] = []
+
+
+class SpatialLayerUpdateRequest(BaseModel):
+    """Payload for updating a spatial layer."""
+    name: Optional[str] = Field(None, min_length=1, max_length=150)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None

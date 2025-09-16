@@ -128,6 +128,25 @@ curl -s http://localhost:8000/health
 curl -s http://localhost:8000/sync/counts
 ```
 
+### Spatial Layer Management
+
+- **Purpose**: Upload administrative boundaries (e.g., Senate Districts) and make them queryable in PostGIS for spatial joins with crash data.
+- **Upload via API**:
+  ```bash
+  # GeoJSON FeatureCollection
+  curl -F "name=Zip Districts" \
+       -F "file=@data/districts.geojson" \
+       http://localhost:8000/spatial/layers
+
+  # Zipped ESRI Shapefile (.shp/.shx/.dbf/.prj required)
+  curl -F "name=Zip Districts" \
+       -F "file=@data/districts.zip" \
+       http://localhost:8000/spatial/layers
+  ```
+- **Validation**: The service rejects archives missing required shapefile components, disallows path traversal, and converts shapefiles to GeoJSON through `ogr2ogr` before inserting features.
+- **Admin Portal**: `/admin` now has a **Spatial Layers** tab to upload, review sample attributes, replace data, or delete layers without leaving the UI.
+- **Storage**: Layer metadata lives in `spatial_layers`; individual geometries are stored in `spatial_layer_features` with a GiST index for spatial queries.
+
 ## Key Database Tables
 
 - **crashes**: Main crash records (`crash_record_id`, `crash_date`, `latitude`, `longitude`)

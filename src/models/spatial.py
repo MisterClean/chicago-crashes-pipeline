@@ -1,6 +1,8 @@
 """Spatial models for geographic boundaries and reference data."""
 from geoalchemy2 import Geometry
-from sqlalchemy import Column, Integer, String, Float, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Float, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
 
 from .base import Base, TimestampMixin
 
@@ -98,3 +100,38 @@ class SenateDistrict(Base, TimestampMixin):
     population = Column(Integer)
     shape_area = Column(Float)
     shape_len = Column(Float)
+
+
+class SpatialLayer(Base, TimestampMixin):
+    """User-managed GeoJSON layer metadata."""
+
+    __tablename__ = "spatial_layers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(150), unique=True, nullable=False)
+    slug = Column(String(160), unique=True, nullable=False)
+    description = Column(Text)
+    geometry_type = Column(String(64), nullable=False)
+    srid = Column(Integer, default=4326, nullable=False)
+    feature_count = Column(Integer, default=0, nullable=False)
+    original_filename = Column(String(255))
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    features = relationship(
+        "SpatialLayerFeature",
+        back_populates="layer",
+        cascade="all, delete-orphan",
+    )
+
+
+class SpatialLayerFeature(Base, TimestampMixin):
+    """Individual GeoJSON feature stored in PostGIS."""
+
+    __tablename__ = "spatial_layer_features"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    layer_id = Column(Integer, ForeignKey("spatial_layers.id", ondelete="CASCADE"), nullable=False, index=True)
+    properties = Column(JSONB, default=dict, nullable=False)
+    geometry = Column(Geometry("GEOMETRY", srid=4326), nullable=False, index=True)
+
+    layer = relationship("SpatialLayer", back_populates="features")
