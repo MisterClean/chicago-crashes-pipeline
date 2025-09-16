@@ -61,6 +61,14 @@ function setupEventListeners() {
             uploadSpatialLayer();
         });
     }
+
+    const spatialUploadBtn = document.getElementById('spatial-layer-upload-btn');
+    if (spatialUploadBtn) {
+        spatialUploadBtn.addEventListener('click', function(event) {
+            event.preventDefault();
+            uploadSpatialLayer();
+        });
+    }
     
     // Tab change handlers
     document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
