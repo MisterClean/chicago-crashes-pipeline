@@ -628,7 +628,11 @@ async function loadSpatialLayers() {
         displaySpatialLayers(spatialLayers);
     } catch (error) {
         console.error('Failed to load spatial layers:', error);
-        showToast('Error', 'Failed to load spatial layers', 'danger');
+        showToast('Error', error.message || 'Failed to load spatial layers', 'danger');
+        const tbody = document.getElementById('spatial-layer-table-body');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Unable to load spatial layers</td></tr>';
+        }
     }
 }
 
@@ -735,7 +739,10 @@ async function openSpatialLayerModal(layerId) {
 }
 
 function populateSpatialLayerModal(layer) {
-    document.getElementById('spatial-layer-modal-title').textContent = layer.name;
+    const modalTitle = document.getElementById('spatialLayerModalLabel');
+    if (modalTitle) {
+        modalTitle.textContent = layer.name;
+    }
     document.getElementById('spatial-layer-edit-name').value = layer.name;
     document.getElementById('spatial-layer-edit-description').value = layer.description || '';
     document.getElementById('spatial-layer-edit-active').checked = !!layer.is_active;
