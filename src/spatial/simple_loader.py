@@ -1,16 +1,16 @@
 """Simple shapefile loader - just drop files in data/shapefiles/ and run this."""
-import os
-import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
 
-import geopandas as gpd
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
-sys.path.append(str(Path(__file__).parent.parent))
-from utils.config import settings
-from utils.logging import get_logger
+from src.models.base import SessionLocal
+from src.utils.logging import get_logger
+
+try:
+    import geopandas as gpd
+except ImportError:  # pragma: no cover - optional dependency path
+    gpd = None
 
 logger = get_logger(__name__)
 
@@ -20,8 +20,9 @@ class SimpleShapefileLoader:
     
     def __init__(self):
         """Initialize with database connection."""
-        self.engine = create_engine(settings.database.url)
-        self.session = sessionmaker(bind=self.engine)()
+        self.session_factory = SessionLocal
+        self.session = self.session_factory()
+        self.engine = self.session.get_bind()
         
         # Ensure PostGIS is enabled
         try:
@@ -60,6 +61,10 @@ class SimpleShapefileLoader:
             logger.info("Processing shapefile", file=filename, path=str(shapefile_path))
             
             try:
+                if gpd is None:
+                    raise RuntimeError(
+                        "geopandas is required to load shapefiles. Install optional spatial dependencies."
+                    )
                 result = self._load_single_shapefile(shapefile_path, filename)
                 results[filename] = result
             except Exception as e:
@@ -81,6 +86,10 @@ class SimpleShapefileLoader:
         logger.info("Reading shapefile", file=str(shapefile_path))
         
         # Read shapefile with geopandas
+        if gpd is None:
+            raise RuntimeError(
+                "geopandas is required to load shapefiles. Install optional spatial dependencies."
+            )
         gdf = gpd.read_file(shapefile_path)
         
         # Convert to WGS84 if needed

@@ -60,10 +60,10 @@ migrate-create:
 
 # ETL commands
 initial-load:
-	python -m src.etl.initial_load --start-date $(START_DATE)
+	python -m src.cli.pipeline initial-load --start-date $(START_DATE)
 
 sync:
-	python -m src.etl.sync
+	python -m src.cli.pipeline delta --window-days $${WINDOW_DAYS:-7}
 
 # API commands
 serve:

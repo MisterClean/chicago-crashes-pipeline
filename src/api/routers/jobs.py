@@ -2,28 +2,97 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-import sys
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
-
-from api.models import (
-    CreateJobRequest, UpdateJobRequest, JobResponse, JobExecutionResponse,
-    ExecuteJobRequest, ExecuteJobResponse, DataDeletionRequest, DataDeletionResponse,
-    JobSummaryResponse, ErrorResponse
+from src.api.models import (
+    CreateJobRequest,
+    UpdateJobRequest,
+    JobResponse,
+    JobExecutionResponse,
+    JobExecutionDetailResponse,
+    ExecutionLogEntry,
+    ExecuteJobRequest,
+    ExecuteJobResponse,
+    DataDeletionRequest,
+    DataDeletionResponse,
+    JobSummaryResponse,
+    ErrorResponse,
 )
-from models.base import get_db
-from models.jobs import ScheduledJob, JobExecution, JobType, JobStatus, RecurrenceType
-from services.job_service import JobService
-from utils.logging import get_logger
+from src.models.base import get_db
+from src.models.jobs import JobExecution, JobStatus, JobType, RecurrenceType, ScheduledJob
+from src.services.job_service import JobService
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 # Initialize job service
 job_service = JobService()
+
+
+def _build_execution_response(execution: JobExecution) -> JobExecutionResponse:
+    """Convert execution ORM model to API response."""
+    return JobExecutionResponse(
+        id=execution.id,
+        execution_id=execution.execution_id,
+        job_id=execution.job_id,
+        job_name=execution.job.name if execution.job else None,
+        status=execution.status,
+        started_at=execution.started_at,
+        completed_at=execution.completed_at,
+        duration_seconds=execution.duration_seconds,
+        records_processed=execution.records_processed or 0,
+        records_inserted=execution.records_inserted or 0,
+        records_updated=execution.records_updated or 0,
+        records_skipped=execution.records_skipped or 0,
+        error_message=execution.error_message,
+        retry_count=execution.retry_count,
+        created_at=execution.created_at,
+    )
+
+
+def _parse_execution_logs(raw_logs: Any) -> List[ExecutionLogEntry]:
+    """Normalise stored execution logs into response entries."""
+    if not isinstance(raw_logs, list):
+        return []
+
+    parsed_logs: List[ExecutionLogEntry] = []
+    for entry in raw_logs:
+        if not isinstance(entry, dict):
+            continue
+
+        timestamp_value = entry.get("timestamp")
+        if isinstance(timestamp_value, datetime):
+            timestamp = timestamp_value
+        elif isinstance(timestamp_value, str):
+            timestamp = _coerce_timestamp(timestamp_value)
+        else:
+            timestamp = datetime.utcnow()
+
+        level = str(entry.get("level", "info"))
+        message = str(entry.get("message", ""))
+
+        parsed_logs.append(
+            ExecutionLogEntry(
+                timestamp=timestamp,
+                level=level,
+                message=message,
+            )
+        )
+
+    return parsed_logs
+
+
+def _coerce_timestamp(value: str) -> datetime:
+    """Parse ISO formatted timestamp strings safely."""
+    candidate = value.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(candidate)
+    except ValueError:
+        return datetime.utcnow()
 
 
 # Note: Initialization is now handled in the main app startup
@@ -259,26 +328,8 @@ async def get_job_executions(
     """Get execution history for a job."""
     try:
         executions = job_service.get_job_executions(job_id=job_id, limit=limit)
-        
-        return [
-            JobExecutionResponse(
-                id=execution.id,
-                execution_id=execution.execution_id,
-                job_id=execution.job_id,
-                status=execution.status,
-                started_at=execution.started_at,
-                completed_at=execution.completed_at,
-                duration_seconds=execution.duration_seconds,
-                records_processed=execution.records_processed,
-                records_inserted=execution.records_inserted,
-                records_updated=execution.records_updated,
-                records_skipped=execution.records_skipped,
-                error_message=execution.error_message,
-                retry_count=execution.retry_count,
-                created_at=execution.created_at
-            )
-            for execution in executions
-        ]
+
+        return [_build_execution_response(execution) for execution in executions]
         
     except Exception as e:
         logger.error(f"Failed to get executions for job {job_id}: {str(e)}")
@@ -292,30 +343,49 @@ async def get_recent_executions(
     """Get recent execution history across all jobs."""
     try:
         executions = job_service.get_job_executions(limit=limit)
-        
-        return [
-            JobExecutionResponse(
-                id=execution.id,
-                execution_id=execution.execution_id,
-                job_id=execution.job_id,
-                status=execution.status,
-                started_at=execution.started_at,
-                completed_at=execution.completed_at,
-                duration_seconds=execution.duration_seconds,
-                records_processed=execution.records_processed,
-                records_inserted=execution.records_inserted,
-                records_updated=execution.records_updated,
-                records_skipped=execution.records_skipped,
-                error_message=execution.error_message,
-                retry_count=execution.retry_count,
-                created_at=execution.created_at
-            )
-            for execution in executions
-        ]
-        
+
+        return [_build_execution_response(execution) for execution in executions]
+
     except Exception as e:
         logger.error(f"Failed to get recent executions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get executions: {str(e)}")
+
+
+@router.get("/executions/{execution_id}", response_model=JobExecutionDetailResponse)
+async def get_execution_detail(execution_id: str):
+    """Get detailed execution information including logs."""
+    try:
+        execution = job_service.get_execution_by_identifier(execution_id)
+        if not execution:
+            raise HTTPException(status_code=404, detail="Execution not found")
+
+        context = execution.execution_context if isinstance(execution.execution_context, dict) else {}
+        logs = _parse_execution_logs(context.get("logs"))
+
+        return JobExecutionDetailResponse(
+            id=execution.id,
+            execution_id=execution.execution_id,
+            job_id=execution.job_id,
+            job_name=execution.job.name if execution.job else None,
+            status=execution.status,
+            started_at=execution.started_at,
+            completed_at=execution.completed_at,
+            duration_seconds=execution.duration_seconds,
+            records_processed=execution.records_processed or 0,
+            records_inserted=execution.records_inserted or 0,
+            records_updated=execution.records_updated or 0,
+            records_skipped=execution.records_skipped or 0,
+            error_message=execution.error_message,
+            retry_count=execution.retry_count,
+            created_at=execution.created_at,
+            execution_context=context or None,
+            logs=logs,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get execution {execution_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get execution: {str(e)}")
 
 
 @router.post("/data/delete", response_model=DataDeletionResponse)

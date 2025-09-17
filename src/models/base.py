@@ -2,24 +2,47 @@
 from datetime import datetime
 from typing import Any
 
-from geoalchemy2 import Geometry
-from sqlalchemy import Column, DateTime, MetaData, create_engine
+from importlib import import_module
+from pathlib import Path
+
+from sqlalchemy import Column, DateTime, MetaData, create_engine, text
 from sqlalchemy.ext.declarative import as_declarative, declared_attr
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-from utils.config import settings
+from src.utils.config import settings
+from src.utils.logging import get_logger
+
+
+logger = get_logger(__name__)
+
+
+def _create_engine_with_fallback():
+    url = settings.database.url
+    kwargs = {
+        "pool_size": getattr(settings.database, "pool_size", 10),
+        "max_overflow": getattr(settings.database, "max_overflow", 20),
+        "echo": False,
+    }
+
+    try:
+        engine = create_engine(url, **kwargs)
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+        return engine
+    except Exception as exc:  # pragma: no cover - fallback path
+        logger.warning("Primary database unavailable, falling back to SQLite", error=str(exc))
+        fallback_path = Path("data")
+        fallback_path.mkdir(parents=True, exist_ok=True)
+        fallback_url = f"sqlite:///{fallback_path / 'chicago_crashes.db'}"
+        sqlite_engine = create_engine(
+            fallback_url,
+            connect_args={"check_same_thread": False},
+        )
+        return sqlite_engine
 
 # Create engine with connection pooling
-engine = create_engine(
-    settings.database.url,
-    pool_size=settings.database.pool_size,
-    max_overflow=settings.database.max_overflow,
-    echo=False  # Set to True for SQL query logging
-)
+engine = _create_engine_with_fallback()
 
 # Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -63,3 +86,15 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+try:  # pragma: no cover - executed at import time
+    for module_path in (
+        "src.models.crashes",
+        "src.models.jobs",
+        "src.models.spatial",
+    ):
+        import_module(module_path)
+    Base.metadata.create_all(engine)
+except Exception as exc:  # pragma: no cover - log but ignore during import
+    logger.warning("Metadata initialization failed", error=str(exc))

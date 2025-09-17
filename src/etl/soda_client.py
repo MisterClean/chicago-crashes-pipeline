@@ -1,17 +1,14 @@
 """SODA API client for Chicago Open Data Portal."""
 import asyncio
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, AsyncIterator, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
 from tqdm.asyncio import tqdm
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-from utils.config import settings
-from utils.logging import get_logger
+from src.utils.config import settings
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -106,6 +103,55 @@ class SODAClient:
                 logger.error("HTTP error", url=url, error=str(e))
                 raise
     
+    async def iter_batches(
+        self,
+        endpoint: str,
+        batch_size: int = 50000,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        date_field: str = "crash_date",
+        order_by: Optional[str] = None,
+        show_progress: bool = False,
+    ) -> AsyncIterator[List[Dict[str, Any]]]:
+        """Yield batches of records without loading everything into memory."""
+
+        where_clause = self._build_date_where_clause(start_date, end_date, date_field)
+        order_clause = order_by or date_field
+
+        total_count = await self._get_record_count(endpoint, where_clause)
+        if total_count == 0:
+            return
+
+        num_batches = (total_count + batch_size - 1) // batch_size
+
+        progress = None
+        if show_progress:
+            progress = tqdm(total=total_count, desc=f"Fetching {endpoint}", unit="records")
+
+        for batch_index in range(num_batches):
+            offset = batch_index * batch_size
+            batch = await self.fetch_records(
+                endpoint=endpoint,
+                limit=batch_size,
+                offset=offset,
+                where_clause=where_clause,
+                order_by=order_clause,
+            )
+
+            if not batch:
+                break
+
+            if progress:
+                progress.update(len(batch))
+
+            yield batch
+
+            if len(batch) < batch_size:
+                break
+
+        if progress:
+            progress.close()
+
     async def fetch_all_records(
         self,
         endpoint: str,
@@ -131,81 +177,21 @@ class SODAClient:
             List of all record dictionaries
         """
         logger.info("Starting data fetch", endpoint=endpoint, batch_size=batch_size)
-        
-        # Build WHERE clause for date filtering
-        where_clauses = []
-        if start_date:
-            where_clauses.append(f"{date_field} >= '{start_date}T00:00:00'")
-        if end_date:
-            where_clauses.append(f"{date_field} < '{end_date}T23:59:59'")
-        
-        where_clause = " AND ".join(where_clauses) if where_clauses else None
-        
-        # Default ordering for consistent pagination
-        if not order_by:
-            order_by = date_field
-        
-        # Get total count first
-        total_count = await self._get_record_count(endpoint, where_clause)
-        logger.info("Total records to fetch", count=total_count)
-        
-        if total_count == 0:
-            return []
-        
-        # Calculate number of batches
-        num_batches = (total_count + batch_size - 1) // batch_size
-        
-        all_records = []
-        
-        # Progress bar setup
-        if show_progress:
-            progress = tqdm(
-                total=total_count,
-                desc=f"Fetching {endpoint.split('/')[-1].replace('.json', '')}",
-                unit="records"
-            )
-        
-        # Fetch data in batches
-        for batch_num in range(num_batches):
-            offset = batch_num * batch_size
-            
-            try:
-                batch_records = await self.fetch_records(
-                    endpoint=endpoint,
-                    limit=batch_size,
-                    offset=offset,
-                    where_clause=where_clause,
-                    order_by=order_by
-                )
-                
-                all_records.extend(batch_records)
-                
-                if show_progress:
-                    progress.update(len(batch_records))
-                
-                logger.debug("Fetched batch", 
-                           batch=batch_num + 1,
-                           batch_size=len(batch_records),
-                           total_fetched=len(all_records))
-                
-                # Small delay to be respectful to API
-                await asyncio.sleep(0.1)
-                
-            except Exception as e:
-                logger.error("Error fetching batch",
-                           batch=batch_num + 1,
-                           offset=offset,
-                           error=str(e))
-                # Continue with next batch rather than failing completely
-                continue
-        
-        if show_progress:
-            progress.close()
-        
-        logger.info("Data fetch completed", 
-                   total_records=len(all_records),
-                   expected=total_count)
-        
+
+        all_records: List[Dict[str, Any]] = []
+        async for batch in self.iter_batches(
+            endpoint=endpoint,
+            batch_size=batch_size,
+            start_date=start_date,
+            end_date=end_date,
+            date_field=date_field,
+            order_by=order_by,
+            show_progress=show_progress,
+        ):
+            all_records.extend(batch)
+            await asyncio.sleep(0.05)
+
+        logger.info("Data fetch completed", total_records=len(all_records))
         return all_records
     
     async def fetch_incremental_records(
@@ -236,12 +222,44 @@ class SODAClient:
         # Use :updated_at system field for incremental sync
         where_clause = f":updated_at > '{last_modified_str}'"
         
-        return await self.fetch_all_records(
-            endpoint=endpoint,
-            batch_size=batch_size,
-            order_by=":updated_at",
-            show_progress=show_progress
-        )
+        where_clause = f":updated_at > '{last_modified_str}'"
+        order_clause = ":updated_at"
+
+        records: List[Dict[str, Any]] = []
+        offset = 0
+
+        while True:
+            batch = await self.fetch_records(
+                endpoint=endpoint,
+                limit=batch_size,
+                offset=offset,
+                where_clause=where_clause,
+                order_by=order_clause,
+            )
+
+            if not batch:
+                break
+
+            records.extend(batch)
+            offset += len(batch)
+
+            if len(batch) < batch_size:
+                break
+
+        return records
+
+    @staticmethod
+    def _build_date_where_clause(
+        start_date: Optional[str],
+        end_date: Optional[str],
+        date_field: str,
+    ) -> Optional[str]:
+        clauses: List[str] = []
+        if start_date:
+            clauses.append(f"{date_field} >= '{start_date}T00:00:00'")
+        if end_date:
+            clauses.append(f"{date_field} < '{end_date}T23:59:59'")
+        return " AND ".join(clauses) if clauses else None
     
     async def _make_request(self, url: str) -> httpx.Response:
         """Make HTTP request with retry logic.

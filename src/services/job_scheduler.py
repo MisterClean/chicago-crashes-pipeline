@@ -3,15 +3,10 @@ import asyncio
 import signal
 from datetime import datetime, timedelta
 from typing import Optional, List
-import sys
-from pathlib import Path
-
-sys.path.append(str(Path(__file__).parent.parent))
-
-from models.jobs import ScheduledJob, JobExecution, JobStatus
-from services.job_service import JobService
-from utils.logging import get_logger
-from utils.config import settings
+from src.models.jobs import JobExecution, JobStatus, ScheduledJob
+from src.services.job_service import JobService
+from src.utils.config import settings
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -1,33 +1,41 @@
 """Data validation endpoints."""
-from typing import Optional
+import asyncio
 
-from fastapi import APIRouter, HTTPException, Depends, Query
-import sys
-from pathlib import Path
+from fastapi import APIRouter, HTTPException, Query
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from api.models import DataValidationResponse
-from api.dependencies import get_soda_client, get_crash_validator, get_data_sanitizer
-from etl.soda_client import SODAClient
-from validators.crash_validator import CrashValidator
-from validators.data_sanitizer import DataSanitizer
-from utils.config import settings
-from utils.logging import get_logger
+from src.api.models import DataValidationResponse
+from src.etl.soda_client import SODAClient
+from src.utils.config import settings
+from src.utils.logging import get_logger
+from src.validators.crash_validator import CrashValidator
+from src.validators.data_sanitizer import DataSanitizer
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/validate", tags=["validation"])
+
+
+def get_soda_client() -> SODAClient:
+    return SODAClient()
+
+
+def get_data_sanitizer() -> DataSanitizer:
+    return DataSanitizer()
+
+
+def get_crash_validator_instance() -> CrashValidator:
+    return CrashValidator()
 
 
 @router.get("/{endpoint}", response_model=DataValidationResponse)
 async def validate_endpoint_data(
     endpoint: str,
     limit: int = Query(100, description="Number of records to validate", ge=1, le=1000),
-    client: SODAClient = Depends(get_soda_client),
-    validator: CrashValidator = Depends(get_crash_validator),
-    sanitizer: DataSanitizer = Depends(get_data_sanitizer)
 ):
     """Validate data quality for a specific endpoint."""
-    
+
+    sanitizer = get_data_sanitizer()
+    validator = get_crash_validator_instance()
+
     # Check if endpoint exists
     if endpoint not in settings.api.endpoints:
         available_endpoints = list(settings.api.endpoints.keys())
@@ -39,7 +47,22 @@ async def validate_endpoint_data(
     try:
         # Fetch records
         endpoint_url = settings.api.endpoints[endpoint]
-        records = await client.fetch_records(endpoint=endpoint_url, limit=limit)
+
+        client = get_soda_client()
+        if hasattr(client, "__aenter__"):
+            async with client:
+                records = await client.fetch_records(endpoint=endpoint_url, limit=limit)
+        else:  # pragma: no cover - primarily exercised in tests
+            result = client.fetch_records(endpoint=endpoint_url, limit=limit)
+            if asyncio.iscoroutine(result):
+                records = await result
+            else:
+                records = result
+            closer = getattr(client, "close", None)
+            if closer:
+                maybe = closer()
+                if asyncio.iscoroutine(maybe):
+                    await maybe
         
         if not records:
             return DataValidationResponse(

@@ -1,13 +1,11 @@
 """FastAPI dependencies for the Chicago crash data pipeline API."""
-import sys
-from pathlib import Path
+import asyncio
 from typing import Generator
 
-sys.path.append(str(Path(__file__).parent.parent))
-from etl.soda_client import SODAClient
-from validators.data_sanitizer import DataSanitizer
-from validators.crash_validator import CrashValidator
-from utils.logging import get_logger
+from src.etl.soda_client import SODAClient
+from src.utils.logging import get_logger
+from src.validators.crash_validator import CrashValidator
+from src.validators.data_sanitizer import DataSanitizer
 
 logger = get_logger(__name__)
 
@@ -48,6 +46,15 @@ sync_state = {
 }
 
 
+# Async lock ensures only one sync task runs at a time
+_sync_lock = asyncio.Lock()
+
+
 def get_sync_state() -> dict:
     """Dependency to provide sync state."""
     return sync_state
+
+
+def get_sync_lock() -> asyncio.Lock:
+    """Provide the global sync lock used to serialize sync operations."""
+    return _sync_lock
