@@ -697,7 +697,7 @@ async function uploadSpatialLayer() {
     const uploadBtn = document.getElementById('spatial-layer-upload-btn');
 
     if (!fileInput.files || fileInput.files.length === 0) {
-        showToast('Error', 'Please select a GeoJSON file to upload', 'warning');
+        showToast('Error', 'Please select a GeoJSON file or zipped shapefile to upload', 'warning');
         return;
     }
 
@@ -838,7 +838,7 @@ async function saveSpatialLayerChanges() {
 function promptSpatialLayerReplace(layerId) {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = '.geojson,.json,application/geo+json,application/json';
+    fileInput.accept = '.geojson,.json,.zip,application/geo+json,application/json,application/zip';
     fileInput.style.display = 'none';
 
     fileInput.addEventListener('change', async () => {
