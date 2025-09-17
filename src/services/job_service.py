@@ -3,7 +3,7 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, desc
 
 import sys
@@ -249,14 +249,17 @@ class JobService:
             execution_id = f"exec_{job_id}_{int(datetime.now().timestamp())}"
             config = override_config or job.config
             
+            trigger_type = 'manual' if force or override_config else 'scheduled'
+
             execution = JobExecution(
                 execution_id=execution_id,
                 job_id=job_id,
                 status=JobStatus.PENDING,
                 execution_context={
-                    "manual": True,
+                    "trigger": trigger_type,
                     "force": force,
-                    "config": config
+                    "config": config,
+                    "logs": []
                 }
             )
             
@@ -282,19 +285,25 @@ class JobService:
         session = self.get_session()
         
         try:
-            execution = session.query(JobExecution).filter_by(id=execution_id).first()
+            execution = session.query(JobExecution).options(joinedload(JobExecution.job)).filter_by(id=execution_id).first()
             if not execution:
                 logger.error(f"Execution {execution_id} not found")
                 return
-            
+
             job = execution.job
             start_time = datetime.now()
-            
+
             # Update execution status
             execution.status = JobStatus.RUNNING
             execution.started_at = start_time
             session.commit()
-            
+
+            self._append_execution_log(
+                session,
+                execution,
+                f"Execution started for '{job.name}'"
+            )
+
             # Build sync parameters based on job type and config
             sync_params = self._build_sync_params(job.job_type, config)
             
@@ -308,7 +317,13 @@ class JobService:
             
             for endpoint_name in sync_params["endpoints"]:
                 endpoint_url = settings.api.endpoints[endpoint_name]
-                
+
+                self._append_execution_log(
+                    session,
+                    execution,
+                    f"Fetching {endpoint_name} data from source"
+                )
+
                 # Fetch records
                 records = await client.fetch_all_records(
                     endpoint=endpoint_url,
@@ -320,8 +335,14 @@ class JobService:
                 )
                 
                 if not records:
+                    self._append_execution_log(
+                        session,
+                        execution,
+                        f"No records returned for {endpoint_name}",
+                        level="warning"
+                    )
                     continue
-                
+
                 # Process and save records
                 if endpoint_name == "crashes":
                     processed_records = [sanitizer.sanitize_crash_record(r) for r in records]
@@ -338,21 +359,33 @@ class JobService:
                     result = self.db_service.insert_fatality_records(processed_records)
                 else:
                     result = {"inserted": 0, "updated": 0, "skipped": len(records)}
-                
+
                 total_records += len(processed_records)
                 total_inserted += result.get("inserted", 0)
                 total_updated += result.get("updated", 0)
-            
+
+                self._append_execution_log(
+                    session,
+                    execution,
+                    f"Processed {len(processed_records)} {endpoint_name} records (inserted: {result.get('inserted', 0)}, updated: {result.get('updated', 0)}, skipped: {result.get('skipped', 0)})"
+                )
+
             # Update execution as completed
             end_time = datetime.now()
             duration = int((end_time - start_time).total_seconds())
-            
+
             execution.status = JobStatus.COMPLETED
             execution.completed_at = end_time
             execution.duration_seconds = duration
             execution.records_processed = total_records
             execution.records_inserted = total_inserted
             execution.records_updated = total_updated
+
+            self._append_execution_log(
+                session,
+                execution,
+                "Execution completed successfully"
+            )
             
             # Update job's last run and next run
             job.last_run = end_time
@@ -364,7 +397,7 @@ class JobService:
                 )
             
             session.commit()
-            
+
             logger.info(
                 f"Job execution completed",
                 execution_id=execution.execution_id,
@@ -379,13 +412,20 @@ class JobService:
             execution.completed_at = datetime.now()
             execution.error_message = str(e)
             execution.error_details = {"exception": type(e).__name__}
-            
+
             if execution.started_at:
                 duration = int((datetime.now() - execution.started_at).total_seconds())
                 execution.duration_seconds = duration
-            
+
             session.commit()
-            
+
+            self._append_execution_log(
+                session,
+                execution,
+                f"Execution failed: {str(e)}",
+                level="error"
+            )
+
             logger.error(
                 f"Job execution failed",
                 execution_id=execution.execution_id,
@@ -394,7 +434,7 @@ class JobService:
             )
         finally:
             session.close()
-    
+
     def _build_sync_params(self, job_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """Build sync parameters based on job type and config."""
         now = datetime.now()
@@ -471,12 +511,42 @@ class JobService:
         """Get job execution history."""
         session = self.get_session()
         try:
-            query = session.query(JobExecution).order_by(desc(JobExecution.created_at))
+            query = session.query(JobExecution).options(joinedload(JobExecution.job)).order_by(desc(JobExecution.created_at))
             if job_id:
                 query = query.filter_by(job_id=job_id)
             return query.limit(limit).all()
         finally:
             session.close()
+
+    def get_execution_by_identifier(self, execution_id: str) -> Optional[JobExecution]:
+        """Retrieve a job execution by its identifier."""
+        session = self.get_session()
+        try:
+            filters = [JobExecution.execution_id == execution_id]
+            if execution_id.isdigit():
+                filters.append(JobExecution.id == int(execution_id))
+
+            execution = session.query(JobExecution).options(joinedload(JobExecution.job)).filter(
+                or_(*filters)
+            ).first()
+            return execution
+        finally:
+            session.close()
+
+    def _append_execution_log(self, session: Session, execution: JobExecution, message: str, level: str = "info") -> None:
+        """Append a structured log entry to an execution context and persist it."""
+        context = execution.execution_context or {}
+        logs = context.get("logs", [])
+        logs.append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": level,
+            "message": message
+        })
+        # Keep only the most recent 200 log entries to avoid oversized payloads
+        context["logs"] = logs[-200:]
+        execution.execution_context = context
+        session.add(execution)
+        session.commit()
     
     def delete_all_data(self, table_name: str, date_range: Dict[str, str] = None) -> Dict[str, Any]:
         """Delete all data from a table with optional date filtering."""
