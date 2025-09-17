@@ -78,13 +78,15 @@ class TestAPIEndpoints:
         assert "vehicles" in endpoint_names
         assert "fatalities" in endpoint_names
     
-    @patch("api.routers.sync.get_soda_client")
-    @patch("api.routers.sync.get_data_sanitizer") 
+    @patch("src.api.routers.sync.get_soda_client")
+    @patch("src.api.routers.sync.get_data_sanitizer") 
     def test_sync_test_endpoint(self, mock_get_sanitizer, mock_get_client, client):
         """Test sync test endpoint."""
         # Mock SODA client
         mock_client_instance = AsyncMock()
         mock_get_client.return_value = mock_client_instance
+        mock_client_instance.__aenter__.return_value = mock_client_instance
+        mock_client_instance.__aexit__.return_value = False
         mock_client_instance.fetch_records.return_value = [
             {"crash_record_id": "TEST1", "crash_date": "2024-01-01T12:00:00"},
             {"crash_record_id": "TEST2", "crash_date": "2024-01-01T13:00:00"},
@@ -128,14 +130,16 @@ class TestAPIEndpoints:
         assert "vehicles" in available_endpoints
         assert "fatalities" in available_endpoints
     
-    @patch("api.routers.validation.SODAClient")
-    @patch("api.routers.validation.CrashValidator")
-    @patch("api.routers.validation.DataSanitizer")
-    def test_validation_crashes_endpoint(self, mock_sanitizer, mock_validator, mock_client, client):
+    @patch("src.api.routers.validation.get_soda_client")
+    @patch("src.api.routers.validation.get_crash_validator_instance")
+    @patch("src.api.routers.validation.get_data_sanitizer")
+    def test_validation_crashes_endpoint(self, mock_get_sanitizer, mock_get_validator, mock_get_client, client):
         """Test validation endpoint for crashes."""
         # Mock client
         mock_client_instance = AsyncMock()
-        mock_client.return_value = mock_client_instance
+        mock_get_client.return_value = mock_client_instance
+        mock_client_instance.__aenter__.return_value = mock_client_instance
+        mock_client_instance.__aexit__.return_value = False
         mock_client_instance.fetch_records.return_value = [
             {"crash_record_id": "TEST1", "latitude": "41.8781", "longitude": "-87.6298"},
             {"crash_record_id": "TEST2", "latitude": "41.8782", "longitude": "-87.6299"}
@@ -143,14 +147,14 @@ class TestAPIEndpoints:
         
         # Mock sanitizer
         mock_sanitizer_instance = MagicMock()
-        mock_sanitizer.return_value = mock_sanitizer_instance
+        mock_get_sanitizer.return_value = mock_sanitizer_instance
         mock_sanitizer_instance.sanitize_crash_record.return_value = {
             "crash_record_id": "TEST1"
         }
         
         # Mock validator
         mock_validator_instance = MagicMock()
-        mock_validator.return_value = mock_validator_instance
+        mock_get_validator.return_value = mock_validator_instance
         mock_validator_instance.validate_crash_record.return_value = {
             "valid": True,
             "errors": [],
@@ -196,7 +200,7 @@ class TestAPIEndpoints:
         assert "list_tables" in usage
         assert "query_table" in usage
     
-    @patch("api.routers.spatial.SimpleShapefileLoader")
+    @patch("src.api.routers.spatial.SimpleShapefileLoader")
     def test_spatial_tables_endpoint(self, mock_loader, client):
         """Test spatial tables listing endpoint."""
         # Mock loader

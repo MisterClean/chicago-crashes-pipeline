@@ -135,6 +135,7 @@ class JobExecutionResponse(BaseModel):
     id: int
     execution_id: str
     job_id: int
+    job_name: Optional[str]
     status: str
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
@@ -146,6 +147,19 @@ class JobExecutionResponse(BaseModel):
     error_message: Optional[str]
     retry_count: int
     created_at: datetime
+
+
+class ExecutionLogEntry(BaseModel):
+    """Structured log entry for a job execution."""
+    timestamp: datetime
+    level: str
+    message: str
+
+
+class JobExecutionDetailResponse(JobExecutionResponse):
+    """Detailed response for job execution with logs and context."""
+    execution_context: Optional[Dict[str, Any]] = None
+    logs: List[ExecutionLogEntry] = Field(default_factory=list)
 
 
 class ExecuteJobRequest(BaseModel):

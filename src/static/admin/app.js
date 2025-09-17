@@ -4,6 +4,7 @@
 // Configuration
 const API_BASE = '';  // No prefix for our API
 const REFRESH_INTERVAL = 30000; // 30 seconds
+const EXECUTION_POLL_INTERVAL = 5000; // 5 seconds for live execution updates
 
 // Global variables
 let jobs = [];
@@ -12,6 +13,8 @@ let spatialLayers = [];
 let currentJobId = null;
 let currentSpatialLayerId = null;
 let refreshTimer = null;
+let executionDetailTimer = null;
+let activeExecutionId = null;
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
@@ -267,23 +270,43 @@ function displayExecutions(executionsList) {
         const statusBadge = `<span class="badge status-${execution.status}">${execution.status.toUpperCase()}</span>`;
         const started = execution.started_at ? new Date(execution.started_at).toLocaleString() : 'Not started';
         const duration = execution.duration_seconds ? `${execution.duration_seconds}s` : 'N/A';
-        
+        const jobName = resolveJobName(execution);
+        const hasJobId = execution.job_id !== undefined && execution.job_id !== null;
+        const jobIdLabel = hasJobId ? `ID: ${escapeHtml(String(execution.job_id))}` : '';
+        const processed = Number(execution.records_processed || 0).toLocaleString();
+        const inserted = Number(execution.records_inserted || 0).toLocaleString();
+        const hasUpdated = execution.records_updated !== undefined && execution.records_updated !== null;
+        const updated = hasUpdated ? Number(execution.records_updated || 0).toLocaleString() : null;
+        const executionIdText = escapeHtml(execution.execution_id);
+        const executionIdAttr = String(execution.execution_id)
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'");
+
         return `
             <tr>
-                <td><code>${execution.execution_id}</code></td>
-                <td>Job ${execution.job_id}</td>
+                <td>
+                    <button type="button" class="execution-id-link" onclick="viewExecutionDetails('${executionIdAttr}')">
+                        ${executionIdText}
+                    </button>
+                </td>
+                <td>
+                    <div class="execution-job">
+                        <div class="execution-job-name">${escapeHtml(jobName)}</div>
+                        ${jobIdLabel ? `<div class="execution-job-meta">${jobIdLabel}</div>` : ''}
+                    </div>
+                </td>
                 <td>${statusBadge}</td>
                 <td>${started}</td>
                 <td>${duration}</td>
                 <td>
-                    <div class="small">
-                        <div>Processed: ${execution.records_processed || 0}</div>
-                        <div>Inserted: ${execution.records_inserted || 0}</div>
-                        ${execution.records_updated ? `<div>Updated: ${execution.records_updated}</div>` : ''}
+                    <div class="execution-records">
+                        <div>Processed: ${processed}</div>
+                        <div>Inserted: ${inserted}</div>
+                        ${hasUpdated ? `<div>Updated: ${updated}</div>` : ''}
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline-info" onclick="viewExecutionDetails('${execution.execution_id}')" title="View Details">
+                    <button class="btn btn-sm btn-outline-info" onclick="viewExecutionDetails('${executionIdAttr}')" title="View Details">
                         <i class="bi bi-eye"></i>
                     </button>
                 </td>
@@ -453,84 +476,212 @@ function viewJobExecutions(jobId) {
     
     // Switch to executions tab and filter by job
     document.getElementById('executions-tab').click();
-    document.getElementById('execution-filter').value = jobId;
+    const filterSelect = document.getElementById('execution-filter');
+    if (filterSelect) {
+        filterSelect.value = jobId.toString();
+    }
     loadExecutions(jobId);
 }
 
 async function viewExecutionDetails(executionId) {
-    const execution = executions.find(e => e.execution_id === executionId);
-    if (!execution) return;
-    
+    stopExecutionPolling();
+    activeExecutionId = executionId;
+
+    const modalElement = document.getElementById('executionModal');
     const modalBody = document.getElementById('execution-details');
+    if (modalBody) {
+        modalBody.innerHTML = '<div class="text-center py-5"><span class="spinner-border spinner-border-sm me-2"></span>Loading execution...</div>';
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+    modal.show();
+
+    await loadExecutionDetail(executionId, true);
+}
+
+async function loadExecutionDetail(executionId, allowRestart = false) {
+    try {
+        const detail = await apiRequest(`/jobs/executions/${executionId}`);
+        if (!detail) {
+            throw new Error('Execution not found');
+        }
+
+        const enrichedDetail = {
+            ...detail,
+            job_name: detail.job_name || resolveJobName(detail)
+        };
+
+        executions = executions.map(exec =>
+            exec.execution_id === enrichedDetail.execution_id ? { ...exec, ...enrichedDetail } : exec
+        );
+
+        renderExecutionDetail(enrichedDetail);
+
+        const isActive = ['RUNNING', 'PENDING'].includes(enrichedDetail.status);
+        if (isActive) {
+            if (!executionDetailTimer || allowRestart) {
+                startExecutionPolling(enrichedDetail.execution_id);
+            }
+        } else {
+            stopExecutionPolling();
+            await loadExecutions();
+        }
+    } catch (error) {
+        console.error('Failed to load execution detail:', error);
+        showToast('Error', 'Failed to load execution details', 'danger');
+        stopExecutionPolling();
+    }
+}
+
+function renderExecutionDetail(detail) {
+    const modalTitle = document.getElementById('executionModalLabel');
+    if (modalTitle) {
+        modalTitle.textContent = detail.job_name ? `${detail.job_name}` : 'Execution Details';
+    }
+
+    const modalBody = document.getElementById('execution-details');
+    if (!modalBody) {
+        return;
+    }
+
+    const jobName = detail.job_name || resolveJobName(detail);
+    const statusBadge = `<span class="badge status-${detail.status}">${detail.status.toUpperCase()}</span>`;
+    const startedAt = detail.started_at ? new Date(detail.started_at).toLocaleString() : 'Not started';
+    const completedAt = detail.completed_at ? new Date(detail.completed_at).toLocaleString() : 'In progress';
+    const computedDuration = detail.started_at && !detail.completed_at ?
+        Math.max(0, Math.floor((Date.now() - new Date(detail.started_at)) / 1000)) : null;
+    const durationLabel = detail.duration_seconds ? `${detail.duration_seconds}s` :
+        (computedDuration ? `${computedDuration}s` : '—');
+
+    const recordsProcessed = Number(detail.records_processed || 0).toLocaleString();
+    const recordsInserted = Number(detail.records_inserted || 0).toLocaleString();
+    const recordsUpdated = Number(detail.records_updated || 0).toLocaleString();
+
+    const triggerMeta = detail.execution_context?.trigger;
+    const triggerType = triggerMeta?.type || (detail.execution_context?.manual ? 'manual' : null);
+    const forceRun = triggerMeta?.force ?? detail.execution_context?.force;
+    const endpoints = Array.isArray(detail.execution_context?.config?.endpoints)
+        ? detail.execution_context.config.endpoints.join(', ')
+        : '—';
+    const jobId = detail.job_id ?? '—';
+
+    const contextChips = [];
+    if (triggerType) {
+        contextChips.push(`<span class="execution-chip">${escapeHtml(capitalize(triggerType))} run</span>`);
+    }
+    if (forceRun) {
+        contextChips.push('<span class="execution-chip danger">Forced execution</span>');
+    }
+
+    const logMarkup = renderExecutionLogs(detail.logs);
+    const activeLabel = ['RUNNING', 'PENDING'].includes(detail.status) ? 'Live (5s refresh)' : 'Final output';
+
     modalBody.innerHTML = `
-        <div class="row">
-            <div class="col-md-6">
-                <div class="execution-metric">
-                    <h6>Execution ID</h6>
-                    <code>${execution.execution_id}</code>
-                </div>
+        <div class="execution-overview">
+            <div>
+                <span class="eyebrow text-muted text-uppercase">Execution</span>
+                <h3 class="execution-title">${escapeHtml(jobName)}</h3>
+                ${detail.execution_id ? `<div class="execution-subtitle">Execution ${escapeHtml(detail.execution_id)}</div>` : ''}
+                ${contextChips.length ? `<div class="execution-chip-group">${contextChips.join('')}</div>` : ''}
             </div>
-            <div class="col-md-6">
-                <div class="execution-metric">
-                    <h6>Status</h6>
-                    <span class="badge status-${execution.status}">${execution.status.toUpperCase()}</span>
-                </div>
-            </div>
-        </div>
-        <div class="row">
-            <div class="col-md-6">
-                <div class="execution-metric">
-                    <h6>Started At</h6>
-                    <div>${execution.started_at ? new Date(execution.started_at).toLocaleString() : 'Not started'}</div>
-                </div>
-            </div>
-            <div class="col-md-6">
-                <div class="execution-metric">
-                    <h6>Completed At</h6>
-                    <div>${execution.completed_at ? new Date(execution.completed_at).toLocaleString() : 'Not completed'}</div>
-                </div>
+            <div class="execution-status text-md-end text-center">
+                ${statusBadge}
+                <span class="timestamp">Started ${startedAt}</span>
+                ${detail.completed_at ? `<span class="timestamp">Completed ${completedAt}</span>` : ''}
             </div>
         </div>
-        <div class="row">
-            <div class="col-md-3">
-                <div class="execution-metric text-center">
-                    <h6>Records Processed</h6>
-                    <div class="display-6 text-primary">${execution.records_processed || 0}</div>
-                </div>
+
+        <div class="execution-metrics">
+            <div class="execution-metric-card processed">
+                <span class="label">Processed</span>
+                <span class="value">${recordsProcessed}</span>
             </div>
-            <div class="col-md-3">
-                <div class="execution-metric text-center">
-                    <h6>Records Inserted</h6>
-                    <div class="display-6 text-success">${execution.records_inserted || 0}</div>
-                </div>
+            <div class="execution-metric-card inserted">
+                <span class="label">Inserted</span>
+                <span class="value">${recordsInserted}</span>
             </div>
-            <div class="col-md-3">
-                <div class="execution-metric text-center">
-                    <h6>Records Updated</h6>
-                    <div class="display-6 text-warning">${execution.records_updated || 0}</div>
-                </div>
+            <div class="execution-metric-card updated">
+                <span class="label">Updated</span>
+                <span class="value">${recordsUpdated}</span>
             </div>
-            <div class="col-md-3">
-                <div class="execution-metric text-center">
-                    <h6>Duration</h6>
-                    <div class="display-6 text-info">${execution.duration_seconds || 0}s</div>
-                </div>
+            <div class="execution-metric-card duration">
+                <span class="label">Duration</span>
+                <span class="value">${durationLabel}</span>
             </div>
         </div>
-        ${execution.error_message ? `
-            <div class="row mt-3">
-                <div class="col-12">
-                    <div class="alert alert-danger">
-                        <h6>Error Message</h6>
-                        <pre class="mb-0">${execution.error_message}</pre>
-                    </div>
-                </div>
+
+        <div class="execution-detail-sections">
+            <div class="execution-detail-card">
+                <div class="title">Timing</div>
+                <div class="execution-detail-item"><span class="detail-label">Started</span><span>${startedAt}</span></div>
+                <div class="execution-detail-item"><span class="detail-label">Completed</span><span>${completedAt}</span></div>
+            </div>
+            <div class="execution-detail-card">
+                <div class="title">Execution Context</div>
+                <div class="execution-detail-item"><span class="detail-label">Job ID</span><span>${escapeHtml(String(jobId))}</span></div>
+                <div class="execution-detail-item"><span class="detail-label">Endpoints</span><span>${escapeHtml(endpoints)}</span></div>
+            </div>
+        </div>
+
+        ${detail.error_message ? `
+            <div class="alert alert-danger soft-alert mt-3">
+                <h6 class="mb-1">Error Message</h6>
+                <pre class="mb-0 execution-error">${escapeHtml(detail.error_message)}</pre>
             </div>
         ` : ''}
+
+        <div class="execution-log-surface mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Live Logs</h6>
+                <span class="badge bg-light text-muted">${activeLabel}</span>
+            </div>
+            <div class="execution-log-stream" id="execution-log-stream">
+                ${logMarkup}
+            </div>
+        </div>
     `;
-    
-    const modal = new bootstrap.Modal(document.getElementById('executionModal'));
-    modal.show();
+
+    const logContainer = document.getElementById('execution-log-stream');
+    if (logContainer) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+}
+
+function renderExecutionLogs(logs = []) {
+    if (!logs || logs.length === 0) {
+        return '<div class="text-muted text-center py-3">No log entries yet</div>';
+    }
+
+    return logs.map(entry => {
+        const timestampValue = entry?.timestamp ? new Date(entry.timestamp) : null;
+        const timestamp = timestampValue && !Number.isNaN(timestampValue.valueOf())
+            ? timestampValue.toLocaleTimeString()
+            : '';
+        const level = (entry?.level || 'info').toLowerCase();
+        const levelLabel = level.toUpperCase();
+        const message = escapeHtml(entry?.message || '');
+        return `
+            <div class="execution-log-entry">
+                <span class="log-timestamp">${timestamp}</span>
+                <span class="log-level log-${level}">${levelLabel}</span>
+                <span class="log-message">${message}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function startExecutionPolling(executionId) {
+    stopExecutionPolling();
+    executionDetailTimer = setInterval(() => {
+        loadExecutionDetail(executionId, false);
+    }, EXECUTION_POLL_INTERVAL);
+}
+
+function stopExecutionPolling() {
+    if (executionDetailTimer) {
+        clearInterval(executionDetailTimer);
+        executionDetailTimer = null;
+    }
 }
 
 // Data Management Functions
@@ -1028,4 +1179,45 @@ function refreshData() {
     loadDataStatistics();
     loadSpatialLayers();
     showToast('Refreshed', 'Data refreshed successfully', 'success');
+}
+
+function resolveJobName(source) {
+    if (!source) {
+        return 'Unknown Job';
+    }
+
+    if (source.job_name) {
+        return source.job_name;
+    }
+
+    const jobRecord = jobs.find(job => job.id === source.job_id);
+    if (jobRecord?.name) {
+        return jobRecord.name;
+    }
+
+    if (source.execution_context?.job?.name) {
+        return source.execution_context.job.name;
+    }
+
+    return `Job ${source.job_id}`;
+}
+
+function capitalize(value) {
+    if (!value || typeof value !== 'string') {
+        return '';
+    }
+    return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }

@@ -208,6 +208,16 @@ curl http://localhost:8000/sync/status
 curl -X POST http://localhost:8000/sync/test
 ```
 
+#### Option 3: Use the CLI helpers
+
+```bash
+# Historical backfill from 2019 onward
+python -m src.cli.pipeline initial-load --start-date 2019-01-01
+
+# Fetch the last week of updates
+python -m src.cli.pipeline delta --window-days 7
+```
+
 ### What You Get
 
 - **Admin Portal**: http://localhost:8000/admin - Complete web-based management interface
@@ -350,14 +360,14 @@ validation:
 
 Load all data from a specific start date:
 ```bash
-python -m src.etl.initial_load --start-date "2019-01-01"
+python -m src.cli.pipeline initial-load --start-date "2019-01-01"
 ```
 
 ### Incremental Sync
 
 Fetch only new/updated records:
 ```bash
-python -m src.etl.sync --force
+python -m src.cli.pipeline delta --window-days 7
 ```
 
 ### Load Spatial Data

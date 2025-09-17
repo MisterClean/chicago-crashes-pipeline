@@ -9,12 +9,12 @@ import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models.base import SessionLocal
-from models.spatial import SpatialLayer, SpatialLayerFeature
-from utils.logging import get_logger
+from src.models.base import SessionLocal
+from src.models.spatial import SpatialLayer, SpatialLayerFeature
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -302,17 +302,13 @@ class SpatialLayerService:
     def _persist_features(self, session: Session, layer_id: int, features: List[Dict[str, Any]], srid: int) -> None:
         inserted = 0
         for feature in features:
-            geom_json = json.dumps(feature['geometry'])
             db_feature = SpatialLayerFeature(
                 layer_id=layer_id,
                 properties=feature['properties'],
+                geometry=feature['geometry'],
             )
-            db_feature.geometry = func.ST_SetSRID(func.ST_GeomFromGeoJSON(geom_json), srid)
             session.add(db_feature)
             inserted += 1
-
-            if inserted % 500 == 0:
-                session.flush()
 
         logger.info('Persisted spatial features', layer_id=layer_id, feature_count=inserted)
 

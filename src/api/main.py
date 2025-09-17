@@ -5,15 +5,12 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-import sys
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent))
-from utils.config import settings
-from utils.logging import get_logger, setup_logging
-from api.routers import sync, health, validation, jobs, spatial, spatial_layers
-from api.dependencies import sync_state
-from services.job_scheduler import start_job_scheduler, stop_job_scheduler
+from src.api.dependencies import sync_state
+from src.api.routers import health, jobs, spatial, spatial_layers, sync, validation
+from src.services.job_scheduler import start_job_scheduler, stop_job_scheduler
+from src.utils.config import settings
+from src.utils.logging import get_logger, setup_logging
 
 # Setup logging
 setup_logging("api", settings.logging.level)
@@ -28,8 +25,8 @@ async def lifespan(app: FastAPI):
     # Initialize database tables
     try:
         # Import models to register all tables with Base.metadata
-        import models  # This imports all models including jobs
-        from models.base import Base, engine
+        from src import models  # This imports all models including jobs
+        from src.models.base import Base, engine
         logger.info("Creating database tables...")
         Base.metadata.create_all(engine)
         logger.info("Database tables created successfully (including job management tables)")
@@ -42,7 +39,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize default jobs
     try:
-        from services.job_service import JobService
+        from src.services.job_service import JobService
         job_service = JobService()
         created_jobs = job_service.initialize_default_jobs()
         if created_jobs:
@@ -63,7 +60,7 @@ async def lifespan(app: FastAPI):
     
     # Cleanup tasks
     logger.info("Shutting down Chicago Crash Data Pipeline API")
-    
+
     # Stop job scheduler
     try:
         await stop_job_scheduler()

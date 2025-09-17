@@ -2,11 +2,8 @@
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-from utils.config import settings
-from utils.logging import get_logger
+from src.utils.config import settings
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

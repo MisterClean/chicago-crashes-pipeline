@@ -31,7 +31,7 @@ The Chicago Crash Data Pipeline can be deployed using several methods:
 
 ### 1. Production Docker Compose
 
-Create a production-ready `docker-compose.prod.yml`:
+Create a production-ready `docker compose -f docker/docker-compose.yml.prod.yml`:
 
 ```yaml
 version: '3.8'
@@ -178,19 +178,19 @@ MAX_CONNECTIONS=100
 
 ```bash
 # Build and start services
-docker-compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml up -d --build
 
 # Check service status
-docker-compose -f docker-compose.prod.yml ps
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml ps
 
 # View logs
-docker-compose -f docker-compose.prod.yml logs -f api
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml logs -f api
 
 # Run database migrations
-docker-compose -f docker-compose.prod.yml exec api alembic upgrade head
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml exec app alembic upgrade head
 
 # Scale API service
-docker-compose -f docker-compose.prod.yml up -d --scale api=3
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml up -d --scale api=3
 ```
 
 ## Kubernetes Deployment
@@ -656,7 +656,7 @@ async def get_metrics():
 ### 2. Log Configuration
 
 ```yaml
-# docker-compose.prod.yml - Add logging
+# docker compose -f docker/docker-compose.yml.prod.yml - Add logging
 services:
   api:
     logging:
@@ -755,7 +755,7 @@ engine = create_async_engine(
 1. **Database Connection Issues**
    ```bash
    # Check database connectivity
-   docker-compose exec api pg_isready -h db -p 5432
+   docker compose -f docker/docker-compose.yml exec app pg_isready -h db -p 5432
    ```
 
 2. **Memory Issues**
@@ -763,7 +763,7 @@ engine = create_async_engine(
    # Monitor memory usage
    docker stats
    
-   # Increase memory limits in docker-compose.yml
+   # Increase memory limits in docker compose -f docker/docker-compose.yml.yml
    deploy:
      resources:
        limits:
@@ -773,23 +773,23 @@ engine = create_async_engine(
 3. **Performance Issues**
    ```bash
    # Check database query performance
-   docker-compose exec db psql -U crashuser -d chicago_crashes -c "SELECT * FROM pg_stat_activity;"
+   docker compose -f docker/docker-compose.yml exec postgres psql -U crashuser -d chicago_crashes -c "SELECT * FROM pg_stat_activity;"
    ```
 
 ### Debugging Production Issues
 
 ```bash
 # View application logs
-docker-compose -f docker-compose.prod.yml logs -f --tail=100 api
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml logs -f --tail=100 api
 
 # Access container shell
-docker-compose -f docker-compose.prod.yml exec api bash
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml exec app bash
 
 # Check database status
-docker-compose -f docker-compose.prod.yml exec db pg_stat_activity
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml exec postgres pg_stat_activity
 
 # Monitor resource usage
-docker-compose -f docker-compose.prod.yml exec api top
+docker compose -f docker/docker-compose.yml -f docker compose -f docker/docker-compose.yml.prod.yml exec app top
 ```
 
 This deployment guide provides comprehensive instructions for deploying the Chicago Crash Data Pipeline in various production environments with proper security, monitoring, and maintenance procedures.
