@@ -281,7 +281,8 @@
                     <div class="col-lg-4">
                         <div class="card mb-4">
                             <div class="card-header">
-                                <h5><i class="bi bi-upload"></i> Upload GeoJSON Layer</h5>
+                                <h5 class="mb-1"><i class="bi bi-upload"></i> Upload Spatial Layer</h5>
+                                <p class="text-muted small mb-0">Import GeoJSON or zipped ESRI shapefiles to make them queryable inside the pipeline tools.</p>
                             </div>
                             <div class="card-body">
                                 <form id="spatial-layer-upload-form">
@@ -299,9 +300,17 @@
                                         <div class="form-text">Default is WGS84 / EPSG:4326</div>
                                     </div>
                                     <div class="mb-3">
-                                        <label for="spatial-layer-file" class="form-label">GeoJSON File</label>
+                                        <label for="spatial-layer-file" class="form-label">Spatial Data File</label>
                                         <input type="file" class="form-control" id="spatial-layer-file" name="file" accept=".geojson,.json,.zip,application/geo+json,application/json,application/zip" required>
-                                        <div class="form-text">Upload GeoJSON or a zipped ESRI Shapefile (.zip with .shp/.shx/.dbf/.prj)</div>
+                                        <div class="form-text">Accepted: GeoJSON (.geojson, .json) or zipped ESRI shapefile bundles (.zip with .shp/.shx/.dbf/.prj).</div>
+                                    </div>
+                                    <div class="bg-light border rounded p-3 mb-3">
+                                        <p class="small fw-semibold text-uppercase text-muted mb-2">Upload checklist</p>
+                                        <ul class="small mb-0 ps-3">
+                                            <li>Name the layer so analysts can find it later.</li>
+                                            <li>For shapefiles, compress the .shp, .shx, .dbf, and .prj files together.</li>
+                                            <li>Set SRID if your data is not WGS84 (EPSG:4326).</li>
+                                        </ul>
                                     </div>
                                     <button type="button" class="btn btn-primary w-100" id="spatial-layer-upload-btn">
                                         <i class="bi bi-cloud-upload"></i> Upload Layer
@@ -383,7 +392,7 @@
                             <i class="bi bi-save"></i> Save Changes
                         </button>
                         <button type="button" class="btn btn-outline-secondary" onclick="promptSpatialLayerReplace(currentSpatialLayerId)">
-                            <i class="bi bi-arrow-repeat"></i> Replace GeoJSON
+                            <i class="bi bi-arrow-repeat"></i> Replace Data File
                         </button>
                     </div>
                     <div id="spatial-layer-meta" class="mb-4"></div>
