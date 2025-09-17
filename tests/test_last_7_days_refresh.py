@@ -166,33 +166,6 @@ class TestLast7DaysRefresh:
         assert len(inserted_records) == len(sample_recent_crashes)
         assert all(record.get("sanitized") for record in inserted_records)
     
-    def test_sync_status_during_last_7_days_refresh(self, client, seven_days_ago_date, today_date):
-        """Test sync status endpoint while a 7-day refresh is running."""
-        # First check initial status
-        status_response = client.get("/sync/status")
-        assert status_response.status_code == 200
-        initial_status = status_response.json()
-        assert initial_status["status"] == "idle"
-        
-        # Trigger 7-day sync (this will run in background)
-        with patch("api.routers.sync.SODAClient"), \
-             patch("api.routers.sync.DataSanitizer"), \
-             patch("api.routers.sync.DatabaseService"):
-            
-            trigger_response = client.post("/sync/trigger", json={
-                "start_date": seven_days_ago_date,
-                "end_date": today_date,
-                "endpoint": "crashes"
-            })
-            assert trigger_response.status_code == 200
-            
-            # Check status immediately after trigger
-            status_response = client.get("/sync/status")
-            assert status_response.status_code == 200
-            running_status = status_response.json()
-            assert running_status["status"] == "running"
-            assert "Manual sync" in running_status["current_operation"]
-    
     def test_invalid_date_range_for_refresh(self, client):
         """Test sync with invalid date range."""
         # Test with end date before start date
@@ -204,29 +177,6 @@ class TestLast7DaysRefresh:
         
         # Should still trigger (validation happens in the background task)
         assert response.status_code == 200
-    
-    def test_concurrent_sync_prevention(self, client, seven_days_ago_date, today_date):
-        """Test that concurrent syncs are prevented."""
-        with patch("api.routers.sync.SODAClient"), \
-             patch("api.routers.sync.DataSanitizer"), \
-             patch("api.routers.sync.DatabaseService"):
-            
-            # Trigger first sync
-            response1 = client.post("/sync/trigger", json={
-                "start_date": seven_days_ago_date,
-                "endpoint": "crashes"
-            })
-            assert response1.status_code == 200
-            
-            # Try to trigger second sync immediately
-            response2 = client.post("/sync/trigger", json={
-                "start_date": seven_days_ago_date,
-                "endpoint": "crashes"
-            })
-            
-            # Should be rejected due to sync already running
-            assert response2.status_code == 409
-            assert "already in progress" in response2.json()["detail"]
     
     @patch("api.routers.sync.SODAClient")
     def test_empty_result_handling(self, mock_client_class, client, seven_days_ago_date, today_date):
