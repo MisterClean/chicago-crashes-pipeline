@@ -40,7 +40,6 @@ vignettes/*.pdf
 .Renviron
 
 # pkgdown site
-docs/
 
 # translation temp files
 po/*~
@@ -181,3 +180,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+# Docusaurus
+node_modules/
+.docusaurus/
+build/
