@@ -4,8 +4,8 @@ from typing import Optional
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
-    BigInteger, Boolean, Column, DateTime, Float, ForeignKey, 
-    Index, Integer, String, Text
+    BigInteger, Boolean, Column, DateTime, Float, ForeignKey,
+    Index, Integer, String, Text,
 )
 from sqlalchemy.orm import relationship
 
@@ -49,7 +49,7 @@ class Crash(Base, TimestampMixin):
     # Location coordinates
     latitude = Column(Float, index=True)
     longitude = Column(Float, index=True)
-    geometry = Column(Geometry('POINT', srid=4326), index=True)
+    geometry = Column(Geometry("POINT", srid=4326), index=True)
     
     # Beat and location codes
     beat_of_occurrence = Column(String(10))
@@ -260,7 +260,7 @@ class VisionZeroFatality(Base, TimestampMixin):
     # Location
     longitude = Column(Float)
     latitude = Column(Float)
-    geometry = Column(Geometry('POINT', srid=4326), index=True)
+    geometry = Column(Geometry("POINT", srid=4326), index=True)
     
     # Additional fields that may be present
     geocoded_column = Column(Text)

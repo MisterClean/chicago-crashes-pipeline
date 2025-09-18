@@ -15,8 +15,8 @@ This guide covers development setup, coding standards, and contribution guidelin
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/MisterClean/lakeview-crashes.git
-   cd lakeview-crashes
+   git clone https://github.com/MisterClean/chicago-crashes-pipeline.git
+   cd chicago-crashes-pipeline
    ```
 
 2. **Set up virtual environment**
@@ -40,8 +40,8 @@ This guide covers development setup, coding standards, and contribution guidelin
 
 5. **Configure environment**
    ```bash
-   cp config/settings.example.yaml config/settings.yaml
-   # Edit config/settings.yaml with your database credentials
+   cp .env.example .env
+   # Update .env with your database credentials or use the provided defaults
    ```
 
 6. **Run tests**

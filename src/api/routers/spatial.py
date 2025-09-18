@@ -1,15 +1,12 @@
 """Spatial data endpoints."""
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, Query
-import sys
-from pathlib import Path
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
 try:
-    from spatial.simple_loader import SimpleShapefileLoader
+    from src.spatial.simple_loader import SimpleShapefileLoader
 except ModuleNotFoundError:  # pragma: no cover - optional dependency path
     SimpleShapefileLoader = None
-from utils.logging import get_logger
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/spatial", tags=["spatial"])

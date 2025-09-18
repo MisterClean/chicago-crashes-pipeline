@@ -2,26 +2,29 @@
 import asyncio
 import uuid
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_, desc
 
-import sys
-from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent))
-
-from models.jobs import (
-    ScheduledJob, JobExecution, DataDeletionLog, 
-    JobStatus, JobType, RecurrenceType, 
-    get_default_jobs, calculate_next_run
+from src.etl.soda_client import SODAClient
+from src.models.base import SessionLocal, get_db
+from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
+from src.models.jobs import (
+    DataDeletionLog,
+    JobExecution,
+    JobStatus,
+    JobType,
+    RecurrenceType,
+    ScheduledJob,
+    calculate_next_run,
+    get_default_jobs,
 )
-from models.base import SessionLocal, get_db
-from models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
-from services.database_service import DatabaseService
-from etl.soda_client import SODAClient
-from validators.data_sanitizer import DataSanitizer
-from utils.config import settings
-from utils.logging import get_logger
+from src.services.database_service import DatabaseService
+from src.services.sync_service import SyncService
+from src.validators.data_sanitizer import DataSanitizer
+from src.utils.config import settings
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -247,26 +250,39 @@ class JobService:
             
             # Create execution record
             execution_id = f"exec_{job_id}_{int(datetime.now().timestamp())}"
-            config = override_config or job.config
-            
-            trigger_type = 'manual' if force or override_config else 'scheduled'
+            config = override_config or job.config or {}
+
+            trigger_type = "manual" if force or override_config else "scheduled"
+            execution_context = {
+                "trigger": {
+                    "type": trigger_type,
+                    "force": force,
+                    "manual": trigger_type == "manual",
+                    "requested_at": datetime.utcnow().isoformat() + "Z",
+                },
+                "config": config,
+                "job": {"id": job.id, "name": job.name},
+                "logs": [],
+            }
 
             execution = JobExecution(
                 execution_id=execution_id,
                 job_id=job_id,
                 status=JobStatus.PENDING,
-                execution_context={
-                    "trigger": trigger_type,
-                    "force": force,
-                    "config": config,
-                    "logs": []
-                }
+                execution_context=execution_context,
             )
             
             session.add(execution)
             session.commit()
             session.refresh(execution)
-            
+
+            # Record initial log entry
+            self._append_execution_log(
+                session,
+                execution,
+                f"Execution queued for job '{job.name}'",
+            )
+
             # Start background execution
             asyncio.create_task(self._run_job_execution(execution.id, config))
             
@@ -283,110 +299,101 @@ class JobService:
     async def _run_job_execution(self, execution_id: int, config: Dict[str, Any]):
         """Run job execution in background."""
         session = self.get_session()
-        
+        execution: Optional[JobExecution] = None
+
         try:
-            execution = session.query(JobExecution).options(joinedload(JobExecution.job)).filter_by(id=execution_id).first()
+            execution = (
+                session.query(JobExecution)
+                .options(joinedload(JobExecution.job))
+                .filter_by(id=execution_id)
+                .first()
+            )
             if not execution:
                 logger.error(f"Execution {execution_id} not found")
                 return
-
+            
             job = execution.job
             start_time = datetime.now()
-
+            
             # Update execution status
             execution.status = JobStatus.RUNNING
             execution.started_at = start_time
             session.commit()
 
+            # Ensure context captures job metadata and sync parameters
+            self._merge_execution_context(
+                session,
+                execution,
+                {
+                    "job": {"id": job.id, "name": job.name},
+                    "trigger": {
+                        "started_at": start_time.isoformat() + "Z",
+                    },
+                },
+            )
+
             self._append_execution_log(
                 session,
                 execution,
-                f"Execution started for '{job.name}'"
+                f"Execution started for '{job.name}'",
             )
-
+            
             # Build sync parameters based on job type and config
             sync_params = self._build_sync_params(job.job_type, config)
-            
-            # Execute the sync operation
-            client = SODAClient()
-            sanitizer = DataSanitizer()
-            
-            total_records = 0
-            total_inserted = 0
-            total_updated = 0
-            
-            for endpoint_name in sync_params["endpoints"]:
-                endpoint_url = settings.api.endpoints[endpoint_name]
 
+            self._merge_execution_context(
+                session,
+                execution,
+                {"sync": {"parameters": sync_params}},
+            )
+
+            self._append_execution_log(
+                session,
+                execution,
+                "Syncing endpoints: " + ", ".join(sync_params["endpoints"]),
+            )
+
+            sync_service = SyncService(
+                client_factory=SODAClient,
+                sanitizer=DataSanitizer(),
+                database_service=self.db_service,
+            )
+
+            sync_result = await sync_service.sync(
+                endpoints=sync_params["endpoints"],
+                start_date=sync_params.get("start_date"),
+                end_date=sync_params.get("end_date"),
+            )
+
+            total_records = sync_result.total_records
+            total_inserted = sync_result.total_inserted
+            total_updated = sync_result.total_updated
+            total_skipped = sync_result.total_skipped
+
+            for endpoint_name, endpoint_result in sync_result.endpoint_results.items():
                 self._append_execution_log(
                     session,
                     execution,
-                    f"Fetching {endpoint_name} data from source"
-                )
-
-                # Fetch records
-                records = await client.fetch_all_records(
-                    endpoint=endpoint_url,
-                    batch_size=50000,
-                    start_date=sync_params.get("start_date"),
-                    end_date=sync_params.get("end_date"),
-                    date_field="crash_date",
-                    show_progress=False
-                )
-                
-                if not records:
-                    self._append_execution_log(
-                        session,
-                        execution,
-                        f"No records returned for {endpoint_name}",
-                        level="warning"
-                    )
-                    continue
-
-                # Process and save records
-                if endpoint_name == "crashes":
-                    processed_records = [sanitizer.sanitize_crash_record(r) for r in records]
-                    result = self.db_service.insert_crash_records(processed_records)
-                elif endpoint_name == "people":
-                    processed_records = [sanitizer.sanitize_person_record(r) for r in records]
-                    result = self.db_service.insert_person_records(processed_records)
-                elif endpoint_name == "vehicles":
-                    processed_records = [sanitizer.sanitize_vehicle_record(r) for r in records]
-                    result = self.db_service.insert_vehicle_records(processed_records)
-                elif endpoint_name == "fatalities":
-                    processed_records = [sanitizer.sanitize_fatality_record(r) for r in records]
-                    processed_records = sanitizer.remove_duplicates(processed_records, 'person_id')
-                    result = self.db_service.insert_fatality_records(processed_records)
-                else:
-                    result = {"inserted": 0, "updated": 0, "skipped": len(records)}
-
-                total_records += len(processed_records)
-                total_inserted += result.get("inserted", 0)
-                total_updated += result.get("updated", 0)
-
-                self._append_execution_log(
-                    session,
-                    execution,
-                    f"Processed {len(processed_records)} {endpoint_name} records (inserted: {result.get('inserted', 0)}, updated: {result.get('updated', 0)}, skipped: {result.get('skipped', 0)})"
+                    (
+                        f"{endpoint_name}: fetched {endpoint_result.records_fetched} records "
+                        f"(inserted: {endpoint_result.records_inserted}, "
+                        f"updated: {endpoint_result.records_updated}, "
+                        f"skipped: {endpoint_result.records_skipped})"
+                    ),
                 )
 
             # Update execution as completed
             end_time = datetime.now()
             duration = int((end_time - start_time).total_seconds())
-
+            
             execution.status = JobStatus.COMPLETED
             execution.completed_at = end_time
             execution.duration_seconds = duration
             execution.records_processed = total_records
             execution.records_inserted = total_inserted
             execution.records_updated = total_updated
+            execution.records_skipped = total_skipped
 
-            self._append_execution_log(
-                session,
-                execution,
-                "Execution completed successfully"
-            )
-            
             # Update job's last run and next run
             job.last_run = end_time
             if job.enabled and job.recurrence_type != RecurrenceType.ONCE:
@@ -398,6 +405,29 @@ class JobService:
             
             session.commit()
 
+            self._merge_execution_context(
+                session,
+                execution,
+                {
+                    "result": {
+                        "completed_at": end_time.isoformat() + "Z",
+                        "duration_seconds": duration,
+                        "totals": {
+                            "processed": total_records,
+                            "inserted": total_inserted,
+                            "updated": total_updated,
+                            "skipped": total_skipped,
+                        },
+                    }
+                },
+            )
+
+            self._append_execution_log(
+                session,
+                execution,
+                "Execution completed successfully",
+            )
+
             logger.info(
                 f"Job execution completed",
                 execution_id=execution.execution_id,
@@ -407,33 +437,98 @@ class JobService:
             )
             
         except Exception as e:
-            # Update execution as failed
-            execution.status = JobStatus.FAILED
-            execution.completed_at = datetime.now()
-            execution.error_message = str(e)
-            execution.error_details = {"exception": type(e).__name__}
+            if execution:
+                execution.status = JobStatus.FAILED
+                execution.completed_at = datetime.now()
+                execution.error_message = str(e)
+                execution.error_details = {"exception": type(e).__name__}
 
-            if execution.started_at:
-                duration = int((datetime.now() - execution.started_at).total_seconds())
-                execution.duration_seconds = duration
+                if execution.started_at:
+                    duration = int((datetime.now() - execution.started_at).total_seconds())
+                    execution.duration_seconds = duration
 
-            session.commit()
+                session.commit()
 
-            self._append_execution_log(
-                session,
-                execution,
-                f"Execution failed: {str(e)}",
-                level="error"
-            )
+                self._merge_execution_context(
+                    session,
+                    execution,
+                    {"result": {"error": str(e)}},
+                )
 
-            logger.error(
-                f"Job execution failed",
-                execution_id=execution.execution_id,
-                job_name=job.name,
-                error=str(e)
-            )
+                self._append_execution_log(
+                    session,
+                    execution,
+                    f"Execution failed: {str(e)}",
+                    level="error",
+                )
+
+                logger.error(
+                    f"Job execution failed",
+                    execution_id=execution.execution_id,
+                    job_name=execution.job.name if execution.job else None,
+                    error=str(e)
+                )
+            else:
+                logger.error(
+                    f"Job execution failed before record retrieval",
+                    execution_id=execution_id,
+                    error=str(e)
+                )
         finally:
             session.close()
+
+    def _append_execution_log(
+        self,
+        session: Session,
+        execution: JobExecution,
+        message: str,
+        level: str = "info",
+    ) -> None:
+        """Append a structured log entry to the execution context."""
+        context = execution.execution_context if isinstance(execution.execution_context, dict) else {}
+        logs = context.get("logs") if isinstance(context.get("logs"), list) else []
+
+        logs.append(
+            {
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "level": level,
+                "message": message,
+            }
+        )
+
+        context["logs"] = logs
+        execution.execution_context = context
+        session.add(execution)
+        session.commit()
+
+    def _merge_execution_context(
+        self,
+        session: Session,
+        execution: JobExecution,
+        updates: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge updates into execution context, preserving existing keys."""
+        context = execution.execution_context if isinstance(execution.execution_context, dict) else {}
+        merged = self._deep_merge_dicts(context, updates)
+        execution.execution_context = merged
+        session.add(execution)
+        session.commit()
+        return merged
+
+    @staticmethod
+    def _deep_merge_dicts(original: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively merge two dictionaries."""
+        result: Dict[str, Any] = dict(original)
+        for key, value in updates.items():
+            if (
+                key in result
+                and isinstance(result[key], dict)
+                and isinstance(value, dict)
+            ):
+                result[key] = JobService._deep_merge_dicts(result[key], value)
+            else:
+                result[key] = value
+        return result
 
     def _build_sync_params(self, job_type: str, config: Dict[str, Any]) -> Dict[str, Any]:
         """Build sync parameters based on job type and config."""
@@ -511,42 +606,44 @@ class JobService:
         """Get job execution history."""
         session = self.get_session()
         try:
-            query = session.query(JobExecution).options(joinedload(JobExecution.job)).order_by(desc(JobExecution.created_at))
+            query = (
+                session.query(JobExecution)
+                .options(joinedload(JobExecution.job))
+                .order_by(desc(JobExecution.created_at))
+            )
             if job_id:
                 query = query.filter_by(job_id=job_id)
-            return query.limit(limit).all()
+            executions = query.limit(limit).all()
+            for execution in executions:
+                session.expunge(execution)
+            return executions
         finally:
             session.close()
 
-    def get_execution_by_identifier(self, execution_id: str) -> Optional[JobExecution]:
-        """Retrieve a job execution by its identifier."""
+    def get_execution_by_identifier(self, identifier: str) -> Optional[JobExecution]:
+        """Fetch a single execution by execution_id or numeric ID."""
         session = self.get_session()
         try:
-            filters = [JobExecution.execution_id == execution_id]
-            if execution_id.isdigit():
-                filters.append(JobExecution.id == int(execution_id))
+            execution = (
+                session.query(JobExecution)
+                .options(joinedload(JobExecution.job))
+                .filter_by(execution_id=identifier)
+                .first()
+            )
+            if not execution and identifier.isdigit():
+                execution = (
+                    session.query(JobExecution)
+                    .options(joinedload(JobExecution.job))
+                    .filter_by(id=int(identifier))
+                    .first()
+                )
 
-            execution = session.query(JobExecution).options(joinedload(JobExecution.job)).filter(
-                or_(*filters)
-            ).first()
+            if execution:
+                session.expunge(execution)
+
             return execution
         finally:
             session.close()
-
-    def _append_execution_log(self, session: Session, execution: JobExecution, message: str, level: str = "info") -> None:
-        """Append a structured log entry to an execution context and persist it."""
-        context = execution.execution_context or {}
-        logs = context.get("logs", [])
-        logs.append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "level": level,
-            "message": message
-        })
-        # Keep only the most recent 200 log entries to avoid oversized payloads
-        context["logs"] = logs[-200:]
-        execution.execution_context = context
-        session.add(execution)
-        session.commit()
     
     def delete_all_data(self, table_name: str, date_range: Dict[str, str] = None) -> Dict[str, Any]:
         """Delete all data from a table with optional date filtering."""

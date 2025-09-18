@@ -2,6 +2,10 @@
 
 This guide helps you diagnose and resolve common issues with the Chicago Crash Data Pipeline.
 
+> **Note:** The examples below assume you are running commands from the project root
+> and pointing Docker Compose at `docker/docker-compose.yml`. Replace `docker-compose`
+> with `docker compose -f docker/docker-compose.yml` if you are using the v2 CLI.
+
 ## Quick Diagnostics
 
 ### Health Check Commands
@@ -11,13 +15,13 @@ This guide helps you diagnose and resolve common issues with the Chicago Crash D
 curl http://localhost:8000/health
 
 # Check database connectivity
-docker-compose exec db pg_isready -U postgres
+docker-compose -f docker/docker-compose.yml exec postgres pg_isready -U postgres
 
 # Check all services status
-docker-compose ps
+docker compose -f docker/docker-compose.yml ps
 
 # View recent logs
-docker-compose logs --tail=50 -f api
+docker compose -f docker/docker-compose.yml logs --tail=50 -f app
 ```
 
 ## Common Issues
@@ -32,13 +36,13 @@ docker-compose logs --tail=50 -f api
 #### Diagnosis
 ```bash
 # Check if PostgreSQL is running
-docker-compose ps db
+docker compose -f docker/docker-compose.yml ps
 
 # Test database connection
-docker-compose exec api psql -h db -U postgres -d chicago_crashes -c "SELECT 1;"
+docker-compose -f docker/docker-compose.yml exec app psql -h postgres -U postgres -d chicago_crashes -c "SELECT 1;"
 
 # Check database logs
-docker-compose logs db
+docker compose -f docker/docker-compose.yml logs postgres
 ```
 
 #### Solutions
@@ -46,7 +50,7 @@ docker-compose logs db
 **PostgreSQL not running:**
 ```bash
 # Start database service
-docker-compose up -d db
+docker compose -f docker/docker-compose.yml up -d db
 
 # Check if port is available
 lsof -i :5432
@@ -58,14 +62,14 @@ lsof -i :5432
 POSTGRES_PASSWORD=your_new_password
 
 # Recreate database container
-docker-compose down db
-docker-compose up -d db
+docker compose -f docker/docker-compose.yml down db
+docker compose -f docker/docker-compose.yml up -d db
 ```
 
 **PostGIS extension missing:**
 ```bash
 # Install PostGIS extension
-docker-compose exec db psql -U postgres -d chicago_crashes -c "CREATE EXTENSION IF NOT EXISTS postgis;"
+docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d chicago_crashes -c "CREATE EXTENSION IF NOT EXISTS postgis;"
 ```
 
 ### 2. API Server Issues
@@ -81,10 +85,10 @@ docker-compose exec db psql -U postgres -d chicago_crashes -c "CREATE EXTENSION 
 curl -f http://localhost:8000/ || echo "API not responding"
 
 # Check API logs
-docker-compose logs api
+docker-compose -f docker/docker-compose.yml logs app
 
 # Test from inside container
-docker-compose exec api python -c "import src.api.main"
+docker-compose -f docker/docker-compose.yml exec app python -c "import src.api.main"
 ```
 
 #### Solutions
@@ -106,10 +110,10 @@ ports:
 ```bash
 # Rebuild container with latest code
 docker-compose build --no-cache api
-docker-compose up -d api
+docker compose -f docker/docker-compose.yml up -d api
 
 # Check Python path
-docker-compose exec api python -c "import sys; print('\n'.join(sys.path))"
+docker compose -f docker/docker-compose.yml exec app python -c "import sys; print('\n'.join(sys.path))"
 ```
 
 **Missing dependencies:**
@@ -135,7 +139,7 @@ curl http://localhost:8000/sync/status
 curl "https://data.cityofchicago.org/resource/85ca-t3if.json?\$limit=1"
 
 # Check API logs for sync errors
-docker-compose logs api | grep -i "error\|sync"
+docker compose -f docker/docker-compose.yml logs app | grep -i "error\|sync"
 ```
 
 #### Solutions
@@ -162,10 +166,10 @@ docker-compose restart api
 **Network connectivity:**
 ```bash
 # Test DNS resolution
-docker-compose exec api nslookup data.cityofchicago.org
+docker compose -f docker/docker-compose.yml exec app nslookup data.cityofchicago.org
 
 # Test HTTPS connectivity
-docker-compose exec api curl -I https://data.cityofchicago.org
+docker compose -f docker/docker-compose.yml exec app curl -I https://data.cityofchicago.org
 ```
 
 ### 4. Spatial Data Issues
@@ -178,7 +182,7 @@ docker-compose exec api curl -I https://data.cityofchicago.org
 #### Diagnosis
 ```bash
 # Check PostGIS extension
-docker-compose exec db psql -U postgres -d chicago_crashes -c "SELECT PostGIS_version();"
+docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d chicago_crashes -c "SELECT PostGIS_version();"
 
 # List spatial tables
 curl http://localhost:8000/spatial/tables
@@ -192,13 +196,13 @@ file data/shapefiles/*.shp
 **Missing PostGIS:**
 ```bash
 # Install PostGIS extension
-docker-compose exec db psql -U postgres -d chicago_crashes -c "CREATE EXTENSION postgis;"
+docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d chicago_crashes -c "CREATE EXTENSION postgis;"
 ```
 
 **Invalid shapefile format:**
 ```bash
 # Validate shapefile with GDAL
-docker-compose exec api ogrinfo data/shapefiles/your_file.shp
+docker compose -f docker/docker-compose.yml exec app ogrinfo data/shapefiles/your_file.shp
 
 # Convert to valid format
 ogr2ogr -f "ESRI Shapefile" output.shp input.shp -t_srs EPSG:4326
@@ -207,7 +211,7 @@ ogr2ogr -f "ESRI Shapefile" output.shp input.shp -t_srs EPSG:4326
 **Coordinate system issues:**
 ```bash
 # Check coordinate system
-docker-compose exec api python -c "
+docker compose -f docker/docker-compose.yml exec app python -c "
 import geopandas as gpd
 gdf = gpd.read_file('data/shapefiles/your_file.shp')
 print(f'CRS: {gdf.crs}')
@@ -230,7 +234,7 @@ gdf = gdf.to_crs('EPSG:4326')
 docker stats
 
 # Monitor database queries
-docker-compose exec db psql -U postgres -d chicago_crashes -c "
+docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d chicago_crashes -c "
 SELECT query, state, query_start 
 FROM pg_stat_activity 
 WHERE state != 'idle' 
@@ -238,7 +242,7 @@ ORDER BY query_start;
 "
 
 # Check slow queries
-docker-compose exec db psql -U postgres -d chicago_crashes -c "
+docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -d chicago_crashes -c "
 SELECT query, mean_time, calls 
 FROM pg_stat_statements 
 ORDER BY mean_time DESC 
@@ -257,7 +261,7 @@ deploy:
       memory: 4G
 
 # Enable memory monitoring
-docker-compose exec api python -c "
+docker compose -f docker/docker-compose.yml exec app python -c "
 import psutil
 print(f'Memory usage: {psutil.virtual_memory().percent}%')
 "
@@ -453,7 +457,7 @@ WHERE NOT l.granted;
 curl "http://localhost:8000/validate/crashes?limit=100"
 
 # View detailed validation errors
-docker-compose logs api | grep -i "validation"
+docker compose -f docker/docker-compose.yml logs app | grep -i "validation"
 ```
 
 ### 2. Geographic Data Issues
@@ -491,22 +495,22 @@ WHERE p.crash_record_id IS NULL;
 
 ```bash
 # Restore from backup
-docker-compose down
+docker compose -f docker/docker-compose.yml down
 docker volume rm lakeview-crashes_postgres_data
-docker-compose up -d db
+docker compose -f docker/docker-compose.yml up -d db
 
 # Restore data
-gunzip -c backup_20240828.sql.gz | docker-compose exec -T db psql -U postgres -d chicago_crashes
+gunzip -c backup_20240828.sql.gz | docker compose -f docker/docker-compose.yml exec -T postgres psql -U postgres -d chicago_crashes
 ```
 
 ### 2. Application Recovery
 
 ```bash
 # Reset application state
-docker-compose down
+docker compose -f docker/docker-compose.yml down
 docker-compose pull
 docker-compose build --no-cache
-docker-compose up -d
+docker compose -f docker/docker-compose.yml up -d
 
 # Clear cache and temporary data
 rm -rf data/temp/
@@ -517,9 +521,9 @@ rm -rf logs/*.log
 
 ```bash
 # Complete system reset
-docker-compose down -v  # WARNING: This removes all data
+docker compose -f docker/docker-compose.yml down -v  # WARNING: This removes all data
 docker system prune -af
-docker-compose up -d --build
+docker compose -f docker/docker-compose.yml up -d --build
 
 # Restore from backups
 # ... restore database backup
@@ -568,7 +572,7 @@ echo '/app/logs/*.log {
 ### 2. Debug Information
 When reporting issues, include:
 - Error messages and stack traces
-- System information (`docker-compose ps`, `docker version`)
+- System information (`docker compose -f docker/docker-compose.yml ps`, `docker version`)
 - Configuration files (with sensitive data removed)
 - Steps to reproduce the issue
 
@@ -577,8 +581,8 @@ When reporting issues, include:
 # Collect all relevant logs
 mkdir debug-info
 docker-compose logs > debug-info/compose-logs.txt
-docker-compose exec api python --version > debug-info/python-version.txt
-docker-compose exec db psql -U postgres -c "SELECT version();" > debug-info/postgres-version.txt
+docker compose -f docker/docker-compose.yml exec app python --version > debug-info/python-version.txt
+docker compose -f docker/docker-compose.yml exec postgres psql -U postgres -c "SELECT version();" > debug-info/postgres-version.txt
 tar -czf debug-info.tar.gz debug-info/
 ```
 

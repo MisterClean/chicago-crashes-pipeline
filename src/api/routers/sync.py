@@ -2,23 +2,34 @@
 import asyncio
 import inspect
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
-import sys
-from pathlib import Path
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from api.models import SyncRequest, SyncResponse, StatusResponse, TestSyncResponse
-from api.dependencies import get_soda_client, get_data_sanitizer, get_sync_state
-from etl.soda_client import SODAClient
-from validators.data_sanitizer import DataSanitizer
-from services.database_service import DatabaseService
-from utils.config import settings
-from utils.logging import get_logger
+from src.api.dependencies import get_sync_lock, get_sync_state
+from src.api.models import StatusResponse, SyncRequest, SyncResponse, TestSyncResponse
+from src.etl.soda_client import SODAClient
+from src.services.database_service import DatabaseService as _DatabaseService
+from src.services.sync_service import SyncService
+from src.utils.config import settings
+from src.utils.logging import get_logger
+from src.validators.data_sanitizer import DataSanitizer
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+# Backwards-compatibility alias for legacy patches targeting this module
+DatabaseService = _DatabaseService
+
+
+def get_soda_client() -> SODAClient:
+    """Factory used so tests can patch SODA client creation."""
+    return SODAClient()
+
+
+def get_data_sanitizer() -> DataSanitizer:
+    """Factory used so tests can patch data sanitizer creation."""
+    return DataSanitizer()
 
 
 async def _maybe_await(result):
@@ -50,29 +61,28 @@ async def trigger_sync(
     sync_state: dict = Depends(get_sync_state)
 ):
     """Trigger a manual sync operation."""
-    # Check if sync is already running
-    if sync_state["status"] == "running":
+    # Prevent concurrent syncs using shared lock state
+    sync_lock = get_sync_lock()
+
+    if sync_state["status"] == "running" or sync_lock.locked():
         raise HTTPException(
             status_code=409,
             detail="Sync operation already in progress"
         )
-    
+
     # Generate sync ID
     sync_id = f"sync_{int(datetime.now().timestamp())}"
     
     # Update sync state
     sync_state["status"] = "running"
     sync_state["current_operation"] = f"Manual sync {sync_id}"
-    
+
     # Add background task
     background_tasks.add_task(
-        run_sync_operation,
+        guarded_run_sync_operation,
         sync_id,
+        request,
         sync_state,
-        request.start_date,
-        request.end_date,
-        request.force,
-        request.endpoint
     )
     
     logger.info("Triggered manual sync", sync_id=sync_id, request=request.dict())
@@ -86,21 +96,16 @@ async def trigger_sync(
 
 
 @router.post("/test", response_model=TestSyncResponse)
-async def test_sync(
-    client: SODAClient = Depends(get_soda_client),
-    sanitizer: DataSanitizer = Depends(get_data_sanitizer),
-    sync_state: dict = Depends(get_sync_state)
-):
+async def test_sync(sync_state: dict = Depends(get_sync_state)):
     """Test sync operation with a small dataset."""
     try:
         sync_state["status"] = "testing"
         sync_state["current_operation"] = "Test sync"
         
-        # Fetch a small number of test records
-        test_records = await _maybe_await(client.fetch_records(
-            endpoint=settings.api.endpoints["crashes"],
-            limit=5
-        ))
+        client = get_soda_client()
+        sanitizer = get_data_sanitizer()
+
+        test_records = await _fetch_sample_records(client)
         
         # Test data sanitization
         cleaned_records = []
@@ -171,14 +176,53 @@ async def get_database_counts():
         raise HTTPException(status_code=500, detail=f"Failed to get database counts: {str(e)}")
 
 
+async def _fetch_sample_records(client: Any, limit: int = 5) -> List[Dict[str, Any]]:
+    """Fetch a small number of crash records, accommodating patched clients."""
+
+    if hasattr(client, "__aenter__"):
+        async with client:
+            return await client.fetch_records(
+                endpoint=settings.api.endpoints["crashes"],
+                limit=limit,
+            )
+
+    result = client.fetch_records(
+        endpoint=settings.api.endpoints["crashes"],
+        limit=limit,
+    )
+    if asyncio.iscoroutine(result):
+        result = await result
+
+    closer = getattr(client, "close", None)
+    if closer:
+        maybe = closer()
+        if asyncio.iscoroutine(maybe):  # pragma: no cover - depends on client implementation
+            await maybe
+
+    return result
+
+
+async def guarded_run_sync_operation(sync_id: str, request: SyncRequest, sync_state: dict) -> None:
+    """Wrap sync execution with the global sync lock."""
+    sync_lock = get_sync_lock()
+    async with sync_lock:
+        await run_sync_operation(
+            sync_id=sync_id,
+            sync_state=sync_state,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            endpoint=request.endpoint,
+        )
+
+
 async def run_sync_operation(
+    *,
     sync_id: str,
     sync_state: dict,
-    start_date: str = None,
-    end_date: str = None,
-    force: bool = False,
-    endpoint: str = None
-):
+    start_date: str | None = None,
+    end_date: str | None = None,
+    endpoint: str | None = None,
+) -> None:
     """Background task to run sync operation."""
     start_time = datetime.now()
     
@@ -187,75 +231,23 @@ async def run_sync_operation(
         
         sync_state["stats"]["total_syncs"] += 1
         
-        # Initialize clients
-        client = SODAClient()
-        sanitizer = DataSanitizer()
-        db_service = DatabaseService()
-        
-        # Determine which endpoints to sync
         endpoints_to_sync = [endpoint] if endpoint else list(settings.api.endpoints.keys())
-        
-        total_records = 0
-        total_inserted = 0
-        total_updated = 0
-        
-        for endpoint_name in endpoints_to_sync:
-            sync_state["current_operation"] = f"Syncing {endpoint_name}"
-            
-            endpoint_url = settings.api.endpoints[endpoint_name]
-            
-            # Fetch all records with pagination and date filtering
-            records = await _maybe_await(client.fetch_all_records(
-                endpoint=endpoint_url,
-                batch_size=50000,  # 50K records per batch
-                start_date=start_date,
-                end_date=end_date,
-                date_field="crash_date",
-                show_progress=False  # Disable progress bar for background task
-            ))
-            
-            if not records:
-                logger.info(f"No records found for {endpoint_name}")
-                continue
-            
-            # Process records based on type
-            if endpoint_name == "crashes":
-                processed_records = [sanitizer.sanitize_crash_record(r) for r in records]
-                # Save to database
-                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
-                result = db_service.insert_crash_records(processed_records)
-            elif endpoint_name == "people":
-                processed_records = [sanitizer.sanitize_person_record(r) for r in records]
-                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
-                result = db_service.insert_person_records(processed_records)
-            elif endpoint_name == "vehicles":
-                processed_records = [sanitizer.sanitize_vehicle_record(r) for r in records]
-                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
-                result = db_service.insert_vehicle_records(processed_records)
-            elif endpoint_name == "fatalities":
-                processed_records = [sanitizer.sanitize_fatality_record(r) for r in records]
-                # Remove duplicates by person_id
-                processed_records = sanitizer.remove_duplicates(processed_records, 'person_id')
-                sync_state["current_operation"] = f"Saving {endpoint_name} to database"
-                result = db_service.insert_fatality_records(processed_records)
-            else:
-                processed_records = records
-                result = {"inserted": 0, "updated": 0, "skipped": len(records)}
-            
-            total_records += len(processed_records)
-            total_inserted += result.get("inserted", 0)
-            total_updated += result.get("updated", 0)
-            
-            logger.info(
-                "Processed endpoint records",
-                endpoint=endpoint_name,
-                records=len(processed_records),
-                inserted=result.get("inserted", 0),
-                updated=result.get("updated", 0),
-                skipped=result.get("skipped", 0)
-            )
-        
-        # Calculate duration
+
+        sanitizer = get_data_sanitizer()
+        sync_service = SyncService(
+            client_factory=get_soda_client,
+            sanitizer=sanitizer,
+            database_service=DatabaseService(),
+        )
+
+        sync_state["current_operation"] = "Preparing sync"
+
+        service_result = await sync_service.sync(
+            endpoints=endpoints_to_sync,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
         duration = (datetime.now() - start_time).total_seconds()
 
         # Small delay so status endpoints register running state before reset
@@ -266,18 +258,18 @@ async def run_sync_operation(
         sync_state["current_operation"] = None
         sync_state["last_sync"] = datetime.now()
         sync_state["stats"]["successful_syncs"] += 1
-        sync_state["stats"]["total_records_processed"] += total_records
+        sync_state["stats"]["total_records_processed"] += service_result.total_records
         sync_state["stats"]["last_sync_duration"] = duration
-        
+
         logger.info(
             "Sync operation completed successfully",
             sync_id=sync_id,
-            total_records=total_records,
-            total_inserted=total_inserted,
-            total_updated=total_updated,
+            total_records=service_result.total_records,
+            total_inserted=service_result.total_inserted,
+            total_updated=service_result.total_updated,
             duration=duration
         )
-        
+
     except Exception as e:
         duration = (datetime.now() - start_time).total_seconds()
 
@@ -288,5 +280,5 @@ async def run_sync_operation(
         sync_state["stats"]["failed_syncs"] += 1
         sync_state["stats"]["last_error"] = str(e)
         sync_state["stats"]["last_sync_duration"] = duration
-        
+
         logger.error("Sync operation failed", sync_id=sync_id, error=str(e), duration=duration)

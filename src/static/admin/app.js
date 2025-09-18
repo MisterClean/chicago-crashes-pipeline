@@ -86,14 +86,6 @@ function setupEventListeners() {
             }
         });
     });
-
-    const executionModalEl = document.getElementById('executionModal');
-    if (executionModalEl) {
-        executionModalEl.addEventListener('hidden.bs.modal', () => {
-            stopExecutionPolling();
-            activeExecutionId = null;
-        });
-    }
 }
 
 // API Helper Functions
@@ -165,14 +157,13 @@ function displayRecentActivity(executions) {
         const statusClass = `execution-${execution.status}`;
         const statusIcon = getStatusIcon(execution.status);
         const timeAgo = getTimeAgo(execution.started_at);
-        const jobName = resolveJobName(execution);
         
         return `
             <div class="list-group-item ${statusClass}">
                 <div class="d-flex justify-content-between align-items-center">
                     <div>
                         <span class="status-icon ${execution.status}"></span>
-                        <strong>${escapeHtml(jobName)}</strong>
+                        <strong>Job ${execution.job_id}</strong>
                         <small class="text-muted ms-2">${execution.execution_id.substring(0, 8)}...</small>
                     </div>
                     <small class="text-muted">${timeAgo}</small>
@@ -253,25 +244,13 @@ function displayJobs(jobsList) {
 }
 
 // Execution Management Functions
-async function loadExecutions(jobId) {
+async function loadExecutions(jobId = null) {
     try {
-        const filterSelect = document.getElementById('execution-filter');
-        let targetJobId = jobId;
-
-        if (targetJobId === undefined) {
-            if (filterSelect && filterSelect.value) {
-                targetJobId = parseInt(filterSelect.value, 10);
-            } else {
-                targetJobId = null;
-            }
-        }
-
-        const endpoint = targetJobId ? 
-            `/jobs/${targetJobId}/executions?limit=100` : 
+        const endpoint = jobId ? 
+            `/jobs/${jobId}/executions?limit=100` : 
             '/jobs/executions/recent?limit=100';
-
-        const data = await apiRequest(endpoint);
-        executions = enrichExecutions(data);
+        
+        executions = await apiRequest(endpoint);
         displayExecutions(executions);
     } catch (error) {
         console.error('Failed to load executions:', error);
@@ -292,26 +271,42 @@ function displayExecutions(executionsList) {
         const started = execution.started_at ? new Date(execution.started_at).toLocaleString() : 'Not started';
         const duration = execution.duration_seconds ? `${execution.duration_seconds}s` : 'N/A';
         const jobName = resolveJobName(execution);
-        
+        const hasJobId = execution.job_id !== undefined && execution.job_id !== null;
+        const jobIdLabel = hasJobId ? `ID: ${escapeHtml(String(execution.job_id))}` : '';
+        const processed = Number(execution.records_processed || 0).toLocaleString();
+        const inserted = Number(execution.records_inserted || 0).toLocaleString();
+        const hasUpdated = execution.records_updated !== undefined && execution.records_updated !== null;
+        const updated = hasUpdated ? Number(execution.records_updated || 0).toLocaleString() : null;
+        const executionIdText = escapeHtml(execution.execution_id);
+        const executionIdAttr = String(execution.execution_id)
+            .replace(/\\/g, '\\\\')
+            .replace(/'/g, "\\'");
+
         return `
             <tr>
-                <td><code>${execution.execution_id}</code></td>
                 <td>
-                    <div class="fw-semibold">${escapeHtml(jobName)}</div>
-                    <div class="text-muted small">ID: ${execution.job_id}</div>
+                    <button type="button" class="execution-id-link" onclick="viewExecutionDetails('${executionIdAttr}')">
+                        ${executionIdText}
+                    </button>
+                </td>
+                <td>
+                    <div class="execution-job">
+                        <div class="execution-job-name">${escapeHtml(jobName)}</div>
+                        ${jobIdLabel ? `<div class="execution-job-meta">${jobIdLabel}</div>` : ''}
+                    </div>
                 </td>
                 <td>${statusBadge}</td>
                 <td>${started}</td>
                 <td>${duration}</td>
                 <td>
-                    <div class="small">
-                        <div>Processed: ${execution.records_processed || 0}</div>
-                        <div>Inserted: ${execution.records_inserted || 0}</div>
-                        ${execution.records_updated ? `<div>Updated: ${execution.records_updated}</div>` : ''}
+                    <div class="execution-records">
+                        <div>Processed: ${processed}</div>
+                        <div>Inserted: ${inserted}</div>
+                        ${hasUpdated ? `<div>Updated: ${updated}</div>` : ''}
                     </div>
                 </td>
                 <td>
-                    <button class="btn btn-sm btn-outline-info" onclick="viewExecutionDetails('${execution.execution_id}')" title="View Details">
+                    <button class="btn btn-sm btn-outline-info" onclick="viewExecutionDetails('${executionIdAttr}')" title="View Details">
                         <i class="bi bi-eye"></i>
                     </button>
                 </td>
@@ -320,22 +315,6 @@ function displayExecutions(executionsList) {
     }).join('');
     
     tbody.innerHTML = html;
-}
-
-function enrichExecutions(executionsList) {
-    if (!executionsList) {
-        return [];
-    }
-
-    const jobMap = new Map((jobs || []).map(job => [job.id, job.name]));
-
-    return executionsList.map(execution => {
-        const friendlyName = execution.job_name || jobMap.get(execution.job_id) || `Job ${execution.job_id}`;
-        return {
-            ...execution,
-            job_name: friendlyName
-        };
-    });
 }
 
 // Job CRUD Operations
@@ -507,6 +486,7 @@ function viewJobExecutions(jobId) {
 async function viewExecutionDetails(executionId) {
     stopExecutionPolling();
     activeExecutionId = executionId;
+
     const modalElement = document.getElementById('executionModal');
     const modalBody = document.getElementById('execution-details');
     if (modalBody) {
@@ -544,7 +524,6 @@ async function loadExecutionDetail(executionId, allowRestart = false) {
             }
         } else {
             stopExecutionPolling();
-            // Refresh the executions table to reflect the latest status
             await loadExecutions();
         }
     } catch (error) {
@@ -578,11 +557,13 @@ function renderExecutionDetail(detail) {
     const recordsInserted = Number(detail.records_inserted || 0).toLocaleString();
     const recordsUpdated = Number(detail.records_updated || 0).toLocaleString();
 
-    const triggerType = detail.execution_context?.trigger ||
-        (detail.execution_context?.manual ? 'manual' : 'scheduled');
-    const forceRun = detail.execution_context?.force;
-    const endpoints = Array.isArray(detail.execution_context?.config?.endpoints) ?
-        detail.execution_context.config.endpoints.join(', ') : '—';
+    const triggerMeta = detail.execution_context?.trigger;
+    const triggerType = triggerMeta?.type || (detail.execution_context?.manual ? 'manual' : null);
+    const forceRun = triggerMeta?.force ?? detail.execution_context?.force;
+    const endpoints = Array.isArray(detail.execution_context?.config?.endpoints)
+        ? detail.execution_context.config.endpoints.join(', ')
+        : '—';
+    const jobId = detail.job_id ?? '—';
 
     const contextChips = [];
     if (triggerType) {
@@ -596,59 +577,49 @@ function renderExecutionDetail(detail) {
     const activeLabel = ['RUNNING', 'PENDING'].includes(detail.status) ? 'Live (5s refresh)' : 'Final output';
 
     modalBody.innerHTML = `
-        <div class="execution-detail-header d-flex flex-column flex-md-row justify-content-between align-items-md-start align-items-center gap-3">
+        <div class="execution-overview">
             <div>
-                <span class="eyebrow text-muted text-uppercase">Execution ${escapeHtml(detail.execution_id)}</span>
-                <h4 class="surface-title mb-1 mt-1">${escapeHtml(jobName)}</h4>
+                <span class="eyebrow text-muted text-uppercase">Execution</span>
+                <h3 class="execution-title">${escapeHtml(jobName)}</h3>
+                ${detail.execution_id ? `<div class="execution-subtitle">Execution ${escapeHtml(detail.execution_id)}</div>` : ''}
                 ${contextChips.length ? `<div class="execution-chip-group">${contextChips.join('')}</div>` : ''}
             </div>
-            <div class="text-md-end text-center">
+            <div class="execution-status text-md-end text-center">
                 ${statusBadge}
-                <div class="small text-muted mt-2">Started ${startedAt}</div>
+                <span class="timestamp">Started ${startedAt}</span>
+                ${detail.completed_at ? `<span class="timestamp">Completed ${completedAt}</span>` : ''}
             </div>
         </div>
 
-        <div class="row g-3 mt-1">
-            <div class="col-6 col-md-3">
-                <div class="execution-stat-card">
-                    <span class="label">Processed</span>
-                    <span class="value text-primary">${recordsProcessed}</span>
-                </div>
+        <div class="execution-metrics">
+            <div class="execution-metric-card processed">
+                <span class="label">Processed</span>
+                <span class="value">${recordsProcessed}</span>
             </div>
-            <div class="col-6 col-md-3">
-                <div class="execution-stat-card">
-                    <span class="label">Inserted</span>
-                    <span class="value text-success">${recordsInserted}</span>
-                </div>
+            <div class="execution-metric-card inserted">
+                <span class="label">Inserted</span>
+                <span class="value">${recordsInserted}</span>
             </div>
-            <div class="col-6 col-md-3">
-                <div class="execution-stat-card">
-                    <span class="label">Updated</span>
-                    <span class="value text-warning">${recordsUpdated}</span>
-                </div>
+            <div class="execution-metric-card updated">
+                <span class="label">Updated</span>
+                <span class="value">${recordsUpdated}</span>
             </div>
-            <div class="col-6 col-md-3">
-                <div class="execution-stat-card">
-                    <span class="label">Duration</span>
-                    <span class="value text-info">${durationLabel}</span>
-                </div>
+            <div class="execution-metric-card duration">
+                <span class="label">Duration</span>
+                <span class="value">${durationLabel}</span>
             </div>
         </div>
 
-        <div class="row g-3 mt-2">
-            <div class="col-md-6">
-                <div class="execution-detail-tile">
-                    <h6 class="title">Timing</h6>
-                    <div class="detail-item"><span class="detail-label">Started</span><span>${startedAt}</span></div>
-                    <div class="detail-item"><span class="detail-label">Completed</span><span>${completedAt}</span></div>
-                </div>
+        <div class="execution-detail-sections">
+            <div class="execution-detail-card">
+                <div class="title">Timing</div>
+                <div class="execution-detail-item"><span class="detail-label">Started</span><span>${startedAt}</span></div>
+                <div class="execution-detail-item"><span class="detail-label">Completed</span><span>${completedAt}</span></div>
             </div>
-            <div class="col-md-6">
-                <div class="execution-detail-tile">
-                    <h6 class="title">Execution Context</h6>
-                    <div class="detail-item"><span class="detail-label">Job ID</span><span>${detail.job_id}</span></div>
-                    <div class="detail-item"><span class="detail-label">Endpoints</span><span>${escapeHtml(endpoints)}</span></div>
-                </div>
+            <div class="execution-detail-card">
+                <div class="title">Execution Context</div>
+                <div class="execution-detail-item"><span class="detail-label">Job ID</span><span>${escapeHtml(String(jobId))}</span></div>
+                <div class="execution-detail-item"><span class="detail-label">Endpoints</span><span>${escapeHtml(endpoints)}</span></div>
             </div>
         </div>
 
@@ -683,7 +654,9 @@ function renderExecutionLogs(logs = []) {
 
     return logs.map(entry => {
         const timestampValue = entry?.timestamp ? new Date(entry.timestamp) : null;
-        const timestamp = timestampValue && !Number.isNaN(timestampValue.valueOf()) ? timestampValue.toLocaleTimeString() : '';
+        const timestamp = timestampValue && !Number.isNaN(timestampValue.valueOf())
+            ? timestampValue.toLocaleTimeString()
+            : '';
         const level = (entry?.level || 'info').toLowerCase();
         const levelLabel = level.toUpperCase();
         const message = escapeHtml(entry?.message || '');
@@ -1120,44 +1093,11 @@ function updateExecutionFilter(jobsList) {
     });
     
     select.value = currentValue;
-
-    select.onchange = function() {
-        const jobId = this.value ? parseInt(this.value, 10) : null;
+    
+    select.addEventListener('change', function() {
+        const jobId = this.value ? parseInt(this.value) : null;
         loadExecutions(jobId);
-    };
-}
-
-function resolveJobName(source) {
-    if (!source) {
-        return 'Unknown job';
-    }
-
-    if (typeof source === 'object' && source.job_name) {
-        return source.job_name;
-    }
-
-    const jobId = typeof source === 'object' ? source.job_id : source;
-    const job = jobs.find(j => j.id === jobId);
-    return job ? job.name : `Job ${jobId}`;
-}
-
-function capitalize(value) {
-    if (!value || typeof value !== 'string') {
-        return '';
-    }
-    return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
-}
-
-function escapeHtml(value) {
-    if (value === null || value === undefined) {
-        return '';
-    }
-    return String(value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+    });
 }
 
 function formatJobType(jobType) {
@@ -1239,4 +1179,45 @@ function refreshData() {
     loadDataStatistics();
     loadSpatialLayers();
     showToast('Refreshed', 'Data refreshed successfully', 'success');
+}
+
+function resolveJobName(source) {
+    if (!source) {
+        return 'Unknown Job';
+    }
+
+    if (source.job_name) {
+        return source.job_name;
+    }
+
+    const jobRecord = jobs.find(job => job.id === source.job_id);
+    if (jobRecord?.name) {
+        return jobRecord.name;
+    }
+
+    if (source.execution_context?.job?.name) {
+        return source.execution_context.job.name;
+    }
+
+    return `Job ${source.job_id}`;
+}
+
+function capitalize(value) {
+    if (!value || typeof value !== 'string') {
+        return '';
+    }
+    return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function escapeHtml(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
