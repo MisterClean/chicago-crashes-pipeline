@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Documentation site for the Chicago Traffic Crash Data Pipeline",
+  "license": "MIT",
   "scripts": {
     "docusaurus": "docusaurus",
     "start": "docusaurus start --host 0.0.0.0 --port 3000",
