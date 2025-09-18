@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Sequence
 
+from geoalchemy2.elements import WKTElement
 from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -181,10 +182,12 @@ class DatabaseService:
             setattr(instance, key, value)
 
     @staticmethod
-    def _create_geometry(latitude: float, longitude: float) -> Optional[str]:
-        if latitude is None or longitude is None:
+    def _create_geometry(latitude: Any, longitude: Any) -> Optional[WKTElement]:
+        lat = DatabaseService._parse_float(latitude)
+        lon = DatabaseService._parse_float(longitude)
+        if lat is None or lon is None:
             return None
-        return f"POINT({longitude} {latitude})"
+        return WKTElement(f"POINT({lon} {lat})", srid=4326)
 
     # ------------------------------------------------------------------
     # Legacy parsing helpers (retained for compatibility)
