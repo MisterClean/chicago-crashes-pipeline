@@ -1,5 +1,7 @@
 """Spatial models for geographic boundaries and reference data."""
-from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, JSON, String, Text
+from geoalchemy2 import Geometry
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 from .base import Base, TimestampMixin
@@ -13,7 +15,7 @@ class Ward(Base, TimestampMixin):
     ward = Column(Integer, primary_key=True)
     ward_name = Column(String(100))
     alderman = Column(String(100))
-    geometry = Column(Text, index=True)
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), index=True)
     
     # Additional fields that might be present
     area_num_1 = Column(String(10))
@@ -29,7 +31,7 @@ class CommunityArea(Base, TimestampMixin):
     area_numbe = Column(Integer, primary_key=True)  # Matches shapefile field name
     community = Column(String(100))
     area_num_1 = Column(String(10))
-    geometry = Column(Text, index=True)
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), index=True)
     
     # Area measurements
     shape_area = Column(Float)
@@ -45,7 +47,7 @@ class CensusTract(Base, TimestampMixin):
     geoid10 = Column(String(20), index=True)
     name10 = Column(String(100))
     namelsad10 = Column(String(100))
-    geometry = Column(Text, index=True)
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), index=True)
     
     # Area measurements
     aland10 = Column(Float)  # Land area
@@ -61,7 +63,7 @@ class PoliceBeat(Base, TimestampMixin):
     beat = Column(String(10))
     district = Column(String(10), index=True)
     sector = Column(String(10))
-    geometry = Column(Text, index=True)
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), index=True)
     
     # Area measurements
     shape_area = Column(Float)
@@ -76,7 +78,7 @@ class HouseDistrict(Base, TimestampMixin):
     district = Column(String(10), primary_key=True)
     rep_name = Column(String(100))
     party = Column(String(20))
-    geometry = Column(Text, index=True)
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), index=True)
     
     # Additional fields
     population = Column(Integer)
@@ -92,7 +94,7 @@ class SenateDistrict(Base, TimestampMixin):
     district = Column(String(10), primary_key=True)
     senator_name = Column(String(100))
     party = Column(String(20))
-    geometry = Column(Text, index=True)
+    geometry = Column(Geometry("MULTIPOLYGON", srid=4326), index=True)
     
     # Additional fields
     population = Column(Integer)
@@ -129,7 +131,7 @@ class SpatialLayerFeature(Base, TimestampMixin):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     layer_id = Column(Integer, ForeignKey("spatial_layers.id", ondelete="CASCADE"), nullable=False, index=True)
-    properties = Column(JSON, default=dict, nullable=False)
-    geometry = Column(JSON, nullable=False)
+    properties = Column(JSONB, default=dict, nullable=False)
+    geometry = Column(Geometry("GEOMETRY", srid=4326), nullable=False, index=True)
 
     layer = relationship("SpatialLayer", back_populates="features")
