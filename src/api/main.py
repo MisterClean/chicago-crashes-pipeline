@@ -2,6 +2,8 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -86,10 +88,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static files for admin portal
-import os
-static_path = os.path.join(os.path.dirname(__file__), "..", "static", "admin")
-app.mount("/admin", StaticFiles(directory=static_path, html=True), name="admin")
+# Mount static assets
+static_root = os.path.join(os.path.dirname(__file__), "..", "static")
+
+admin_path = os.path.join(static_root, "admin")
+app.mount(
+    "/admin",
+    StaticFiles(directory=admin_path, html=True, check_dir=False),
+    name="admin",
+)
+if not os.path.isdir(admin_path):  # pragma: no cover - warning for missing dev assets
+    logger.warning("Admin static assets not found", path=admin_path)
+
+docs_path = os.path.join(static_root, "documentation")
+app.mount(
+    "/documentation",
+    StaticFiles(directory=docs_path, html=True, check_dir=False),
+    name="documentation",
+)
+if not os.path.isdir(docs_path):  # pragma: no cover - warning for missing docs bundle
+    logger.warning("Documentation static assets not found", path=docs_path)
 
 # Include routers
 app.include_router(health.router)

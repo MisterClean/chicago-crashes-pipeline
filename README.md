@@ -109,6 +109,18 @@ graph TB
 - **Data Validation**: Multi-stage sanitization ensuring data quality
 - **Docker Integration**: Containerized PostgreSQL with PostGIS extension
 
+## Documentation
+
+The project documentation is published with [Docusaurus](https://docusaurus.io/).
+
+```bash
+npm install
+npm run start
+npm run build
+```
+
+Open http://localhost:3000/documentation/ to browse the site locally. Running `npm run build` publishes the static assets into `src/static/documentation`, which FastAPI serves at http://localhost:8000/documentation/ alongside the admin portal.
+
 ## Features
 
 - 🎛️ **Admin Portal** - Complete web-based management interface for job orchestration

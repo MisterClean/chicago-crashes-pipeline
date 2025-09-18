@@ -1,0 +1,41 @@
+:root {
+  --ifm-color-primary: #0050b3;
+  --ifm-color-primary-dark: #00469d;
+  --ifm-color-primary-darker: #003d87;
+  --ifm-color-primary-darkest: #002a5c;
+  --ifm-color-primary-light: #0b65d1;
+  --ifm-color-primary-lighter: #1c73db;
+  --ifm-color-primary-lightest: #4f93e6;
+  --ifm-background-color: #f7f9fb;
+}
+
+html[data-theme='dark'] {
+  --ifm-color-primary: #58d1c6;
+  --ifm-color-primary-dark: #40b4a8;
+  --ifm-color-primary-darker: #329788;
+  --ifm-color-primary-darkest: #266d62;
+  --ifm-color-primary-light: #72ddd3;
+  --ifm-color-primary-lighter: #8ceaeb;
+  --ifm-color-primary-lightest: #b8f5f2;
+}
+
+.heroBanner {
+  background: linear-gradient(135deg, #0f62fe 0%, #42be65 100%);
+  color: #ffffff;
+}
+
+.heroBanner .button.button--secondary {
+  color: #0f62fe;
+}
+
+.navbar__item.navbar__link {
+  font-weight: 500;
+}
+
+.footer {
+  background-color: #0b1f33;
+}
+
+.table thead th {
+  background-color: #e6f0ff;
+}
