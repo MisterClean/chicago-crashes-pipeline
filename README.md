@@ -118,6 +118,10 @@ graph TB
 - **FastAPI service** exposing sync controls, health checks, and spatial endpoints
 - **Admin portal** for job orchestration and monitoring
 - **Async ETL pipeline** with rate limiting, validation, and sanitization stages
+
+## License
+
+Released under the MIT License. See `LICENSE` for details.
 - **Scheduler and job tracking** with retries and execution history
 - **PostgreSQL/PostGIS storage** optimised for spatial and analytic workloads
 
@@ -215,4 +219,4 @@ chicago-crash-pipeline/
 
 ## License
 
-MIT License – see `LICENSE` for details.
+MIT License - see `LICENSE` for details.
