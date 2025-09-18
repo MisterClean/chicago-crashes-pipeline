@@ -3,12 +3,12 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from api.models import (
+from src.api.models import (
     SpatialLayerDetailResponse,
     SpatialLayerResponse,
     SpatialLayerUpdateRequest,
 )
-from services.spatial_layer_service import SpatialLayerService
+from src.services.spatial_layer_service import SpatialLayerService
 
 router = APIRouter(prefix="/spatial", tags=["spatial"])
 

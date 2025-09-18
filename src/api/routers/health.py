@@ -1,23 +1,27 @@
 """Health check and system status endpoints."""
+import asyncio
+import sys
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Depends
-import sys
-from pathlib import Path
+from fastapi import APIRouter, Depends
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from api.models import HealthResponse
-from api.dependencies import get_soda_client, get_sync_state
-from etl.soda_client import SODAClient
-from utils.config import settings
-from utils.logging import get_logger
+from typing import Any
+
+from sqlalchemy import text
+
+from src.api.dependencies import get_sync_state
+from src.api.models import HealthResponse
+from src.etl.soda_client import SODAClient
+from src.models.base import SessionLocal
+from src.utils.config import settings
+from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check(client: SODAClient = Depends(get_soda_client)):
+async def health_check():
     """Comprehensive health check endpoint."""
     services_status = {}
     overall_healthy = True
@@ -31,40 +35,78 @@ async def health_check(client: SODAClient = Depends(get_soda_client)):
         overall_healthy = False
     
     try:
-        # Test SODA client initialization
-        _ = SODAClient()
+        client = SODAClient()
+        test_records = await _fetch_single_record(client)
         services_status["soda_client"] = "healthy"
-    except Exception as e:
-        services_status["soda_client"] = f"error: {str(e)}"
-        overall_healthy = False
-    
-    try:
-        # Test basic API connectivity (small request)
-        test_records = await client.fetch_records(
-            endpoint=settings.api.endpoints["crashes"],
-            limit=1
+        services_status["api_connectivity"] = (
+            "healthy" if test_records else "warning: no data returned"
         )
-        if test_records:
-            services_status["api_connectivity"] = "healthy"
-        else:
-            services_status["api_connectivity"] = "warning: no data returned"
+        if not test_records:
+            overall_healthy = False
     except Exception as e:
-        services_status["api_connectivity"] = f"error: {str(e)}"
+        services_status["soda_client"] = f"warning: {str(e)}"
+        services_status["api_connectivity"] = "warning: external API unavailable"
+
+    # Database connectivity
+    try:
+        await _check_database()
+        services_status["database"] = "healthy"
+    except Exception as e:
+        logger.warning("Database health check failed", error=str(e))
+        services_status["database"] = f"warning: {str(e)}"
         overall_healthy = False
-    
-    # Database would be tested here if connected
-    services_status["database"] = "not_connected"
     
     status = "healthy" if overall_healthy else "degraded"
     
     if not overall_healthy:
         logger.warning("Health check failed", services=services_status)
     
+    logger.debug("Health check services", services=services_status)
     return HealthResponse(
         status=status,
         timestamp=datetime.now(),
         services=services_status
     )
+
+
+async def _fetch_single_record(client: Any) -> Any:
+    """Fetch a small sample record, supporting mocked clients used in tests."""
+
+    if hasattr(client, "__aenter__"):
+        async with client:
+            return await client.fetch_records(
+                endpoint=settings.api.endpoints["crashes"],
+                limit=1,
+            )
+
+    # Fallback for mocks that don't implement async context manager
+    try:
+        result = client.fetch_records(
+            endpoint=settings.api.endpoints["crashes"],
+            limit=1,
+        )
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+    finally:
+        closer = getattr(client, "close", None)
+        if closer:
+            maybe = closer()
+            if asyncio.iscoroutine(maybe):
+                await maybe
+
+
+async def _check_database() -> None:
+    """Run a lightweight database connectivity check off the event loop."""
+
+    def _probe() -> None:
+        session = SessionLocal()
+        try:
+            session.execute(text("SELECT 1"))
+        finally:
+            session.close()
+
+    await asyncio.to_thread(_probe)
 
 
 @router.get("/")
