@@ -23,18 +23,21 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function initializeApp() {
     try {
+        // Set active navigation link based on current page
+        setActiveNavLink();
+
         await loadDashboardData();
         await loadJobs();
         await loadExecutions();
         await loadDataStatistics();
         await loadSpatialLayers();
-        
+
         // Set up event listeners
         setupEventListeners();
-        
+
         // Start periodic refresh
         startAutoRefresh();
-        
+
         showToast('Connected', 'Admin portal loaded successfully', 'success');
     } catch (error) {
         console.error('Failed to initialize app:', error);
@@ -42,6 +45,23 @@ async function initializeApp() {
         document.getElementById('api-status').className = 'badge bg-danger me-2';
         showToast('Error', 'Failed to connect to API', 'danger');
     }
+}
+
+// Set active navigation link based on current page
+function setActiveNavLink() {
+    const path = window.location.pathname;
+    document.querySelectorAll('.app-nav-link').forEach(link => {
+        const href = link.getAttribute('href');
+
+        // Check if current path starts with the link href (and handle root specially)
+        if (path.startsWith(href) && href !== '/') {
+            link.classList.add('active');
+        } else if (path === '/' && href === '/') {
+            link.classList.add('active');
+        } else {
+            link.classList.remove('active');
+        }
+    });
 }
 
 function setupEventListeners() {
