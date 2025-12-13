@@ -29,7 +29,8 @@ jobs:
 
     - name: Check PostgreSQL health
       run: |
-        docker exec chicago-crashes-pipeline-postgres-1 pg_isready -U postgres
+        cd docker
+        docker compose exec -T postgres pg_isready -U postgres
 
     - name: Check API health
       run: |
