@@ -238,3 +238,97 @@ The agent has deep familiarity with:
 - **Usage Examples**: [docs/agents/data-engineer-examples.md](docs/agents/data-engineer-examples.md)
 
 The Data Engineer Agent understands this pipeline's architecture, patterns, and quirks better than a general AI assistant, making it ideal for complex data engineering tasks.
+
+## Code Reviewer Agent
+
+For pull request reviews, security audits, and code quality checks, you can work with the **Code Reviewer Agent** - a specialized assistant focused on maintaining high code standards.
+
+### Agent Specializations
+
+The Code Reviewer Agent excels at:
+
+- **Pull Request Reviews**: Comprehensive reviews checking tests, types, security, performance, architecture
+- **Test Coverage Analysis**: Identify untested code paths, suggest pytest fixtures, improve coverage
+- **Code Quality Checks**: flake8, mypy, black, isort compliance, type hint validation
+- **Security Audits**: SQL injection, XSS, CSRF, secrets in code, OWASP Top 10 vulnerabilities
+- **Performance Analysis**: N+1 queries, missing indexes, async patterns, batch processing
+- **Documentation Review**: Docstring completeness, type annotations, inline comments
+
+### When to Use the Code Reviewer Agent
+
+Invoke the Code Reviewer Agent for:
+
+- Reviewing pull requests before merge
+- Conducting security audits of new features
+- Analyzing test coverage gaps
+- Identifying performance bottlenecks
+- Validating type safety across codebase
+- Ensuring code quality standards compliance
+
+### Documentation
+
+- **Agent Configuration**: [.claude/agents/code-reviewer.md](.claude/agents/code-reviewer.md)
+- **Usage Examples**: [docs/agents/code-reviewer-examples.md](docs/agents/code-reviewer-examples.md)
+
+## Frontend Developer Agent
+
+For admin portal features and documentation site updates, you can work with the **Frontend Developer Agent** - a specialized assistant for building intuitive user interfaces.
+
+### Agent Specializations
+
+The Frontend Developer Agent excels at:
+
+- **Admin Portal Development**: Vanilla JavaScript + Bootstrap 5, glass-morphism UI, API integration
+- **Responsive Design**: Mobile-first layouts, touch-friendly UI, cross-browser compatibility
+- **Real-Time Features**: Polling, WebSocket integration, live data streaming
+- **Docusaurus Documentation**: React 18, TypeScript, MDX, custom themes
+- **Performance Optimization**: Parallel loading, caching, lazy loading, skeleton screens
+- **Accessibility**: ARIA labels, keyboard navigation, screen reader support
+
+### When to Use the Frontend Developer Agent
+
+Invoke the Frontend Developer Agent for:
+
+- Adding new features to admin portal (tabs, modals, charts)
+- Fixing responsive design issues on mobile/tablet
+- Implementing real-time updates (WebSocket, polling)
+- Creating new Docusaurus documentation pages
+- Optimizing frontend loading performance
+- Debugging API integration issues
+
+### Documentation
+
+- **Agent Configuration**: [.claude/agents/frontend-developer.md](.claude/agents/frontend-developer.md)
+- **Usage Examples**: [docs/agents/frontend-developer-examples.md](docs/agents/frontend-developer-examples.md)
+
+## Backend Architecture Agent
+
+For API design, service layers, and database optimization, you can work with the **Backend Architecture Agent** - a specialized assistant for scalable backend systems.
+
+### Agent Specializations
+
+The Backend Architecture Agent excels at:
+
+- **API Design**: FastAPI routers, dependency injection, Pydantic models, OpenAPI documentation
+- **Service Layer Architecture**: Business logic encapsulation, SOLID principles, clean architecture
+- **Database Optimization**: Query tuning, EXPLAIN ANALYZE, indexes, connection pooling
+- **Async Python Patterns**: asyncio, streaming, concurrency control, thread pools
+- **Spatial Queries**: PostGIS geometry, SRID transformations, spatial indexes
+- **Background Tasks**: Job scheduling, async execution, error handling
+
+### When to Use the Backend Architecture Agent
+
+Invoke the Backend Architecture Agent for:
+
+- Designing new API endpoints (Router → Service → Model → Database)
+- Optimizing slow database queries with indexes and query rewriting
+- Adding background tasks and job scheduling
+- Creating database migrations with Alembic
+- Implementing async patterns and concurrency control
+- Designing service layer for complex business logic
+- Reviewing architecture and scalability
+
+### Documentation
+
+- **Agent Configuration**: [.claude/agents/backend-architecture.md](.claude/agents/backend-architecture.md)
+- **Usage Examples**: [docs/agents/backend-architecture-examples.md](docs/agents/backend-architecture-examples.md)
