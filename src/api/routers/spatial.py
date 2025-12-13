@@ -1,5 +1,4 @@
 """Spatial data endpoints."""
-from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 

@@ -1,19 +1,23 @@
 """Job management endpoints."""
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query
 
-from src.api.models import (CreateJobRequest, DataDeletionRequest,
-                            DataDeletionResponse, ErrorResponse,
-                            ExecuteJobRequest, ExecuteJobResponse,
-                            ExecutionLogEntry, JobExecutionDetailResponse,
-                            JobExecutionResponse, JobResponse,
-                            JobSummaryResponse, UpdateJobRequest)
-from src.models.base import get_db
-from src.models.jobs import (JobExecution, JobStatus, JobType, RecurrenceType,
-                             ScheduledJob)
+from src.api.models import (
+    CreateJobRequest,
+    DataDeletionRequest,
+    DataDeletionResponse,
+    ExecuteJobRequest,
+    ExecuteJobResponse,
+    ExecutionLogEntry,
+    JobExecutionDetailResponse,
+    JobExecutionResponse,
+    JobResponse,
+    JobSummaryResponse,
+    UpdateJobRequest,
+)
+from src.models.jobs import JobExecution, JobStatus, JobType, RecurrenceType
 from src.services.job_service import JobService
 from src.utils.logging import get_logger
 

@@ -31,8 +31,12 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('tractce10', name=op.f('pk_census_tracts'))
     )
+    # Create spatial index with IF NOT EXISTS to ensure idempotency
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_census_tracts_geometry
+        ON census_tracts USING gist (geometry)
+    """)
     with op.batch_alter_table('census_tracts', schema=None) as batch_op:
-        batch_op.create_index('idx_census_tracts_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_census_tracts_geoid10'), ['geoid10'], unique=False)
 
     op.create_table('community_areas',
@@ -46,8 +50,12 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('area_numbe', name=op.f('pk_community_areas'))
     )
+    # Create spatial index with IF NOT EXISTS to ensure idempotency
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_community_areas_geometry
+        ON community_areas USING gist (geometry)
+    """)
     with op.batch_alter_table('community_areas', schema=None) as batch_op:
-        batch_op.create_index('idx_community_areas_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_community_areas_geometry'), ['geometry'], unique=False)
 
     op.create_table('crashes',

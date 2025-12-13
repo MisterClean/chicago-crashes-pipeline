@@ -189,7 +189,7 @@ class SimpleShapefileLoader:
             # Get sample data (excluding geometry for readability)
             query = text(
                 f"""
-                SELECT * FROM {table_name} 
+                SELECT * FROM {table_name}
                 LIMIT {limit}
             """
             )

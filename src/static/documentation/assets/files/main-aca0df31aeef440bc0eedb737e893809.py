@@ -8,8 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.api.dependencies import sync_state
-from src.api.routers import (health, jobs, spatial, spatial_layers, sync,
-                             validation)
+from src.api.routers import health, jobs, spatial, spatial_layers, sync, validation
 from src.services.job_scheduler import start_job_scheduler, stop_job_scheduler
 from src.utils.config import settings
 from src.utils.logging import get_logger, setup_logging

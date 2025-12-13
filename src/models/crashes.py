@@ -1,10 +1,7 @@
 """Models for crash data from Chicago Open Data Portal."""
-from datetime import datetime
-from typing import Optional
 
 from geoalchemy2 import Geometry
-from sqlalchemy import (BigInteger, Boolean, Column, DateTime, Float,
-                        ForeignKey, Index, Integer, String, Text)
+from sqlalchemy import Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from .base import Base, TimestampMixin

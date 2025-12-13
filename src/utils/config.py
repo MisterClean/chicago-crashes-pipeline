@@ -45,7 +45,11 @@ class APISettings(BaseSettings):
     backoff_factor: float = 2.0
     batch_size: int = 50000
     max_concurrent: int = 5
-    token: Optional[str] = Field(default=None, env="CHICAGO_API_TOKEN")
+    token: Optional[str] = None
+
+    model_config = {
+        "env_prefix": "CHICAGO_API_"
+    }  # Maps token field to CHICAGO_API_TOKEN env var
 
 
 class SyncSettings(BaseSettings):
@@ -95,7 +99,7 @@ class SpatialSettings(BaseSettings):
 class LoggingSettings(BaseSettings):
     """Logging configuration settings."""
 
-    level: str = Field(default="INFO", env="LOG_LEVEL")
+    level: str = "INFO"
     format: str = "json"
     files: Dict[str, str] = {
         "app": "logs/app.log",
@@ -105,13 +109,15 @@ class LoggingSettings(BaseSettings):
     max_bytes: int = 10485760  # 10MB
     backup_count: int = 5
 
+    model_config = {"env_prefix": "LOG_"}  # Maps level field to LOG_LEVEL env var
+
 
 class Settings(BaseSettings):
     """Main application settings."""
 
-    environment: str = Field(default="development", env="ENVIRONMENT")
-    api_host: str = Field(default="0.0.0.0", env="API_HOST")
-    api_port: int = Field(default=8000, env="API_PORT")
+    environment: str = "development"
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
 
     # Sub-settings
     database: DatabaseSettings = DatabaseSettings()

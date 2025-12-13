@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-# Add src to path for imports
+# Add src to path for imports (must be before local imports)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from utils.config import settings
+from utils.config import settings  # noqa: E402
 
 
 @pytest.fixture

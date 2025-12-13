@@ -1,10 +1,9 @@
 """Job scheduler service for running scheduled jobs automatically."""
 import asyncio
 import signal
-from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Optional
 
-from src.models.jobs import JobExecution, JobStatus, ScheduledJob
+from src.models.jobs import JobStatus, ScheduledJob
 from src.services.job_service import JobService
 from src.utils.config import settings
 from src.utils.logging import get_logger
