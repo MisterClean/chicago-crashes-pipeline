@@ -115,7 +115,6 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_crashes_crash_date'), ['crash_date'], unique=False)
         batch_op.create_index('ix_crashes_date_location', ['crash_date', 'latitude', 'longitude'], unique=False)
         batch_op.create_index('ix_crashes_fatal', ['injuries_fatal'], unique=False)
-        batch_op.create_index(batch_op.f('ix_crashes_geometry'), ['geometry'], unique=False)
         batch_op.create_index('ix_crashes_hit_run', ['hit_and_run_i'], unique=False)
         batch_op.create_index('ix_crashes_injuries', ['injuries_total'], unique=False)
         batch_op.create_index(batch_op.f('ix_crashes_latitude'), ['latitude'], unique=False)
@@ -135,7 +134,6 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('house_districts', schema=None) as batch_op:
         batch_op.create_index('idx_house_districts_geometry', ['geometry'], unique=False, postgresql_using='gist')
-        batch_op.create_index(batch_op.f('ix_house_districts_geometry'), ['geometry'], unique=False)
 
     op.create_table('police_beats',
     sa.Column('beat_num', sa.String(length=10), nullable=False),
@@ -152,7 +150,6 @@ def upgrade() -> None:
     with op.batch_alter_table('police_beats', schema=None) as batch_op:
         batch_op.create_index('idx_police_beats_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_police_beats_district'), ['district'], unique=False)
-        batch_op.create_index(batch_op.f('ix_police_beats_geometry'), ['geometry'], unique=False)
 
     op.create_table('senate_districts',
     sa.Column('district', sa.String(length=10), nullable=False),
@@ -168,7 +165,6 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('senate_districts', schema=None) as batch_op:
         batch_op.create_index('idx_senate_districts_geometry', ['geometry'], unique=False, postgresql_using='gist')
-        batch_op.create_index(batch_op.f('ix_senate_districts_geometry'), ['geometry'], unique=False)
 
     op.create_table('vision_zero_fatalities',
     sa.Column('person_id', sa.String(length=50), nullable=False),
@@ -191,7 +187,6 @@ def upgrade() -> None:
         batch_op.create_index('ix_fatalities_rd_no', ['rd_no'], unique=False)
         batch_op.create_index('ix_fatalities_victim', ['victim'], unique=False)
         batch_op.create_index(batch_op.f('ix_vision_zero_fatalities_crash_date'), ['crash_date'], unique=False)
-        batch_op.create_index(batch_op.f('ix_vision_zero_fatalities_geometry'), ['geometry'], unique=False)
         batch_op.create_index(batch_op.f('ix_vision_zero_fatalities_rd_no'), ['rd_no'], unique=False)
 
     op.create_table('wards',
@@ -208,7 +203,6 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('wards', schema=None) as batch_op:
         batch_op.create_index('idx_wards_geometry', ['geometry'], unique=False, postgresql_using='gist')
-        batch_op.create_index(batch_op.f('ix_wards_geometry'), ['geometry'], unique=False)
 
     op.create_table('crash_people',
     sa.Column('crash_record_id', sa.String(length=50), nullable=False),

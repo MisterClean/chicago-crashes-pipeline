@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -27,7 +26,10 @@ class DatabaseSettings(BaseSettings):
     @property
     def url(self) -> str:
         """Get SQLAlchemy database URL."""
-        return f"postgresql://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
+        return (
+            f"postgresql://{self.username}:{self.password}@"
+            f"{self.host}:{self.port}/{self.database}"
+        )
 
 
 class APISettings(BaseSettings):
@@ -239,9 +241,10 @@ def validate_configuration(settings: Settings) -> None:
     if "*" in cors_origins:
         if settings.environment == "production":
             raise ValueError(
-                "SECURITY ERROR: Wildcard CORS origin (*) detected in production. "
-                "This is a critical security vulnerability when allow_credentials=True. "
-                "Set specific allowed origins in CORS_ORIGINS environment variable."
+                "SECURITY ERROR: Wildcard CORS origin (*) detected in "
+                "production. This is a critical security vulnerability when "
+                "allow_credentials=True. Set specific allowed origins in "
+                "CORS_ORIGINS environment variable."
             )
         else:
             warnings.warn(

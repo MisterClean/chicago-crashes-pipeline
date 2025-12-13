@@ -2,19 +2,8 @@
 from datetime import datetime, timedelta
 from enum import Enum
 
-from sqlalchemy import (
-    JSON,
-    BigInteger,
-    Boolean,
-    Column,
-    DateTime,
-    Float,
-    ForeignKey,
-    Index,
-    Integer,
-    String,
-    Text,
-)
+from sqlalchemy import (JSON, BigInteger, Boolean, Column, DateTime, Float,
+                        ForeignKey, Index, Integer, String, Text)
 from sqlalchemy.orm import relationship
 
 from .base import Base, TimestampMixin

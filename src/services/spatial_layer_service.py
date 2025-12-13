@@ -422,7 +422,8 @@ class SpatialLayerService:
         """Convert a zipped ESRI Shapefile into GeoJSON bytes using ogr2ogr."""
         if shutil.which("ogr2ogr") is None:
             raise ValueError(
-                "ogr2ogr command is required to process shapefiles but was not found in PATH"
+                "ogr2ogr command is required to process shapefiles but "
+                "was not found in PATH"
             )
 
         if not zipfile.is_zipfile(io.BytesIO(payload)):

@@ -7,7 +7,8 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.api.dependencies import get_sync_lock, get_sync_state
-from src.api.models import StatusResponse, SyncRequest, SyncResponse, TestSyncResponse
+from src.api.models import (StatusResponse, SyncRequest, SyncResponse,
+                            TestSyncResponse)
 from src.etl.soda_client import SODAClient
 from src.services.database_service import DatabaseService as _DatabaseService
 from src.services.sync_service import SyncService

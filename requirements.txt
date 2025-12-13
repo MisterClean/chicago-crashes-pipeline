@@ -9,7 +9,7 @@ alembic==1.12.1
 geoalchemy2==0.18.0
 
 # HTTP Client
-httpx==0.28.1
+httpx==0.30.0
 requests==2.32.5
 
 # Data Processing (optional - only needed for spatial analysis)  

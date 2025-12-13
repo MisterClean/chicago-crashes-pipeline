@@ -144,6 +144,9 @@ async def get_version():
         "version": "1.0.0",
         "build_date": "2024-08-28",  # Would be set during build
         "commit": "unknown",  # Would be set from git during build
-        "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "python_version": (
+            f"{sys.version_info.major}.{sys.version_info.minor}."
+            f"{sys.version_info.micro}"
+        ),
         "dependencies": {"fastapi": "0.104.1", "pydantic": "2.5.0", "httpx": "0.25.2"},
     }
