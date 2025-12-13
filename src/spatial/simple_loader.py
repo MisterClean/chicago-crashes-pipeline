@@ -68,7 +68,8 @@ class SimpleShapefileLoader:
             try:
                 if gpd is None:
                     raise RuntimeError(
-                        "geopandas is required to load shapefiles. Install optional spatial dependencies."
+                        "geopandas is required to load shapefiles. "
+                        "Install optional spatial dependencies."
                     )
                 result = self._load_single_shapefile(shapefile_path, filename)
                 results[filename] = result
@@ -95,7 +96,8 @@ class SimpleShapefileLoader:
         # Read shapefile with geopandas
         if gpd is None:
             raise RuntimeError(
-                "geopandas is required to load shapefiles. Install optional spatial dependencies."
+                "geopandas is required to load shapefiles. "
+                "Install optional spatial dependencies."
             )
         gdf = gpd.read_file(shapefile_path)
 

@@ -4,19 +4,11 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.models import (
-    CreateJobRequest,
-    DataDeletionRequest,
-    DataDeletionResponse,
-    ExecuteJobRequest,
-    ExecuteJobResponse,
-    ExecutionLogEntry,
-    JobExecutionDetailResponse,
-    JobExecutionResponse,
-    JobResponse,
-    JobSummaryResponse,
-    UpdateJobRequest,
-)
+from src.api.models import (CreateJobRequest, DataDeletionRequest,
+                            DataDeletionResponse, ExecuteJobRequest,
+                            ExecuteJobResponse, ExecutionLogEntry,
+                            JobExecutionDetailResponse, JobExecutionResponse,
+                            JobResponse, JobSummaryResponse, UpdateJobRequest)
 from src.models.jobs import JobExecution, JobStatus, JobType, RecurrenceType
 from src.services.job_service import JobService
 from src.utils.logging import get_logger

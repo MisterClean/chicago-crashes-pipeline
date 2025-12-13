@@ -76,7 +76,10 @@ async def load_shapefiles(
         total_count = len(result)
 
         return {
-            "message": f"Processed {total_count} shapefiles, {success_count} successful",
+            "message": (
+                f"Processed {total_count} shapefiles, "
+                f"{success_count} successful"
+            ),
             "results": result,
             "summary": {
                 "total_files": total_count,

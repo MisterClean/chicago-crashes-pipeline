@@ -103,7 +103,7 @@ class TestSODAClient:
             client, "_get_record_count", return_value=1500
         ) as mock_count, patch.object(
             client, "fetch_records", side_effect=mock_fetch_records
-        ) as mock_fetch:
+        ):
             all_records = await client.fetch_all_records(
                 endpoint="https://example.com/test.json",
                 batch_size=1000,
@@ -286,5 +286,6 @@ class TestSODAClient:
 
             assert len(results) == 10
             assert request_count == 10
-            # Should respect rate limiting (though exact limits depend on implementation)
+            # Should respect rate limiting
+            # (though exact limits depend on implementation)
             assert max_concurrent <= 10

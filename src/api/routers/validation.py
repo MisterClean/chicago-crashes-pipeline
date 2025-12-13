@@ -41,7 +41,10 @@ async def validate_endpoint_data(
         available_endpoints = list(settings.api.endpoints.keys())
         raise HTTPException(
             status_code=404,
-            detail=f"Endpoint '{endpoint}' not found. Available endpoints: {available_endpoints}",
+            detail=(
+                f"Endpoint '{endpoint}' not found. "
+                f"Available endpoints: {available_endpoints}"
+            ),
         )
 
     try:

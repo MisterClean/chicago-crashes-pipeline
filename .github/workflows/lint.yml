@@ -32,19 +32,19 @@ jobs:
     - name: Run black (code formatting check)
       if: matrix.linter == 'black'
       run: |
-        black --check src tests
+        black --check src tests --exclude 'src/static/documentation/'
 
     - name: Run isort (import sorting check)
       if: matrix.linter == 'isort'
       run: |
-        isort --check-only src tests
+        isort --check-only src tests --skip-glob 'src/static/documentation/**/*.py'
 
     - name: Run flake8 (linting)
       if: matrix.linter == 'flake8'
       run: |
-        flake8 src tests --max-line-length=88 --extend-ignore=E203
+        flake8 src tests --max-line-length=88 --extend-ignore=E203 --exclude=src/static/documentation
 
     - name: Run mypy (type checking)
       if: matrix.linter == 'mypy'
       run: |
-        mypy src --ignore-missing-imports
+        mypy src --ignore-missing-imports --exclude 'src/static/documentation'
