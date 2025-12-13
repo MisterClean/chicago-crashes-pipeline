@@ -234,6 +234,7 @@ async def run_sync(  # pragma: no cover - thin convenience wrapper used by CLI
 
 class _AsyncNullContext:
     """Utility context manager for SyncService."""
+
     # Allows treating sync + async clients the same
 
     def __init__(self, value: Any) -> None:

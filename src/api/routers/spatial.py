@@ -77,8 +77,7 @@ async def load_shapefiles(
 
         return {
             "message": (
-                f"Processed {total_count} shapefiles, "
-                f"{success_count} successful"
+                f"Processed {total_count} shapefiles, " f"{success_count} successful"
             ),
             "results": result,
             "summary": {

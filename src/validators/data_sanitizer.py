@@ -25,7 +25,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized = {}
+        sanitized: Dict[str, Any] = {}
 
         # Handle required fields
         sanitized["crash_record_id"] = self._clean_string(record.get("crash_record_id"))
@@ -107,7 +107,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized = {}
+        sanitized: Dict[str, Any] = {}
 
         # Required fields
         sanitized["crash_record_id"] = self._clean_string(record.get("crash_record_id"))
@@ -161,7 +161,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized = {}
+        sanitized: Dict[str, Any] = {}
 
         # Required fields
         sanitized["crash_unit_id"] = self._clean_string(record.get("crash_unit_id"))
@@ -214,7 +214,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized = {}
+        sanitized: Dict[str, Any] = {}
 
         # Required fields
         sanitized["person_id"] = self._clean_string(record.get("person_id"))

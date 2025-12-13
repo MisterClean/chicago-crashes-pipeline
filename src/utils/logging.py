@@ -3,9 +3,10 @@ import logging
 import logging.handlers
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 import structlog
+from structlog.types import Processor
 
 from .config import settings
 
@@ -23,21 +24,30 @@ def setup_logging(
     # Use provided values or fall back to settings
     level = log_level or settings.logging.level
 
-    # Configure structlog
-    structlog.configure(
-        processors=[
-            structlog.stdlib.filter_by_level,
-            structlog.stdlib.add_logger_name,
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.processors.UnicodeDecoder(),
+    renderer = cast(
+        Processor,
+        (
             structlog.processors.JSONRenderer()
             if settings.logging.format == "json"
-            else structlog.dev.ConsoleRenderer(),
-        ],
+            else structlog.dev.ConsoleRenderer()
+        ),
+    )
+
+    processors: list[Processor] = [
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        renderer,
+    ]
+
+    # Configure structlog
+    structlog.configure(
+        processors=processors,
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,

@@ -23,7 +23,7 @@ class CrashValidator:
         Returns:
             Validation results with errors and warnings
         """
-        results = {"valid": True, "errors": [], "warnings": []}
+        results: Dict[str, Any] = {"valid": True, "errors": [], "warnings": []}
 
         # Check required fields
         required_fields = self.validation_settings.required_fields.get("crashes", [])

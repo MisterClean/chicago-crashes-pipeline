@@ -4,11 +4,19 @@ from typing import Any, Dict, List
 
 from fastapi import APIRouter, HTTPException, Query
 
-from src.api.models import (CreateJobRequest, DataDeletionRequest,
-                            DataDeletionResponse, ExecuteJobRequest,
-                            ExecuteJobResponse, ExecutionLogEntry,
-                            JobExecutionDetailResponse, JobExecutionResponse,
-                            JobResponse, JobSummaryResponse, UpdateJobRequest)
+from src.api.models import (
+    CreateJobRequest,
+    DataDeletionRequest,
+    DataDeletionResponse,
+    ExecuteJobRequest,
+    ExecuteJobResponse,
+    ExecutionLogEntry,
+    JobExecutionDetailResponse,
+    JobExecutionResponse,
+    JobResponse,
+    JobSummaryResponse,
+    UpdateJobRequest,
+)
 from src.models.jobs import JobExecution, JobStatus, JobType, RecurrenceType
 from src.services.job_service import JobService
 from src.utils.logging import get_logger
@@ -433,8 +441,13 @@ async def delete_table_data(request: DataDeletionRequest):
             table_name=request.table_name, date_range=request.date_range
         )
 
+        message = (
+            f"Successfully deleted {result['records_deleted']} records from "
+            f"{request.table_name}"
+        )
+
         return DataDeletionResponse(
-            message=f"Successfully deleted {result['records_deleted']} records from {request.table_name}",
+            message=message,
             table_name=request.table_name,
             records_deleted=result["records_deleted"],
             execution_time_seconds=result["execution_time_seconds"],

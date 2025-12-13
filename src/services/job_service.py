@@ -8,11 +8,17 @@ from sqlalchemy.orm import Session, joinedload
 
 from src.etl.soda_client import SODAClient
 from src.models.base import SessionLocal
-from src.models.crashes import (Crash, CrashPerson, CrashVehicle,
-                                VisionZeroFatality)
-from src.models.jobs import (DataDeletionLog, JobExecution, JobStatus, JobType,
-                             RecurrenceType, ScheduledJob, calculate_next_run,
-                             get_default_jobs)
+from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
+from src.models.jobs import (
+    DataDeletionLog,
+    JobExecution,
+    JobStatus,
+    JobType,
+    RecurrenceType,
+    ScheduledJob,
+    calculate_next_run,
+    get_default_jobs,
+)
 from src.services.database_service import DatabaseService
 from src.services.sync_service import SyncService
 from src.utils.logging import get_logger
@@ -383,16 +389,14 @@ class JobService:
             total_skipped = sync_result.total_skipped
 
             for endpoint_name, endpoint_result in sync_result.endpoint_results.items():
-                self._append_execution_log(
-                    session,
-                    execution,
-                    (
-                        f"{endpoint_name}: fetched {endpoint_result.records_fetched} records "
-                        f"(inserted: {endpoint_result.records_inserted}, "
-                        f"updated: {endpoint_result.records_updated}, "
-                        f"skipped: {endpoint_result.records_skipped})"
-                    ),
+                message = (
+                    f"{endpoint_name}: fetched "
+                    f"{endpoint_result.records_fetched} records "
+                    f"(inserted: {endpoint_result.records_inserted}, "
+                    f"updated: {endpoint_result.records_updated}, "
+                    f"skipped: {endpoint_result.records_skipped})"
                 )
+                self._append_execution_log(session, execution, message)
 
             # Update execution as completed
             end_time = datetime.now()

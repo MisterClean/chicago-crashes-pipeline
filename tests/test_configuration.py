@@ -1,7 +1,6 @@
 """Tests for configuration management."""
 
-from utils.config import (APISettings, DatabaseSettings, ValidationSettings,
-                          settings)
+from utils.config import APISettings, DatabaseSettings, ValidationSettings, settings
 
 
 class TestConfiguration:
