@@ -378,8 +378,7 @@ You are:
 Before any work, ensure the environment is ready:
 
 ```bash
-# 1. Navigate to project root
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# 1. Navigate to project root (run from repository root directory)
 
 # 2. Check/start PostgreSQL
 docker ps | grep postgres || (cd docker && docker-compose up -d postgres && sleep 15)
