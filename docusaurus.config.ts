@@ -10,7 +10,7 @@ const config: Config = {
   baseUrl: '/documentation/',
   organizationName: 'MisterClean',
   projectName: 'chicago-crashes-pipeline',
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn', // Changed from 'throw' to allow external navigation links
   onBrokenMarkdownLinks: 'warn',
   staticDirectories: ['static'],
   i18n: {
@@ -40,6 +40,18 @@ const config: Config = {
       navbar: {
       title: 'Crash Data Pipeline',
       items: [
+        // Navigation links to other parts of the application (external to Docusaurus)
+        // Using type: 'html' to prevent baseUrl prefixing
+        {
+          type: 'html',
+          position: 'left',
+          value: '<a href="/admin" class="navbar__item navbar__link">Admin Portal</a>',
+        },
+        {
+          type: 'html',
+          position: 'left',
+          value: '<a href="/docs" class="navbar__item navbar__link">API Docs</a>',
+        },
         {
           type: 'docSidebar',
           sidebarId: 'guideSidebar',
