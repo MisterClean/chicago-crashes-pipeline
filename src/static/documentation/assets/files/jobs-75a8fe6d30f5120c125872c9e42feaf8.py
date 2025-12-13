@@ -5,15 +5,28 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from src.api.models import (CreateJobRequest, DataDeletionRequest,
-                            DataDeletionResponse, ErrorResponse,
-                            ExecuteJobRequest, ExecuteJobResponse,
-                            ExecutionLogEntry, JobExecutionDetailResponse,
-                            JobExecutionResponse, JobResponse,
-                            JobSummaryResponse, UpdateJobRequest)
+from src.api.models import (
+    CreateJobRequest,
+    DataDeletionRequest,
+    DataDeletionResponse,
+    ErrorResponse,
+    ExecuteJobRequest,
+    ExecuteJobResponse,
+    ExecutionLogEntry,
+    JobExecutionDetailResponse,
+    JobExecutionResponse,
+    JobResponse,
+    JobSummaryResponse,
+    UpdateJobRequest,
+)
 from src.models.base import get_db
-from src.models.jobs import (JobExecution, JobStatus, JobType, RecurrenceType,
-                             ScheduledJob)
+from src.models.jobs import (
+    JobExecution,
+    JobStatus,
+    JobType,
+    RecurrenceType,
+    ScheduledJob,
+)
 from src.services.job_service import JobService
 from src.utils.logging import get_logger
 

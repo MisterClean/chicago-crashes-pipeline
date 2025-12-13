@@ -1,22 +1,26 @@
 """Job management service for handling scheduled jobs and executions."""
 import asyncio
-import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, desc, or_
+from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session, joinedload
 
 from src.etl.soda_client import SODAClient
-from src.models.base import SessionLocal, get_db
-from src.models.crashes import (Crash, CrashPerson, CrashVehicle,
-                                VisionZeroFatality)
-from src.models.jobs import (DataDeletionLog, JobExecution, JobStatus, JobType,
-                             RecurrenceType, ScheduledJob, calculate_next_run,
-                             get_default_jobs)
+from src.models.base import SessionLocal
+from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
+from src.models.jobs import (
+    DataDeletionLog,
+    JobExecution,
+    JobStatus,
+    JobType,
+    RecurrenceType,
+    ScheduledJob,
+    calculate_next_run,
+    get_default_jobs,
+)
 from src.services.database_service import DatabaseService
 from src.services.sync_service import SyncService
-from src.utils.config import settings
 from src.utils.logging import get_logger
 from src.validators.data_sanitizer import DataSanitizer
 
@@ -226,7 +230,7 @@ class JobService:
                 session.query(ScheduledJob)
                 .filter(
                     and_(
-                        ScheduledJob.enabled == True,
+                        ScheduledJob.enabled.is_(True),
                         ScheduledJob.next_run <= now,
                         ScheduledJob.next_run.isnot(None),
                     )
@@ -441,7 +445,7 @@ class JobService:
             )
 
             logger.info(
-                f"Job execution completed",
+                "Job execution completed",
                 execution_id=execution.execution_id,
                 job_name=job.name,
                 duration=duration,
@@ -477,14 +481,14 @@ class JobService:
                 )
 
                 logger.error(
-                    f"Job execution failed",
+                    "Job execution failed",
                     execution_id=execution.execution_id,
                     job_name=execution.job.name if execution.job else None,
                     error=str(e),
                 )
             else:
                 logger.error(
-                    f"Job execution failed before record retrieval",
+                    "Job execution failed before record retrieval",
                     execution_id=execution_id,
                     error=str(e),
                 )

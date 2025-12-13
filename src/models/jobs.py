@@ -1,12 +1,21 @@
 """Models for job management and scheduling system."""
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, Optional
 
-from sqlalchemy import (JSON, BigInteger, Boolean, Column, DateTime, Float,
-                        ForeignKey, Index, Integer, String, Text)
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+)
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
 
 from .base import Base, TimestampMixin
 

@@ -10,8 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from src.models.base import SessionLocal, get_db
-from src.models.crashes import (Crash, CrashPerson, CrashVehicle,
-                                VisionZeroFatality)
+from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)

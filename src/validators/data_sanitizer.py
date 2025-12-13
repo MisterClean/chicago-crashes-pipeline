@@ -1,7 +1,7 @@
 """Data sanitization and cleaning utilities."""
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from src.utils.config import settings
 from src.utils.logging import get_logger

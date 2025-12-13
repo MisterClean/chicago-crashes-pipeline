@@ -2,14 +2,14 @@
 import asyncio
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from etl.soda_client import SODAClient
+from etl.soda_client import SODAClient  # noqa: E402
 
 
 class TestSODAClient:

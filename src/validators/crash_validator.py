@@ -1,6 +1,5 @@
 """Validation logic for crash data records."""
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.utils.config import settings
 from src.utils.logging import get_logger

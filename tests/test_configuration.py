@@ -1,8 +1,6 @@
 """Tests for configuration management."""
-import pytest
 
-from utils.config import (APISettings, DatabaseSettings, ValidationSettings,
-                          settings)
+from utils.config import APISettings, DatabaseSettings, ValidationSettings, settings
 
 
 class TestConfiguration:
