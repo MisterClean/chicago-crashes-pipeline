@@ -41,8 +41,8 @@ sync_state = {
         "failed_syncs": 0,
         "last_error": None,
         "total_records_processed": 0,
-        "last_sync_duration": None
-    }
+        "last_sync_duration": None,
+    },
 }
 
 

@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings
 
 class DatabaseSettings(BaseSettings):
     """Database configuration settings."""
-    
+
     host: str = "localhost"
     port: int = 5432
     database: str = "chicago_crashes"
@@ -21,9 +21,9 @@ class DatabaseSettings(BaseSettings):
     max_overflow: int = 20
     bulk_insert_size: int = 1000
     use_copy: bool = True
-    
+
     model_config = {"env_prefix": "DB_"}
-    
+
     @property
     def url(self) -> str:
         """Get SQLAlchemy database URL."""
@@ -32,12 +32,12 @@ class DatabaseSettings(BaseSettings):
 
 class APISettings(BaseSettings):
     """API configuration settings."""
-    
+
     endpoints: Dict[str, str] = {
         "crashes": "https://data.cityofchicago.org/resource/85ca-t3if.json",
         "people": "https://data.cityofchicago.org/resource/u6pd-qa9d.json",
-        "vehicles": "https://data.cityofchicago.org/resource/68nd-jvt3.json", 
-        "fatalities": "https://data.cityofchicago.org/resource/gzaz-isa6.json"
+        "vehicles": "https://data.cityofchicago.org/resource/68nd-jvt3.json",
+        "fatalities": "https://data.cityofchicago.org/resource/gzaz-isa6.json",
     }
     rate_limit: int = 1000
     timeout: int = 30
@@ -50,7 +50,7 @@ class APISettings(BaseSettings):
 
 class SyncSettings(BaseSettings):
     """Sync configuration settings."""
-    
+
     default_start_date: str = "2017-09-01"
     sync_interval: int = 6  # hours
     chunk_size: int = 50000
@@ -60,7 +60,7 @@ class SyncSettings(BaseSettings):
 
 class ValidationSettings(BaseSettings):
     """Data validation settings."""
-    
+
     min_latitude: float = 41.6
     max_latitude: float = 42.1
     min_longitude: float = -87.95
@@ -69,38 +69,38 @@ class ValidationSettings(BaseSettings):
     max_age: int = 120
     min_vehicle_year: int = 1900
     max_vehicle_year: int = 2025
-    
+
     required_fields: Dict[str, list] = {
         "crashes": ["crash_record_id", "crash_date"],
-        "people": ["crash_record_id", "person_id"], 
+        "people": ["crash_record_id", "person_id"],
         "vehicles": ["crash_record_id", "unit_no"],
-        "fatalities": ["person_id"]
+        "fatalities": ["person_id"],
     }
 
 
 class SpatialSettings(BaseSettings):
     """Spatial data settings."""
-    
+
     shapefiles: Dict[str, str] = {
         "wards": "data/shapefiles/chicago_wards.shp",
-        "community_areas": "data/shapefiles/community_areas.shp", 
+        "community_areas": "data/shapefiles/community_areas.shp",
         "census_tracts": "data/shapefiles/census_tracts.shp",
         "police_beats": "data/shapefiles/police_beats.shp",
         "house_districts": "data/shapefiles/house_districts.shp",
-        "senate_districts": "data/shapefiles/senate_districts.shp"
+        "senate_districts": "data/shapefiles/senate_districts.shp",
     }
     srid: int = 4326  # WGS84
 
 
 class LoggingSettings(BaseSettings):
     """Logging configuration settings."""
-    
+
     level: str = Field(default="INFO", env="LOG_LEVEL")
     format: str = "json"
     files: Dict[str, str] = {
         "app": "logs/app.log",
-        "etl": "logs/etl.log", 
-        "api": "logs/api.log"
+        "etl": "logs/etl.log",
+        "api": "logs/api.log",
     }
     max_bytes: int = 10485760  # 10MB
     backup_count: int = 5
@@ -108,11 +108,11 @@ class LoggingSettings(BaseSettings):
 
 class Settings(BaseSettings):
     """Main application settings."""
-    
+
     environment: str = Field(default="development", env="ENVIRONMENT")
-    api_host: str = Field(default="0.0.0.0", env="API_HOST") 
+    api_host: str = Field(default="0.0.0.0", env="API_HOST")
     api_port: int = Field(default=8000, env="API_PORT")
-    
+
     # Sub-settings
     database: DatabaseSettings = DatabaseSettings()
     api: APISettings = APISettings()
@@ -120,29 +120,30 @@ class Settings(BaseSettings):
     validation: ValidationSettings = ValidationSettings()
     spatial: SpatialSettings = SpatialSettings()
     logging: LoggingSettings = LoggingSettings()
-    
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 def _resolve_template_strings(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Resolve ${ENV_VAR:default} template strings in configuration.
-    
+
     Args:
         config_dict: Configuration dictionary with potential template strings
-        
+
     Returns:
         Configuration dictionary with resolved template strings
     """
+
     def resolve_value(value):
         if isinstance(value, str):
             # Pattern matches ${ENV_VAR:default_value} or ${ENV_VAR}
-            pattern = r'\$\{([^}:]+)(?::([^}]*))?\}'
-            
+            pattern = r"\$\{([^}:]+)(?::([^}]*))?\}"
+
             def replace_match(match):
                 env_var = match.group(1)
                 default_value = match.group(2) if match.group(2) is not None else ""
                 return os.getenv(env_var, default_value)
-            
+
             return re.sub(pattern, replace_match, value)
         elif isinstance(value, dict):
             return {k: resolve_value(v) for k, v in value.items()}
@@ -150,34 +151,34 @@ def _resolve_template_strings(config_dict: Dict[str, Any]) -> Dict[str, Any]:
             return [resolve_value(item) for item in value]
         else:
             return value
-    
+
     return resolve_value(config_dict)
 
 
 def load_config(config_path: Optional[Path] = None) -> Settings:
     """Load configuration from YAML file and environment variables.
-    
+
     Args:
         config_path: Path to YAML config file. Defaults to config/config.yaml
-        
+
     Returns:
         Settings object with loaded configuration
     """
     if config_path is None:
         config_path = Path("config/config.yaml")
-    
+
     settings = Settings()
-    
+
     # Load YAML config if it exists
     if config_path.exists():
         with open(config_path) as f:
             yaml_config = yaml.safe_load(f)
-            
+
         # Resolve template strings
         if yaml_config:
             yaml_config = _resolve_template_strings(yaml_config)
             _update_settings_from_dict(settings, yaml_config)
-    
+
     return settings
 
 
@@ -224,7 +225,7 @@ def validate_configuration(settings: Settings) -> None:
             warnings.warn(
                 "Using default database password. This is OK for development, "
                 "but NEVER use default passwords in production.",
-                UserWarning
+                UserWarning,
             )
 
     # Check for wildcard CORS (this would be set in environment, not in settings)
@@ -240,7 +241,7 @@ def validate_configuration(settings: Settings) -> None:
             warnings.warn(
                 "Wildcard CORS origin detected. This is a security risk. "
                 "Set specific origins in CORS_ORIGINS environment variable.",
-                UserWarning
+                UserWarning,
             )
 
     # Validate API token for production
@@ -250,7 +251,7 @@ def validate_configuration(settings: Settings) -> None:
                 "No Chicago Data Portal API token configured for production. "
                 "Request rate will be limited to 1000 requests/hour. "
                 "Get a token at: https://data.cityofchicago.org/profile/app_tokens",
-                UserWarning
+                UserWarning,
             )
 
     # Check database password strength (basic check)
@@ -260,7 +261,7 @@ def validate_configuration(settings: Settings) -> None:
                 "Database password is shorter than 12 characters. "
                 "Use a strong password (32+ characters recommended). "
                 "Generate with: openssl rand -base64 32",
-                UserWarning
+                UserWarning,
             )
 
 

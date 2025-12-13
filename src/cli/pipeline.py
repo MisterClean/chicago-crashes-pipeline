@@ -9,7 +9,6 @@ from typing import List, Sequence
 from src.services.sync_service import run_sync
 from src.utils.logging import get_logger
 
-
 logger = get_logger(__name__)
 
 
@@ -118,4 +117,3 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     main()
-

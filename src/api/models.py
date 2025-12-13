@@ -1,19 +1,29 @@
 """Pydantic models for API requests and responses."""
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
 
 
 class SyncRequest(BaseModel):
     """Request model for sync operations."""
-    start_date: Optional[str] = Field(None, description="Start date for sync in YYYY-MM-DD format")
-    end_date: Optional[str] = Field(None, description="End date for sync in YYYY-MM-DD format")
+
+    start_date: Optional[str] = Field(
+        None, description="Start date for sync in YYYY-MM-DD format"
+    )
+    end_date: Optional[str] = Field(
+        None, description="End date for sync in YYYY-MM-DD format"
+    )
     force: bool = Field(False, description="Force sync even if recently completed")
-    endpoint: Optional[str] = Field(None, description="Specific endpoint to sync (crashes, people, vehicles, fatalities)")
+    endpoint: Optional[str] = Field(
+        None,
+        description="Specific endpoint to sync (crashes, people, vehicles, fatalities)",
+    )
 
 
 class SyncResponse(BaseModel):
     """Response model for sync operations."""
+
     message: str
     sync_id: str
     status: str
@@ -22,6 +32,7 @@ class SyncResponse(BaseModel):
 
 class StatusResponse(BaseModel):
     """Response model for status checks."""
+
     status: str
     last_sync: Optional[datetime]
     current_operation: Optional[str]
@@ -31,6 +42,7 @@ class StatusResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Response model for health checks."""
+
     status: str
     timestamp: datetime
     services: Dict[str, str]
@@ -38,6 +50,7 @@ class HealthResponse(BaseModel):
 
 class TestSyncResponse(BaseModel):
     """Response model for test sync operations."""
+
     status: str
     message: str
     records_fetched: int
@@ -47,6 +60,7 @@ class TestSyncResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Response model for errors."""
+
     detail: str
     error_code: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
@@ -54,6 +68,7 @@ class ErrorResponse(BaseModel):
 
 class DataValidationResponse(BaseModel):
     """Response model for data validation results."""
+
     endpoint: str
     total_records: int
     valid_records: int
@@ -64,6 +79,7 @@ class DataValidationResponse(BaseModel):
 
 class EndpointInfo(BaseModel):
     """Information about a data endpoint."""
+
     name: str
     url: str
     description: str
@@ -73,8 +89,10 @@ class EndpointInfo(BaseModel):
 
 # Job Management API Models
 
+
 class JobConfig(BaseModel):
     """Job configuration parameters."""
+
     endpoints: Optional[List[str]] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
@@ -85,6 +103,7 @@ class JobConfig(BaseModel):
 
 class CreateJobRequest(BaseModel):
     """Request model for creating a new job."""
+
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     job_type: str
@@ -99,6 +118,7 @@ class CreateJobRequest(BaseModel):
 
 class UpdateJobRequest(BaseModel):
     """Request model for updating an existing job."""
+
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = None
     enabled: Optional[bool] = None
@@ -112,6 +132,7 @@ class UpdateJobRequest(BaseModel):
 
 class JobResponse(BaseModel):
     """Response model for job operations."""
+
     id: int
     name: str
     description: Optional[str]
@@ -132,6 +153,7 @@ class JobResponse(BaseModel):
 
 class JobExecutionResponse(BaseModel):
     """Response model for job execution details."""
+
     id: int
     execution_id: str
     job_id: int
@@ -151,6 +173,7 @@ class JobExecutionResponse(BaseModel):
 
 class ExecutionLogEntry(BaseModel):
     """Structured log entry for a job execution."""
+
     timestamp: datetime
     level: str
     message: str
@@ -158,18 +181,21 @@ class ExecutionLogEntry(BaseModel):
 
 class JobExecutionDetailResponse(JobExecutionResponse):
     """Detailed response for job execution with logs and context."""
+
     execution_context: Optional[Dict[str, Any]] = None
     logs: List[ExecutionLogEntry] = Field(default_factory=list)
 
 
 class ExecuteJobRequest(BaseModel):
     """Request model for manual job execution."""
+
     force: bool = False
     override_config: Optional[JobConfig] = None
 
 
 class ExecuteJobResponse(BaseModel):
     """Response model for job execution trigger."""
+
     message: str
     execution_id: str
     job_id: int
@@ -179,14 +205,18 @@ class ExecuteJobResponse(BaseModel):
 
 class DataDeletionRequest(BaseModel):
     """Request model for data deletion operations."""
+
     table_name: str
     confirm: bool = False
     backup: bool = True
-    date_range: Optional[Dict[str, str]] = None  # {"start": "2023-01-01", "end": "2023-12-31"}
-    
-    
+    date_range: Optional[
+        Dict[str, str]
+    ] = None  # {"start": "2023-01-01", "end": "2023-12-31"}
+
+
 class DataDeletionResponse(BaseModel):
     """Response model for data deletion operations."""
+
     message: str
     table_name: str
     records_deleted: int
@@ -197,6 +227,7 @@ class DataDeletionResponse(BaseModel):
 
 class JobSummaryResponse(BaseModel):
     """Summary response for all jobs."""
+
     total_jobs: int
     active_jobs: int
     running_jobs: int
@@ -206,6 +237,7 @@ class JobSummaryResponse(BaseModel):
 
 class SpatialLayerResponse(BaseModel):
     """Metadata response for a spatial layer."""
+
     id: int
     name: str
     slug: str
@@ -221,11 +253,13 @@ class SpatialLayerResponse(BaseModel):
 
 class SpatialLayerDetailResponse(SpatialLayerResponse):
     """Detailed response including sample features."""
+
     feature_samples: List[Dict[str, Any]] = []
 
 
 class SpatialLayerUpdateRequest(BaseModel):
     """Payload for updating a spatial layer."""
+
     name: Optional[str] = Field(None, min_length=1, max_length=150)
     description: Optional[str] = None
     is_active: Optional[bool] = None
