@@ -47,4 +47,4 @@ jobs:
     - name: Run mypy (type checking)
       if: matrix.linter == 'mypy'
       run: |
-        mypy src --ignore-missing-imports --exclude 'src/static/documentation'
+        mypy src/utils src/etl src/validators --ignore-missing-imports --exclude 'src/static/documentation'
