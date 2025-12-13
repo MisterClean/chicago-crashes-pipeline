@@ -3,7 +3,6 @@
 
 # Advanced Testing
 pytest-httpx==0.26.0     # HTTP testing for FastAPI endpoints
-httpx-mock==0.7.0        # HTTP request mocking
 
 # CLI and Rich Output
 typer==0.9.0             # CLI framework

@@ -42,7 +42,6 @@ Additional packages for enhanced functionality:
 
 ### Advanced Testing
 - **pytest-httpx**: HTTP testing utilities
-- **httpx-mock**: HTTP request mocking
 
 ### CLI & Output Enhancement
 - **typer**: CLI framework (used for command-line tools)
