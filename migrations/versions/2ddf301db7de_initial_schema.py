@@ -34,7 +34,6 @@ def upgrade() -> None:
     with op.batch_alter_table('census_tracts', schema=None) as batch_op:
         batch_op.create_index('idx_census_tracts_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_census_tracts_geoid10'), ['geoid10'], unique=False)
-        batch_op.create_index(batch_op.f('ix_census_tracts_geometry'), ['geometry'], unique=False)
 
     op.create_table('community_areas',
     sa.Column('area_numbe', sa.Integer(), nullable=False),
@@ -1102,7 +1101,6 @@ def downgrade() -> None:
 
     op.drop_table('community_areas')
     with op.batch_alter_table('census_tracts', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_census_tracts_geometry'))
         batch_op.drop_index(batch_op.f('ix_census_tracts_geoid10'))
         batch_op.drop_index('idx_census_tracts_geometry', postgresql_using='gist')
 

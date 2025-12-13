@@ -1,26 +1,19 @@
 """Job management endpoints."""
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from src.api.models import (
-    CreateJobRequest,
-    UpdateJobRequest,
-    JobResponse,
-    JobExecutionResponse,
-    JobExecutionDetailResponse,
-    ExecutionLogEntry,
-    ExecuteJobRequest,
-    ExecuteJobResponse,
-    DataDeletionRequest,
-    DataDeletionResponse,
-    JobSummaryResponse,
-    ErrorResponse,
-)
+from src.api.models import (CreateJobRequest, DataDeletionRequest,
+                            DataDeletionResponse, ErrorResponse,
+                            ExecuteJobRequest, ExecuteJobResponse,
+                            ExecutionLogEntry, JobExecutionDetailResponse,
+                            JobExecutionResponse, JobResponse,
+                            JobSummaryResponse, UpdateJobRequest)
 from src.models.base import get_db
-from src.models.jobs import JobExecution, JobStatus, JobType, RecurrenceType, ScheduledJob
+from src.models.jobs import (JobExecution, JobStatus, JobType, RecurrenceType,
+                             ScheduledJob)
 from src.services.job_service import JobService
 from src.utils.logging import get_logger
 
@@ -105,7 +98,7 @@ async def list_jobs(
     """List all scheduled jobs."""
     try:
         jobs = job_service.get_jobs(enabled_only=enabled_only)
-        
+
         return [
             JobResponse(
                 id=job.id,
@@ -123,7 +116,7 @@ async def list_jobs(
                 retry_delay_minutes=job.retry_delay_minutes,
                 created_by=job.created_by,
                 created_at=job.created_at,
-                updated_at=job.updated_at
+                updated_at=job.updated_at,
             )
             for job in jobs
         ]
@@ -140,7 +133,9 @@ async def get_jobs_summary():
         return JobSummaryResponse(**summary)
     except Exception as e:
         logger.error(f"Failed to get jobs summary: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get jobs summary: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get jobs summary: {str(e)}"
+        )
 
 
 @router.post("/", response_model=JobResponse, status_code=201)
@@ -149,12 +144,17 @@ async def create_job(request: CreateJobRequest):
     try:
         # Validate job type
         if request.job_type not in [jt.value for jt in JobType]:
-            raise HTTPException(status_code=400, detail=f"Invalid job type: {request.job_type}")
-        
+            raise HTTPException(
+                status_code=400, detail=f"Invalid job type: {request.job_type}"
+            )
+
         # Validate recurrence type
         if request.recurrence_type not in [rt.value for rt in RecurrenceType]:
-            raise HTTPException(status_code=400, detail=f"Invalid recurrence type: {request.recurrence_type}")
-        
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid recurrence type: {request.recurrence_type}",
+            )
+
         job_data = {
             "name": request.name,
             "description": request.description,
@@ -165,11 +165,11 @@ async def create_job(request: CreateJobRequest):
             "config": request.config.dict(),
             "timeout_minutes": request.timeout_minutes,
             "max_retries": request.max_retries,
-            "retry_delay_minutes": request.retry_delay_minutes
+            "retry_delay_minutes": request.retry_delay_minutes,
         }
-        
+
         job = job_service.create_job(job_data, created_by="admin")
-        
+
         return JobResponse(
             id=job.id,
             name=job.name,
@@ -186,9 +186,9 @@ async def create_job(request: CreateJobRequest):
             retry_delay_minutes=job.retry_delay_minutes,
             created_by=job.created_by,
             created_at=job.created_at,
-            updated_at=job.updated_at
+            updated_at=job.updated_at,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -202,7 +202,7 @@ async def get_job(job_id: int):
     job = job_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-    
+
     return JobResponse(
         id=job.id,
         name=job.name,
@@ -219,7 +219,7 @@ async def get_job(job_id: int):
         retry_delay_minutes=job.retry_delay_minutes,
         created_by=job.created_by,
         created_at=job.created_at,
-        updated_at=job.updated_at
+        updated_at=job.updated_at,
     )
 
 
@@ -228,26 +228,35 @@ async def update_job(job_id: int, request: UpdateJobRequest):
     """Update an existing job."""
     try:
         updates = {}
-        
+
         # Only include non-None values
         for field, value in request.dict(exclude_unset=True).items():
             if field == "config" and value:
-                updates[field] = value.dict() if hasattr(value, 'dict') else value
+                updates[field] = value.dict() if hasattr(value, "dict") else value
             else:
                 updates[field] = value
-        
+
         # Validate job type if provided
-        if "job_type" in updates and updates["job_type"] not in [jt.value for jt in JobType]:
-            raise HTTPException(status_code=400, detail=f"Invalid job type: {updates['job_type']}")
-        
+        if "job_type" in updates and updates["job_type"] not in [
+            jt.value for jt in JobType
+        ]:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid job type: {updates['job_type']}"
+            )
+
         # Validate recurrence type if provided
-        if "recurrence_type" in updates and updates["recurrence_type"] not in [rt.value for rt in RecurrenceType]:
-            raise HTTPException(status_code=400, detail=f"Invalid recurrence type: {updates['recurrence_type']}")
-        
+        if "recurrence_type" in updates and updates["recurrence_type"] not in [
+            rt.value for rt in RecurrenceType
+        ]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid recurrence type: {updates['recurrence_type']}",
+            )
+
         job = job_service.update_job(job_id, updates)
         if not job:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        
+
         return JobResponse(
             id=job.id,
             name=job.name,
@@ -264,9 +273,9 @@ async def update_job(job_id: int, request: UpdateJobRequest):
             retry_delay_minutes=job.retry_delay_minutes,
             created_by=job.created_by,
             created_at=job.created_at,
-            updated_at=job.updated_at
+            updated_at=job.updated_at,
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -281,9 +290,9 @@ async def delete_job(job_id: int):
         success = job_service.delete_job(job_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
-        
+
         return {"message": f"Job {job_id} deleted successfully"}
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -298,21 +307,19 @@ async def execute_job(job_id: int, request: ExecuteJobRequest):
         override_config = None
         if request.override_config:
             override_config = request.override_config.dict()
-        
+
         execution_id = await job_service.execute_job(
-            job_id=job_id,
-            force=request.force,
-            override_config=override_config
+            job_id=job_id, force=request.force, override_config=override_config
         )
-        
+
         return ExecuteJobResponse(
             message=f"Job {job_id} execution started",
             execution_id=execution_id,
             job_id=job_id,
             status=JobStatus.PENDING,
-            started_at=datetime.now()
+            started_at=datetime.now(),
         )
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -323,22 +330,28 @@ async def execute_job(job_id: int, request: ExecuteJobRequest):
 @router.get("/{job_id}/executions", response_model=List[JobExecutionResponse])
 async def get_job_executions(
     job_id: int,
-    limit: int = Query(50, ge=1, le=200, description="Limit number of executions returned")
+    limit: int = Query(
+        50, ge=1, le=200, description="Limit number of executions returned"
+    ),
 ):
     """Get execution history for a job."""
     try:
         executions = job_service.get_job_executions(job_id=job_id, limit=limit)
 
         return [_build_execution_response(execution) for execution in executions]
-        
+
     except Exception as e:
         logger.error(f"Failed to get executions for job {job_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get executions: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get executions: {str(e)}"
+        )
 
 
 @router.get("/executions/recent", response_model=List[JobExecutionResponse])
 async def get_recent_executions(
-    limit: int = Query(50, ge=1, le=200, description="Limit number of executions returned")
+    limit: int = Query(
+        50, ge=1, le=200, description="Limit number of executions returned"
+    )
 ):
     """Get recent execution history across all jobs."""
     try:
@@ -348,7 +361,9 @@ async def get_recent_executions(
 
     except Exception as e:
         logger.error(f"Failed to get recent executions: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get executions: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get executions: {str(e)}"
+        )
 
 
 @router.get("/executions/{execution_id}", response_model=JobExecutionDetailResponse)
@@ -359,7 +374,11 @@ async def get_execution_detail(execution_id: str):
         if not execution:
             raise HTTPException(status_code=404, detail="Execution not found")
 
-        context = execution.execution_context if isinstance(execution.execution_context, dict) else {}
+        context = (
+            execution.execution_context
+            if isinstance(execution.execution_context, dict)
+            else {}
+        )
         logs = _parse_execution_logs(context.get("logs"))
 
         return JobExecutionDetailResponse(
@@ -385,7 +404,9 @@ async def get_execution_detail(execution_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to get execution {execution_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to get execution: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get execution: {str(e)}"
+        )
 
 
 @router.post("/data/delete", response_model=DataDeletionResponse)
@@ -393,34 +414,38 @@ async def delete_table_data(request: DataDeletionRequest):
     """Delete data from a table with optional date filtering."""
     try:
         # Validate table name
-        valid_tables = ["crashes", "crash_people", "crash_vehicles", "vision_zero_fatalities"]
+        valid_tables = [
+            "crashes",
+            "crash_people",
+            "crash_vehicles",
+            "vision_zero_fatalities",
+        ]
         if request.table_name not in valid_tables:
             raise HTTPException(
-                status_code=400, 
-                detail=f"Invalid table name. Valid options: {valid_tables}"
+                status_code=400,
+                detail=f"Invalid table name. Valid options: {valid_tables}",
             )
-        
+
         # Safety check - require confirmation
         if not request.confirm:
             raise HTTPException(
                 status_code=400,
-                detail="Data deletion requires confirmation. Set 'confirm' to true."
+                detail="Data deletion requires confirmation. Set 'confirm' to true.",
             )
-        
+
         result = job_service.delete_all_data(
-            table_name=request.table_name,
-            date_range=request.date_range
+            table_name=request.table_name, date_range=request.date_range
         )
-        
+
         return DataDeletionResponse(
             message=f"Successfully deleted {result['records_deleted']} records from {request.table_name}",
             table_name=request.table_name,
             records_deleted=result["records_deleted"],
             execution_time_seconds=result["execution_time_seconds"],
             backup_location=result["backup_location"],
-            can_restore=result["can_restore"]
+            can_restore=result["can_restore"],
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -441,5 +466,10 @@ async def get_job_types():
             for rt in RecurrenceType
         ],
         "valid_endpoints": ["crashes", "people", "vehicles", "fatalities"],
-        "valid_tables": ["crashes", "crash_people", "crash_vehicles", "vision_zero_fatalities"]
+        "valid_tables": [
+            "crashes",
+            "crash_people",
+            "crash_vehicles",
+            "vision_zero_fatalities",
+        ],
     }

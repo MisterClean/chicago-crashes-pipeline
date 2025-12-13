@@ -2,11 +2,9 @@
 import asyncio
 import sys
 from datetime import datetime
-
-from fastapi import APIRouter, Depends
-
 from typing import Any
 
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from src.api.dependencies import get_sync_state
@@ -25,7 +23,7 @@ async def health_check():
     """Comprehensive health check endpoint."""
     services_status = {}
     overall_healthy = True
-    
+
     try:
         # Test configuration loading
         _ = settings.api.endpoints
@@ -33,7 +31,7 @@ async def health_check():
     except Exception as e:
         services_status["configuration"] = f"error: {str(e)}"
         overall_healthy = False
-    
+
     try:
         client = SODAClient()
         test_records = await _fetch_single_record(client)
@@ -55,17 +53,15 @@ async def health_check():
         logger.warning("Database health check failed", error=str(e))
         services_status["database"] = f"warning: {str(e)}"
         overall_healthy = False
-    
+
     status = "healthy" if overall_healthy else "degraded"
-    
+
     if not overall_healthy:
         logger.warning("Health check failed", services=services_status)
-    
+
     logger.debug("Health check services", services=services_status)
     return HealthResponse(
-        status=status,
-        timestamp=datetime.now(),
-        services=services_status
+        status=status, timestamp=datetime.now(), services=services_status
     )
 
 
@@ -115,7 +111,7 @@ async def root(sync_state: dict = Depends(get_sync_state)):
     uptime = "unknown"
     if "started_at" in sync_state:
         uptime = str(datetime.now() - sync_state["started_at"])
-    
+
     return {
         "name": "Chicago Crash Data Pipeline API",
         "version": "1.0.0",
@@ -130,14 +126,14 @@ async def root(sync_state: dict = Depends(get_sync_state)):
             "endpoints_info": "/sync/endpoints",
             "validate_data": "/validate",
             "docs": "/docs",
-            "openapi": "/openapi.json"
+            "openapi": "/openapi.json",
         },
         "data_sources": {
             "crashes": "Traffic Crashes - Crashes",
-            "people": "Traffic Crashes - People", 
+            "people": "Traffic Crashes - People",
             "vehicles": "Traffic Crashes - Vehicles",
-            "fatalities": "Vision Zero Fatalities"
-        }
+            "fatalities": "Vision Zero Fatalities",
+        },
     }
 
 
@@ -149,9 +145,5 @@ async def get_version():
         "build_date": "2024-08-28",  # Would be set during build
         "commit": "unknown",  # Would be set from git during build
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-        "dependencies": {
-            "fastapi": "0.104.1",
-            "pydantic": "2.5.0",
-            "httpx": "0.25.2"
-        }
+        "dependencies": {"fastapi": "0.104.1", "pydantic": "2.5.0", "httpx": "0.25.2"},
     }

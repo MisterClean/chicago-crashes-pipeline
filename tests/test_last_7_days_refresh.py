@@ -189,7 +189,9 @@ class TestLast7DaysRefresh:
     def test_invalid_date_range_for_refresh(self, mock_sync_service_cls, client):
         """Test sync with invalid date range."""
         mock_service = mock_sync_service_cls.return_value
-        all_endpoints_result = make_sync_result({name: {"fetched": 0} for name in settings.api.endpoints})
+        all_endpoints_result = make_sync_result(
+            {name: {"fetched": 0} for name in settings.api.endpoints}
+        )
         mock_service.sync = AsyncMock(return_value=all_endpoints_result)
 
         response = client.post(
@@ -227,7 +229,9 @@ class TestLast7DaysRefresh:
     ):
         """Test handling when no records are found in the last 7 days."""
         mock_service = mock_sync_service_cls.return_value
-        mock_service.sync = AsyncMock(return_value=make_sync_result({"crashes": {"fetched": 0}}))
+        mock_service.sync = AsyncMock(
+            return_value=make_sync_result({"crashes": {"fetched": 0}})
+        )
 
         response = client.post(
             "/sync/trigger",
@@ -251,7 +255,9 @@ class TestLast7DaysRefresh:
     ):
         """Test syncing multiple endpoints for the last 7 days."""
         mock_service = mock_sync_service_cls.return_value
-        mock_service.sync = AsyncMock(return_value=make_sync_result({"crashes": {"fetched": 0}}))
+        mock_service.sync = AsyncMock(
+            return_value=make_sync_result({"crashes": {"fetched": 0}})
+        )
 
         response = client.post(
             "/sync/trigger",

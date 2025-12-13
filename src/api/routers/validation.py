@@ -41,9 +41,9 @@ async def validate_endpoint_data(
         available_endpoints = list(settings.api.endpoints.keys())
         raise HTTPException(
             status_code=404,
-            detail=f"Endpoint '{endpoint}' not found. Available endpoints: {available_endpoints}"
+            detail=f"Endpoint '{endpoint}' not found. Available endpoints: {available_endpoints}",
         )
-    
+
     try:
         # Fetch records
         endpoint_url = settings.api.endpoints[endpoint]
@@ -63,7 +63,7 @@ async def validate_endpoint_data(
                 maybe = closer()
                 if asyncio.iscoroutine(maybe):
                     await maybe
-        
+
         if not records:
             return DataValidationResponse(
                 endpoint=endpoint,
@@ -71,14 +71,14 @@ async def validate_endpoint_data(
                 valid_records=0,
                 invalid_records=0,
                 validation_errors=["No records returned from API"],
-                warnings=[]
+                warnings=[],
             )
-        
+
         # Validate records based on endpoint type
         validation_errors = []
         warnings = []
         valid_count = 0
-        
+
         for i, record in enumerate(records):
             try:
                 # Sanitize first
@@ -89,33 +89,33 @@ async def validate_endpoint_data(
                     # For other endpoints, just do basic validation
                     cleaned_record = record
                     validation_result = {"valid": True, "errors": [], "warnings": []}
-                
+
                 if validation_result["valid"]:
                     valid_count += 1
                 else:
                     for error in validation_result["errors"]:
                         validation_errors.append(f"Record {i+1}: {error}")
-                
+
                 for warning in validation_result["warnings"]:
                     warnings.append(f"Record {i+1}: {warning}")
-                    
+
             except Exception as e:
                 validation_errors.append(f"Record {i+1}: Processing error - {str(e)}")
-        
+
         return DataValidationResponse(
             endpoint=endpoint,
             total_records=len(records),
             valid_records=valid_count,
             invalid_records=len(records) - valid_count,
             validation_errors=validation_errors,
-            warnings=warnings
+            warnings=warnings,
         )
-        
+
     except Exception as e:
         logger.error("Validation failed", endpoint=endpoint, error=str(e))
         raise HTTPException(
             status_code=500,
-            detail=f"Validation failed for endpoint '{endpoint}': {str(e)}"
+            detail=f"Validation failed for endpoint '{endpoint}': {str(e)}",
         )
 
 
@@ -130,10 +130,7 @@ async def validation_info():
             "crashes": "Geographic bounds, date formats, required fields",
             "people": "Age validation, required fields",
             "vehicles": "Vehicle year validation, required fields",
-            "fatalities": "Geographic bounds, date formats, required fields"
+            "fatalities": "Geographic bounds, date formats, required fields",
         },
-        "limits": {
-            "max_records_per_validation": 1000,
-            "default_records": 100
-        }
+        "limits": {"max_records_per_validation": 1000, "default_records": 100},
     }

@@ -12,7 +12,6 @@ from src.utils.config import settings
 from src.utils.logging import get_logger
 from src.validators.data_sanitizer import DataSanitizer
 
-
 logger = get_logger(__name__)
 
 
@@ -184,9 +183,13 @@ class SyncService:
         if endpoint == "people":
             return [self.sanitizer.sanitize_person_record(record) for record in records]
         if endpoint == "vehicles":
-            return [self.sanitizer.sanitize_vehicle_record(record) for record in records]
+            return [
+                self.sanitizer.sanitize_vehicle_record(record) for record in records
+            ]
         if endpoint == "fatalities":
-            cleaned = [self.sanitizer.sanitize_fatality_record(record) for record in records]
+            cleaned = [
+                self.sanitizer.sanitize_fatality_record(record) for record in records
+            ]
             return self.sanitizer.remove_duplicates(cleaned, "person_id")
 
         logger.warning("Unknown endpoint requested during sync", endpoint=endpoint)
@@ -224,7 +227,9 @@ async def run_sync(  # pragma: no cover - thin convenience wrapper used by CLI
     client_factory: Optional[Callable[[], SODAClient]] = None,
 ) -> SyncResult:
     service = SyncService(batch_size=batch_size, client_factory=client_factory)
-    return await service.sync(endpoints=endpoints, start_date=start_date, end_date=end_date)
+    return await service.sync(
+        endpoints=endpoints, start_date=start_date, end_date=end_date
+    )
 
 
 class _AsyncNullContext:

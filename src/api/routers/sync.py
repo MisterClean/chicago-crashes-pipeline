@@ -7,7 +7,8 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
 from src.api.dependencies import get_sync_lock, get_sync_state
-from src.api.models import StatusResponse, SyncRequest, SyncResponse, TestSyncResponse
+from src.api.models import (StatusResponse, SyncRequest, SyncResponse,
+                            TestSyncResponse)
 from src.etl.soda_client import SODAClient
 from src.services.database_service import DatabaseService as _DatabaseService
 from src.services.sync_service import SyncService
@@ -44,13 +45,15 @@ async def get_sync_status(sync_state: dict = Depends(get_sync_state)):
     """Get current sync status and statistics."""
     started_at = sync_state.get("started_at", datetime.now())
     uptime = str(datetime.now() - started_at)
-    
+
     return StatusResponse(
-        status="idle" if sync_state["status"] == "running" and sync_state["current_operation"] is None else sync_state["status"],
+        status="idle"
+        if sync_state["status"] == "running" and sync_state["current_operation"] is None
+        else sync_state["status"],
         last_sync=sync_state["last_sync"],
         current_operation=sync_state["current_operation"],
         stats=sync_state["stats"],
-        uptime=uptime
+        uptime=uptime,
     )
 
 
@@ -58,7 +61,7 @@ async def get_sync_status(sync_state: dict = Depends(get_sync_state)):
 async def trigger_sync(
     request: SyncRequest,
     background_tasks: BackgroundTasks,
-    sync_state: dict = Depends(get_sync_state)
+    sync_state: dict = Depends(get_sync_state),
 ):
     """Trigger a manual sync operation."""
     # Prevent concurrent syncs using shared lock state
@@ -66,13 +69,12 @@ async def trigger_sync(
 
     if sync_state["status"] == "running" or sync_lock.locked():
         raise HTTPException(
-            status_code=409,
-            detail="Sync operation already in progress"
+            status_code=409, detail="Sync operation already in progress"
         )
 
     # Generate sync ID
     sync_id = f"sync_{int(datetime.now().timestamp())}"
-    
+
     # Update sync state
     sync_state["status"] = "running"
     sync_state["current_operation"] = f"Manual sync {sync_id}"
@@ -84,14 +86,14 @@ async def trigger_sync(
         request,
         sync_state,
     )
-    
+
     logger.info("Triggered manual sync", sync_id=sync_id, request=request.dict())
-    
+
     return SyncResponse(
         message="Sync operation started",
         sync_id=sync_id,
         status="running",
-        started_at=datetime.now()
+        started_at=datetime.now(),
     )
 
 
@@ -101,34 +103,34 @@ async def test_sync(sync_state: dict = Depends(get_sync_state)):
     try:
         sync_state["status"] = "testing"
         sync_state["current_operation"] = "Test sync"
-        
+
         client = get_soda_client()
         sanitizer = get_data_sanitizer()
 
         test_records = await _fetch_sample_records(client)
-        
+
         # Test data sanitization
         cleaned_records = []
         for record in test_records:
             cleaned = sanitizer.sanitize_crash_record(record)
             cleaned_records.append(cleaned)
-        
+
         sync_state["status"] = "idle"
         sync_state["current_operation"] = None
-        
+
         return TestSyncResponse(
             status="success",
             message="Test sync completed successfully",
             records_fetched=len(test_records),
             records_cleaned=len(cleaned_records),
-            sample_record=cleaned_records[0] if cleaned_records else None
+            sample_record=cleaned_records[0] if cleaned_records else None,
         )
-        
+
     except Exception as e:
         sync_state["status"] = "idle"
         sync_state["current_operation"] = None
         sync_state["stats"]["last_error"] = str(e)
-        
+
         logger.error("Test sync failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Test sync failed: {str(e)}")
 
@@ -137,25 +139,24 @@ async def test_sync(sync_state: dict = Depends(get_sync_state)):
 async def get_endpoints():
     """Get information about available data endpoints."""
     endpoints_info = []
-    
+
     for name, url in settings.api.endpoints.items():
         description_map = {
             "crashes": "Main crash records with location and injury data",
             "people": "Person-level injury and demographic data",
             "vehicles": "Vehicle/unit information involved in crashes",
-            "fatalities": "Curated fatality dataset from Vision Zero initiative"
+            "fatalities": "Curated fatality dataset from Vision Zero initiative",
         }
-        
-        endpoints_info.append({
-            "name": name,
-            "url": url,
-            "description": description_map.get(name, "Chicago crash data endpoint")
-        })
-    
-    return {
-        "endpoints": endpoints_info,
-        "total_endpoints": len(endpoints_info)
-    }
+
+        endpoints_info.append(
+            {
+                "name": name,
+                "url": url,
+                "description": description_map.get(name, "Chicago crash data endpoint"),
+            }
+        )
+
+    return {"endpoints": endpoints_info, "total_endpoints": len(endpoints_info)}
 
 
 @router.get("/counts")
@@ -164,16 +165,18 @@ async def get_database_counts():
     try:
         db_service = DatabaseService()
         counts = db_service.get_record_counts()
-        
+
         return {
             "status": "success",
             "counts": counts,
             "total_records": sum(counts.values()) if counts else 0,
-            "timestamp": datetime.now()
+            "timestamp": datetime.now(),
         }
     except Exception as e:
         logger.error("Failed to get database counts", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to get database counts: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get database counts: {str(e)}"
+        )
 
 
 async def _fetch_sample_records(client: Any, limit: int = 5) -> List[Dict[str, Any]]:
@@ -196,13 +199,17 @@ async def _fetch_sample_records(client: Any, limit: int = 5) -> List[Dict[str, A
     closer = getattr(client, "close", None)
     if closer:
         maybe = closer()
-        if asyncio.iscoroutine(maybe):  # pragma: no cover - depends on client implementation
+        if asyncio.iscoroutine(
+            maybe
+        ):  # pragma: no cover - depends on client implementation
             await maybe
 
     return result
 
 
-async def guarded_run_sync_operation(sync_id: str, request: SyncRequest, sync_state: dict) -> None:
+async def guarded_run_sync_operation(
+    sync_id: str, request: SyncRequest, sync_state: dict
+) -> None:
     """Wrap sync execution with the global sync lock."""
     sync_lock = get_sync_lock()
     async with sync_lock:
@@ -225,13 +232,15 @@ async def run_sync_operation(
 ) -> None:
     """Background task to run sync operation."""
     start_time = datetime.now()
-    
+
     try:
         logger.info("Starting sync operation", sync_id=sync_id)
-        
+
         sync_state["stats"]["total_syncs"] += 1
-        
-        endpoints_to_sync = [endpoint] if endpoint else list(settings.api.endpoints.keys())
+
+        endpoints_to_sync = (
+            [endpoint] if endpoint else list(settings.api.endpoints.keys())
+        )
 
         sanitizer = get_data_sanitizer()
         sync_service = SyncService(
@@ -267,7 +276,7 @@ async def run_sync_operation(
             total_records=service_result.total_records,
             total_inserted=service_result.total_inserted,
             total_updated=service_result.total_updated,
-            duration=duration
+            duration=duration,
         )
 
     except Exception as e:
@@ -281,4 +290,6 @@ async def run_sync_operation(
         sync_state["stats"]["last_error"] = str(e)
         sync_state["stats"]["last_sync_duration"] = duration
 
-        logger.error("Sync operation failed", sync_id=sync_id, error=str(e), duration=duration)
+        logger.error(
+            "Sync operation failed", sync_id=sync_id, error=str(e), duration=duration
+        )

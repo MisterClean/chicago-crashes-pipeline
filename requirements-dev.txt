@@ -2,7 +2,8 @@
 # These packages provide additional functionality but are not required for core operation
 
 # Advanced Testing
-pytest-httpx==0.26.0     # HTTP testing for FastAPI endpoints
+pytest-httpx==0.36.0     # HTTP testing for FastAPI endpoints (compatible with httpx 0.28.*)
+types-PyYAML==6.0.12.20240917     # Type stubs for PyYAML (required by mypy)
 
 # CLI and Rich Output
 typer==0.9.0             # CLI framework
