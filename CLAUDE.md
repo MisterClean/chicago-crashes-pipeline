@@ -167,8 +167,74 @@ python3 -c "import sys; sys.path.append('src'); from utils.config import setting
 ## Development Guidelines
 
 1. **Always work from project root**: `/Users/mmclean/dev/python/chicago-crashes-pipeline`
-2. **Use virtual environment**: `source venv/bin/activate` 
+2. **Use virtual environment**: `source venv/bin/activate`
 3. **Add src to path**: `sys.path.append('src')` in Python scripts
 4. **Follow existing patterns**: Check similar code before writing new features
 5. **Use structured logging**: `from utils.logging import get_logger`
 6. **Handle database connections properly**: Use SQLAlchemy sessions correctly
+
+## Data Engineer Agent
+
+For specialized data pipeline and database tasks, you can work with the **Data Engineer Agent** - a specialized assistant with deep expertise in this specific pipeline.
+
+### Agent Specializations
+
+The Data Engineer Agent excels at:
+
+- **ETL Pipeline Optimization**: Batch sizes, streaming patterns, rate limiting, async performance
+- **PostgreSQL/PostGIS Query Tuning**: Index design, spatial queries, EXPLAIN ANALYZE, connection pooling
+- **Data Validation & Sanitization**: Field-level cleaning, geographic bounds validation, null handling
+- **Job Orchestration**: Scheduling patterns, execution tracking, retry strategies
+- **Database Schema Design**: SQLAlchemy models, migrations, relationships, indexes
+- **Async Python Patterns**: httpx streaming, asyncio, rate limiting, retry with backoff
+- **Spatial Data Operations**: PostGIS geometry, GeoJSON processing, spatial joins
+
+### When to Use the Data Engineer Agent
+
+Invoke the Data Engineer Agent for:
+
+- Adding new data sources to the pipeline
+- Debugging data quality issues (invalid coordinates, missing fields, sanitization failures)
+- Optimizing slow queries or ETL performance
+- Designing database schemas and migrations
+- Troubleshooting sync failures (API errors, timeouts, rate limits)
+- Creating or modifying job schedules
+- Analyzing spatial query performance
+- Implementing data transformations
+
+### Agent Knowledge
+
+The agent has deep familiarity with:
+
+- **Architecture Flow**: SODA API → SODAClient → DataSanitizer → DatabaseService → PostGIS
+- **Key Services**: SyncService (ETL), JobService (scheduling), DatabaseService (upserts)
+- **Database Schema**: crashes, crash_people, crash_vehicles, vision_zero_fatalities
+- **Optimization Settings**: 50K batch size, Chicago geographic bounds, rate limits
+- **Code Patterns**: Idempotent upserts, async streaming, structured logging
+- **File Locations**: All service, model, validator, and ETL code paths
+
+### Example Tasks
+
+```bash
+# Optimize ETL performance
+"The crash sync is taking too long. Can you optimize it?"
+
+# Debug data quality
+"Some crashes have coordinates outside Chicago. Why is this happening?"
+
+# Add new data source
+"Add traffic signals data from SODA endpoint abc-123.json"
+
+# Analyze slow query
+"This spatial query finding crashes near schools is timing out"
+
+# Create scheduled job
+"Create a job that syncs only crashes from the last 7 days, running daily at 2 AM"
+```
+
+### Documentation
+
+- **Agent Configuration**: [.claude/agents/data-engineer.md](.claude/agents/data-engineer.md)
+- **Usage Examples**: [docs/agents/data-engineer-examples.md](docs/agents/data-engineer-examples.md)
+
+The Data Engineer Agent understands this pipeline's architecture, patterns, and quirks better than a general AI assistant, making it ideal for complex data engineering tasks.
