@@ -1380,7 +1380,7 @@ table code {
 **Step 4: Build and test**
 
 ```bash
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# Run from project root directory
 
 # Start dev server
 npm run start

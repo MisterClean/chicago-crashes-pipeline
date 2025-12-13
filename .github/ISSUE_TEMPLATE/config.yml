@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/MisterClean/chicago-crashes-pipeline/security/advisories/new
+    about: Report a security vulnerability privately
+  - name: Documentation
+    url: https://github.com/MisterClean/chicago-crashes-pipeline/tree/main/docs
+    about: View comprehensive documentation
+  - name: Discussions
+    url: https://github.com/MisterClean/chicago-crashes-pipeline/discussions
+    about: Ask questions and discuss ideas with the community

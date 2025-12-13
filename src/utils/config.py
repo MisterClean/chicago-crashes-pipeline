@@ -183,7 +183,7 @@ def load_config(config_path: Optional[Path] = None) -> Settings:
 
 def _update_settings_from_dict(settings: Settings, config_dict: Dict[str, Any]) -> None:
     """Update settings object with values from dictionary.
-    
+
     Args:
         settings: Settings object to update
         config_dict: Dictionary with configuration values
@@ -201,5 +201,71 @@ def _update_settings_from_dict(settings: Settings, config_dict: Dict[str, Any]) 
                 setattr(settings, key, value)
 
 
+def validate_configuration(settings: Settings) -> None:
+    """Validate configuration and warn about insecure settings.
+
+    Args:
+        settings: Settings object to validate
+
+    Raises:
+        ValueError: If critical security issues detected in production
+    """
+    import warnings
+
+    # Check for default passwords
+    if settings.database.password in ["postgres", "password", "", "your_password_here"]:
+        if settings.environment == "production":
+            raise ValueError(
+                "SECURITY ERROR: Default database password detected in production. "
+                "Set a strong password in DB_PASSWORD environment variable. "
+                "Generate one with: openssl rand -base64 32"
+            )
+        else:
+            warnings.warn(
+                "Using default database password. This is OK for development, "
+                "but NEVER use default passwords in production.",
+                UserWarning
+            )
+
+    # Check for wildcard CORS (this would be set in environment, not in settings)
+    cors_origins = os.getenv("CORS_ORIGINS", "")
+    if "*" in cors_origins:
+        if settings.environment == "production":
+            raise ValueError(
+                "SECURITY ERROR: Wildcard CORS origin (*) detected in production. "
+                "This is a critical security vulnerability when allow_credentials=True. "
+                "Set specific allowed origins in CORS_ORIGINS environment variable."
+            )
+        else:
+            warnings.warn(
+                "Wildcard CORS origin detected. This is a security risk. "
+                "Set specific origins in CORS_ORIGINS environment variable.",
+                UserWarning
+            )
+
+    # Validate API token for production
+    if settings.environment == "production":
+        if not settings.api.token:
+            warnings.warn(
+                "No Chicago Data Portal API token configured for production. "
+                "Request rate will be limited to 1000 requests/hour. "
+                "Get a token at: https://data.cityofchicago.org/profile/app_tokens",
+                UserWarning
+            )
+
+    # Check database password strength (basic check)
+    if settings.database.password and len(settings.database.password) < 12:
+        if settings.environment == "production":
+            warnings.warn(
+                "Database password is shorter than 12 characters. "
+                "Use a strong password (32+ characters recommended). "
+                "Generate with: openssl rand -base64 32",
+                UserWarning
+            )
+
+
 # Global settings instance
 settings = load_config()
+
+# Validate configuration on load
+validate_configuration(settings)

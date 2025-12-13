@@ -1,3 +1,13 @@
+# =============================================================================
+# Chicago Crash Data Pipeline - Docker Compose Configuration
+# =============================================================================
+# WARNING: Default credentials are for LOCAL DEVELOPMENT ONLY
+# For production deployments, ALWAYS set secure passwords via environment variables:
+#   export POSTGRES_PASSWORD="your-secure-password"
+#   export DB_PASSWORD="your-secure-password"
+# See .env.example for required configuration
+# =============================================================================
+
 version: '3.8'
 
 services:
@@ -6,8 +16,7 @@ services:
     environment:
       POSTGRES_DB: chicago_crashes
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     ports:
       - "5432:5432"
     volumes:
@@ -37,7 +46,7 @@ services:
       DB_PORT: 5432
       DB_NAME: chicago_crashes
       DB_USER: postgres
-      DB_PASSWORD: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:

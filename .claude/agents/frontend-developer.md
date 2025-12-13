@@ -55,7 +55,7 @@ You are a specialized **Frontend Developer Agent** for the Chicago Traffic Crash
 
 ### Admin Portal Architecture
 
-**Location**: `/Users/mmclean/dev/python/chicago-crashes-pipeline/src/static/admin/`
+**Location**: `src/static/admin/`
 
 **File Structure**:
 ```
@@ -374,7 +374,7 @@ function showToast(title, message, type = 'info') {
 
 ## Documentation Site (Docusaurus)
 
-**Location**: `/Users/mmclean/dev/python/chicago-crashes-pipeline/`
+**Location**: Project root directory
 
 **Structure**:
 ```
