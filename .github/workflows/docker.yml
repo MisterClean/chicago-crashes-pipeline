@@ -24,7 +24,7 @@ jobs:
     - name: Start services with docker-compose
       run: |
         cd docker
-        docker-compose up -d
+        docker compose up -d
         sleep 15  # Wait for services to be ready
 
     - name: Check PostgreSQL health
@@ -48,10 +48,10 @@ jobs:
       if: failure()
       run: |
         cd docker
-        docker-compose logs
+        docker compose logs
 
     - name: Cleanup
       if: always()
       run: |
         cd docker
-        docker-compose down -v
+        docker compose down -v
