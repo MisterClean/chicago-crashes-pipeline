@@ -13,7 +13,6 @@ from src.models.base import SessionLocal, get_db
 from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from src.utils.logging import get_logger
 
-
 logger = get_logger(__name__)
 
 
@@ -29,14 +28,22 @@ class DatabaseService:
     def upsert_crash_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
         return self._upsert_records(Crash, records, self._prepare_crash_record)
 
-    def upsert_person_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    def upsert_person_records(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, int]:
         return self._upsert_records(CrashPerson, records, self._prepare_person_record)
 
-    def upsert_vehicle_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    def upsert_vehicle_records(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, int]:
         return self._upsert_records(CrashVehicle, records, self._prepare_vehicle_record)
 
-    def upsert_fatality_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
-        return self._upsert_records(VisionZeroFatality, records, self._prepare_fatality_record)
+    def upsert_fatality_records(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, int]:
+        return self._upsert_records(
+            VisionZeroFatality, records, self._prepare_fatality_record
+        )
 
     def get_record_counts(self) -> Dict[str, int]:
         """Return simple table counts for status endpoints."""
@@ -128,19 +135,25 @@ class DatabaseService:
         filtered["geometry"] = geometry
         return filtered
 
-    def _prepare_person_record(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _prepare_person_record(
+        self, record: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         filtered = self._filter_columns(CrashPerson, record)
         if not filtered.get("crash_record_id") or not filtered.get("person_id"):
             return None
         return filtered
 
-    def _prepare_vehicle_record(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _prepare_vehicle_record(
+        self, record: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         filtered = self._filter_columns(CrashVehicle, record)
         if not filtered.get("crash_unit_id"):
             return None
         return filtered
 
-    def _prepare_fatality_record(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _prepare_fatality_record(
+        self, record: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
         filtered = self._filter_columns(VisionZeroFatality, record)
         if not filtered.get("person_id"):
             return None
@@ -203,7 +216,12 @@ class DatabaseService:
                 return datetime.fromisoformat(value.replace("Z", ""))
             except ValueError:
                 pass
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y"):
+            for fmt in (
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d",
+                "%m/%d/%Y %H:%M:%S",
+                "%m/%d/%Y",
+            ):
                 try:
                     return datetime.strptime(value, fmt)
                 except ValueError:
@@ -231,17 +249,25 @@ class DatabaseService:
     # ------------------------------------------------------------------
     # Backwards-compatibility shims (legacy method names used in tests)
     # ------------------------------------------------------------------
-    def insert_crash_records(self, records: Sequence[Dict[str, Any]], batch_size: int = 1000) -> Dict[str, int]:
+    def insert_crash_records(
+        self, records: Sequence[Dict[str, Any]], batch_size: int = 1000
+    ) -> Dict[str, int]:
         del batch_size  # preserved for signature compatibility
         return self.upsert_crash_records(records)
 
-    def insert_person_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    def insert_person_records(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, int]:
         return self.upsert_person_records(records)
 
-    def insert_vehicle_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    def insert_vehicle_records(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, int]:
         return self.upsert_vehicle_records(records)
 
-    def insert_fatality_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    def insert_fatality_records(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, int]:
         return self.upsert_fatality_records(records)
 
 

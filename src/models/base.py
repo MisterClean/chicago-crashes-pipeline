@@ -1,4 +1,5 @@
 """Base model configuration for SQLAlchemy with PostGIS support."""
+
 from typing import Any
 
 from geoalchemy2 import Geometry  # noqa: F401 - exported for model modules
@@ -8,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
 
 from src.utils.config import settings
-
 
 engine = create_engine(
     settings.database.url,
@@ -38,7 +38,7 @@ class Base:
     __name__: str
 
     @declared_attr
-    def __tablename__(cls) -> str:
+    def __tablename__(cls) -> str:  # type: ignore[misc]
         return cls.__name__.lower()
 
 
@@ -46,7 +46,9 @@ class TimestampMixin:
     """Mixin for created_at and updated_at timestamps."""
 
     created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 def get_db():

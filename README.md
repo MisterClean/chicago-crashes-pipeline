@@ -1,5 +1,12 @@
 # Chicago Traffic Crash Data Pipeline
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Tests](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Tests/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
+[![Lint](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Lint/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
+[![Security](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Security/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
+
 A Python-based data pipeline that ingests, validates, and serves Chicago traffic crash data from multiple SODA APIs, supporting spatial analysis and automated refresh workflows.
 
 ## Overview
@@ -11,7 +18,7 @@ The service orchestrates end-to-end ETL for four interconnected datasets from th
 **Prerequisites**: Python 3.11+, pip, Docker, Node 18+, npm, and GNU Make.
 
 ```bash
-git clone https://github.com/<your-org>/chicago-crashes-pipeline.git
+git clone https://github.com/MisterClean/chicago-crashes-pipeline.git
 cd chicago-crashes-pipeline
 python -m venv .venv && source .venv/bin/activate
 make install
@@ -118,10 +125,6 @@ graph TB
 - **FastAPI service** exposing sync controls, health checks, and spatial endpoints
 - **Admin portal** for job orchestration and monitoring
 - **Async ETL pipeline** with rate limiting, validation, and sanitization stages
-
-## License
-
-Released under the MIT License. See `LICENSE` for details.
 - **Scheduler and job tracking** with retries and execution history
 - **PostgreSQL/PostGIS storage** optimised for spatial and analytic workloads
 
@@ -152,19 +155,50 @@ Released under the MIT License. See `LICENSE` for details.
 
 ## Documentation
 
-- Run the docs locally:
-  ```bash
-  npm install
-  npm run start
-  npm run build
-  ```
-  `npm run build` outputs static assets in `src/static/documentation`, served by FastAPI at http://localhost:8000/documentation/.
+Comprehensive documentation is available at http://localhost:8000/documentation/ when running the API server.
 
-- Reference guides:
-  - **[API Reference](docs/API_REFERENCE.md)**
-  - **[Development Guide](docs/DEVELOPMENT_GUIDE.md)**
-  - **[Deployment Guide](docs/DEPLOYMENT_GUIDE.md)**
-  - **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)**
+**Key Resources:**
+- [Quick Start Guide](docs/getting-started/quickstart.md) - Get up and running quickly
+- [Configuration Guide](docs/getting-started/configuration.md) - Environment setup
+- [API Reference](docs/user-guides/api-reference.md) - Complete API documentation
+- [Admin Portal Guide](docs/user-guides/admin-portal.md) - Using the web interface
+- [Troubleshooting](docs/operations/troubleshooting.md) - Common issues and solutions
+- [Contributing Guidelines](CONTRIBUTING.md) - How to contribute
+- [Security Policy](SECURITY.md) - Security best practices and reporting
+
+**Building Documentation:**
+```bash
+npm install
+npm run start  # Dev server at http://localhost:3000
+npm run build  # Static build to src/static/documentation/
+```
+
+The documentation is built with Docusaurus 3 and includes:
+- Architecture diagrams and data flow
+- API reference with examples
+- Development guides and testing strategies
+- Operations and deployment guides
+- Data catalog and schema documentation
+
+## Security
+
+We take security seriously. Please review:
+- [SECURITY.md](SECURITY.md) - Security policy and vulnerability reporting
+- [Security Best Practices](docs/operations/security.md) - Deployment security guide
+
+**Important**: Never use default credentials in production. See the security documentation for configuration guidance.
+
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+**Quick Start for Contributors:**
+1. Fork and clone the repository
+2. Set up development environment: `make dev-install`
+3. Create a feature branch: `git checkout -b feature/your-feature`
+4. Make changes and add tests
+5. Run tests and linters: `make test && make lint`
+6. Submit a pull request
 
 ## Development
 

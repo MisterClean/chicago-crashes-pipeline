@@ -1,5 +1,4 @@
 """API endpoints for managing GeoJSON spatial layers."""
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
@@ -17,7 +16,7 @@ def get_service() -> SpatialLayerService:
     return SpatialLayerService()
 
 
-@router.get("/layers", response_model=List[SpatialLayerResponse])
+@router.get("/layers", response_model=list[SpatialLayerResponse])
 async def list_layers(service: SpatialLayerService = Depends(get_service)):
     return service.list_layers()
 
@@ -26,15 +25,19 @@ async def list_layers(service: SpatialLayerService = Depends(get_service)):
 async def get_layer(layer_id: int, service: SpatialLayerService = Depends(get_service)):
     layer = service.get_layer(layer_id)
     if not layer:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+        )
     return layer
 
 
-@router.post("/layers", response_model=SpatialLayerResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/layers", response_model=SpatialLayerResponse, status_code=status.HTTP_201_CREATED
+)
 async def upload_layer(
     name: str = Form(...),
     file: UploadFile = File(...),
-    description: Optional[str] = Form(None),
+    description: str | None = Form(None),
     srid: int = Form(4326),
     service: SpatialLayerService = Depends(get_service),
 ):
@@ -49,9 +52,13 @@ async def upload_layer(
         )
         return layer
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
     except Exception as exc:  # pragma: no cover - unexpected errors returned as 500
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
 
 
 @router.patch("/layers/{layer_id}", response_model=SpatialLayerResponse)
@@ -67,7 +74,9 @@ async def update_layer(
         is_active=payload.is_active,
     )
     if not layer:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+        )
     return layer
 
 
@@ -75,7 +84,7 @@ async def update_layer(
 async def replace_layer(
     layer_id: int,
     file: UploadFile = File(...),
-    srid: Optional[int] = Form(None),
+    srid: int | None = Form(None),
     service: SpatialLayerService = Depends(get_service),
 ):
     try:
@@ -87,16 +96,26 @@ async def replace_layer(
             srid=srid,
         )
         if not layer:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+            )
         return layer
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
     except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
 
 
 @router.delete("/layers/{layer_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_layer(layer_id: int, service: SpatialLayerService = Depends(get_service)):
+async def delete_layer(
+    layer_id: int, service: SpatialLayerService = Depends(get_service)
+):
     if not service.delete_layer(layer_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+        )
     return None

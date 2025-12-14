@@ -2,8 +2,7 @@
 # These packages provide additional functionality but are not required for core operation
 
 # Advanced Testing
-pytest-httpx==0.26.0     # HTTP testing for FastAPI endpoints
-httpx-mock==0.7.0        # HTTP request mocking
+types-PyYAML==6.0.12.20240917     # Type stubs for PyYAML (required by mypy)
 
 # CLI and Rich Output
 typer==0.9.0             # CLI framework
@@ -16,7 +15,7 @@ shapely==2.0.2           # Geometric operations
 pyproj==3.6.1            # Cartographic transformations
 
 # Geospatial File Processing
-fiona==1.9.5             # Shapefile I/O (requires GDAL)
+fiona==1.10.1            # Shapefile I/O (requires GDAL)
 rasterio==1.3.9          # Raster data I/O (requires GDAL)
 
 # Note: Spatial packages may require additional system dependencies:

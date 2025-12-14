@@ -2,22 +2,29 @@
 
 from .base import Base
 from .crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
+from .jobs import (
+    DataDeletionLog,
+    JobExecution,
+    JobStatus,
+    JobType,
+    RecurrenceType,
+    ScheduledJob,
+)
 from .spatial import (
-    Ward,
-    CommunityArea,
     CensusTract,
-    PoliceBeat,
+    CommunityArea,
     HouseDistrict,
+    PoliceBeat,
     SenateDistrict,
     SpatialLayer,
     SpatialLayerFeature,
+    Ward,
 )
-from .jobs import ScheduledJob, JobExecution, DataDeletionLog, JobStatus, JobType, RecurrenceType
 
 __all__ = [
     "Base",
     "Crash",
-    "CrashPerson", 
+    "CrashPerson",
     "CrashVehicle",
     "VisionZeroFatality",
     "Ward",
@@ -33,5 +40,5 @@ __all__ = [
     "DataDeletionLog",
     "JobStatus",
     "JobType",
-    "RecurrenceType"
+    "RecurrenceType",
 ]

@@ -1,13 +1,15 @@
 """Pytest configuration and fixtures for the Chicago crash data pipeline tests."""
-import pytest
+
 import asyncio
 import sys
 from pathlib import Path
 
-# Add src to path for imports
+import pytest
+
+# Add src to path for imports (must be before local imports)
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from utils.config import settings
+from utils.config import settings  # noqa: E402
 
 
 @pytest.fixture
@@ -28,7 +30,7 @@ def sample_crash_record():
         "longitude": "-87.6298",
         "injuries_total": "2",
         "injuries_fatal": "0",
-        "injuries_incapacitating": "1", 
+        "injuries_incapacitating": "1",
         "injuries_non_incapacitating": "1",
         "injuries_reported_not_evident": "0",
         "injuries_no_indication": "0",
@@ -46,7 +48,7 @@ def sample_crash_record():
         "damage": "$1,501 - $5,000",
         "prim_contributory_cause": "FOLLOWING TOO CLOSELY",
         "sec_contributory_cause": "UNABLE TO DETERMINE",
-        "date_police_notified": "2024-01-01T12:35:00.000"
+        "date_police_notified": "2024-01-01T12:35:00.000",
     }
 
 
@@ -63,7 +65,7 @@ def sample_person_record():
         "injury_classification": "INCAPACITATING INJURY",
         "hospital": "NORTHWESTERN MEMORIAL",
         "bac_result": "NEGATIVE",
-        "bac_result_value": None
+        "bac_result_value": None,
     }
 
 
@@ -80,7 +82,7 @@ def sample_vehicle_record():
         "num_passengers": "1",
         "occupant_cnt": "1",
         "travel_direction": "N",
-        "maneuver": "STRAIGHT AHEAD"
+        "maneuver": "STRAIGHT AHEAD",
     }
 
 
@@ -93,7 +95,7 @@ def invalid_crash_record():
         "latitude": "50.0",  # Outside Chicago bounds
         "longitude": "-95.0",  # Outside Chicago bounds
         "injuries_total": "not-a-number",  # Invalid integer
-        "posted_speed_limit": "-10"  # Negative speed limit
+        "posted_speed_limit": "-10",  # Negative speed limit
     }
 
 
@@ -104,5 +106,5 @@ def chicago_bounds():
         "min_latitude": settings.validation.min_latitude,
         "max_latitude": settings.validation.max_latitude,
         "min_longitude": settings.validation.min_longitude,
-        "max_longitude": settings.validation.max_longitude
+        "max_longitude": settings.validation.max_longitude,
     }

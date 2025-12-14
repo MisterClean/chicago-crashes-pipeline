@@ -31,9 +31,7 @@ The main `requirements.txt` file contains only essential packages needed to run 
 - **pytest-asyncio**: Async testing support
 
 ### Development Tools
-- **black**: Code formatting
-- **isort**: Import sorting
-- **flake8**: Code linting
+- **ruff**: Fast linter and code formatter (replaces black, isort, flake8)
 - **mypy**: Type checking
 
 ## Optional Dependencies (requirements-dev.txt)
@@ -42,7 +40,6 @@ Additional packages for enhanced functionality:
 
 ### Advanced Testing
 - **pytest-httpx**: HTTP testing utilities
-- **httpx-mock**: HTTP request mocking
 
 ### CLI & Output Enhancement
 - **typer**: CLI framework (used for command-line tools)
