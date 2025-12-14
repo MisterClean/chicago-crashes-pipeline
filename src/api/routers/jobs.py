@@ -1,6 +1,7 @@
 """Job management endpoints."""
+
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -49,12 +50,12 @@ def _build_execution_response(execution: JobExecution) -> JobExecutionResponse:
     )
 
 
-def _parse_execution_logs(raw_logs: Any) -> List[ExecutionLogEntry]:
+def _parse_execution_logs(raw_logs: Any) -> list[ExecutionLogEntry]:
     """Normalise stored execution logs into response entries."""
     if not isinstance(raw_logs, list):
         return []
 
-    parsed_logs: List[ExecutionLogEntry] = []
+    parsed_logs: list[ExecutionLogEntry] = []
     for entry in raw_logs:
         if not isinstance(entry, dict):
             continue
@@ -95,9 +96,9 @@ def _coerce_timestamp(value: str) -> datetime:
 # Note: Initialization is now handled in the main app startup
 
 
-@router.get("/", response_model=List[JobResponse])
+@router.get("/", response_model=list[JobResponse])
 async def list_jobs(
-    enabled_only: bool = Query(False, description="Filter to only enabled jobs")
+    enabled_only: bool = Query(False, description="Filter to only enabled jobs"),
 ):
     """List all scheduled jobs."""
     try:
@@ -331,7 +332,7 @@ async def execute_job(job_id: int, request: ExecuteJobRequest):
         raise HTTPException(status_code=500, detail=f"Failed to execute job: {str(e)}")
 
 
-@router.get("/{job_id}/executions", response_model=List[JobExecutionResponse])
+@router.get("/{job_id}/executions", response_model=list[JobExecutionResponse])
 async def get_job_executions(
     job_id: int,
     limit: int = Query(
@@ -351,11 +352,11 @@ async def get_job_executions(
         )
 
 
-@router.get("/executions/recent", response_model=List[JobExecutionResponse])
+@router.get("/executions/recent", response_model=list[JobExecutionResponse])
 async def get_recent_executions(
     limit: int = Query(
         50, ge=1, le=200, description="Limit number of executions returned"
-    )
+    ),
 ):
     """Get recent execution history across all jobs."""
     try:
@@ -462,7 +463,7 @@ async def delete_table_data(request: DataDeletionRequest):
         raise HTTPException(status_code=500, detail=f"Failed to delete data: {str(e)}")
 
 
-@router.get("/types", response_model=Dict[str, Any])
+@router.get("/types", response_model=dict[str, Any])
 async def get_job_types():
     """Get available job types and recurrence types."""
     return {

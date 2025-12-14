@@ -1,7 +1,7 @@
 """Job scheduler service for running scheduled jobs automatically."""
+
 import asyncio
 import signal
-from typing import Optional
 
 from src.models.jobs import JobStatus, ScheduledJob
 from src.services.job_service import JobService
@@ -24,7 +24,7 @@ class JobScheduler:
         self.check_interval = check_interval
         self.job_service = JobService()
         self.running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
 
     async def start(self):
         """Start the job scheduler."""
@@ -114,7 +114,8 @@ class JobScheduler:
 
             # Execute the job
             execution_id = await self.job_service.execute_job(
-                job_id=job.id, force=False  # Don't force scheduled executions
+                job_id=job.id,
+                force=False,  # Don't force scheduled executions
             )
 
             logger.info(
@@ -129,7 +130,7 @@ class JobSchedulerManager:
     """Manager for controlling the job scheduler as a service."""
 
     def __init__(self):
-        self.scheduler: Optional[JobScheduler] = None
+        self.scheduler: JobScheduler | None = None
 
     async def start_scheduler(self, check_interval: int = 60):
         """Start the job scheduler service."""

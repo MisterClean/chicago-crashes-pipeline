@@ -57,7 +57,7 @@ async def get_table_info(
 async def load_shapefiles(
     directory: str = Query(
         "data/shapefiles", description="Directory containing shapefiles"
-    )
+    ),
 ):
     """Load all shapefiles from the specified directory."""
     if SimpleShapefileLoader is None:

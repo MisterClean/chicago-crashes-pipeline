@@ -1,8 +1,9 @@
 """Sync operation endpoints."""
+
 import asyncio
 import inspect
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 
@@ -178,7 +179,7 @@ async def get_database_counts():
         )
 
 
-async def _fetch_sample_records(client: Any, limit: int = 5) -> List[Dict[str, Any]]:
+async def _fetch_sample_records(client: Any, limit: int = 5) -> list[dict[str, Any]]:
     """Fetch a small number of crash records, accommodating patched clients."""
 
     if hasattr(client, "__aenter__"):

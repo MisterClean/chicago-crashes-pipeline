@@ -1,8 +1,9 @@
 """Configuration management for the Chicago crash data pipeline."""
+
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import yaml
 from pydantic_settings import BaseSettings
@@ -35,7 +36,7 @@ class DatabaseSettings(BaseSettings):
 class APISettings(BaseSettings):
     """API configuration settings."""
 
-    endpoints: Dict[str, str] = {
+    endpoints: dict[str, str] = {
         "crashes": "https://data.cityofchicago.org/resource/85ca-t3if.json",
         "people": "https://data.cityofchicago.org/resource/u6pd-qa9d.json",
         "vehicles": "https://data.cityofchicago.org/resource/68nd-jvt3.json",
@@ -47,7 +48,7 @@ class APISettings(BaseSettings):
     backoff_factor: float = 2.0
     batch_size: int = 50000
     max_concurrent: int = 5
-    token: Optional[str] = None
+    token: str | None = None
 
     model_config = {
         "env_prefix": "CHICAGO_API_"
@@ -76,7 +77,7 @@ class ValidationSettings(BaseSettings):
     min_vehicle_year: int = 1900
     max_vehicle_year: int = 2025
 
-    required_fields: Dict[str, list] = {
+    required_fields: dict[str, list] = {
         "crashes": ["crash_record_id", "crash_date"],
         "people": ["crash_record_id", "person_id"],
         "vehicles": ["crash_record_id", "unit_no"],
@@ -87,7 +88,7 @@ class ValidationSettings(BaseSettings):
 class SpatialSettings(BaseSettings):
     """Spatial data settings."""
 
-    shapefiles: Dict[str, str] = {
+    shapefiles: dict[str, str] = {
         "wards": "data/shapefiles/chicago_wards.shp",
         "community_areas": "data/shapefiles/community_areas.shp",
         "census_tracts": "data/shapefiles/census_tracts.shp",
@@ -103,7 +104,7 @@ class LoggingSettings(BaseSettings):
 
     level: str = "INFO"
     format: str = "json"
-    files: Dict[str, str] = {
+    files: dict[str, str] = {
         "app": "logs/app.log",
         "etl": "logs/etl.log",
         "api": "logs/api.log",
@@ -132,7 +133,7 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
-def _resolve_template_strings(config_dict: Dict[str, Any]) -> Dict[str, Any]:
+def _resolve_template_strings(config_dict: dict[str, Any]) -> dict[str, Any]:
     """Resolve ${ENV_VAR:default} template strings in configuration.
 
     Args:
@@ -163,7 +164,7 @@ def _resolve_template_strings(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     return resolve_value(config_dict)
 
 
-def load_config(config_path: Optional[Path] = None) -> Settings:
+def load_config(config_path: Path | None = None) -> Settings:
     """Load configuration from YAML file and environment variables.
 
     Args:
@@ -190,7 +191,7 @@ def load_config(config_path: Optional[Path] = None) -> Settings:
     return settings
 
 
-def _update_settings_from_dict(settings: Settings, config_dict: Dict[str, Any]) -> None:
+def _update_settings_from_dict(settings: Settings, config_dict: dict[str, Any]) -> None:
     """Update settings object with values from dictionary.
 
     Args:

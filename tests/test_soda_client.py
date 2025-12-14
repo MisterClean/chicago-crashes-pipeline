@@ -1,4 +1,5 @@
 """Tests for SODA API client."""
+
 import asyncio
 import sys
 from pathlib import Path
@@ -99,10 +100,9 @@ class TestSODAClient:
                 return []
 
         # Mock the record count method to return expected total
-        with patch.object(
-            client, "_get_record_count", return_value=1500
-        ) as mock_count, patch.object(
-            client, "fetch_records", side_effect=mock_fetch_records
+        with (
+            patch.object(client, "_get_record_count", return_value=1500) as mock_count,
+            patch.object(client, "fetch_records", side_effect=mock_fetch_records),
         ):
             all_records = await client.fetch_all_records(
                 endpoint="https://example.com/test.json",
@@ -226,9 +226,10 @@ class TestSODAClient:
             return [{"id": f"RECORD_{i}"} for i in range(start_idx, end_idx)]
 
         # Mock the record count method
-        with patch.object(
-            client, "_get_record_count", return_value=total_records
-        ), patch.object(client, "fetch_records", side_effect=mock_fetch_records):
+        with (
+            patch.object(client, "_get_record_count", return_value=total_records),
+            patch.object(client, "fetch_records", side_effect=mock_fetch_records),
+        ):
             all_records = await client.fetch_all_records(
                 endpoint="https://example.com/test.json",
                 batch_size=batch_size,

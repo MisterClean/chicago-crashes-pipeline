@@ -1,6 +1,7 @@
 """FastAPI dependencies for the Chicago crash data pipeline API."""
+
 import asyncio
-from typing import Generator
+from collections.abc import Generator
 
 from src.etl.soda_client import SODAClient
 from src.utils.logging import get_logger

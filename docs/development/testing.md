@@ -285,8 +285,8 @@ markers =
 ## Linting & Type Checking
 
 ```bash
-flake8 src tests
-mypy src
+ruff check src tests
+mypy src/utils src/etl src/validators --ignore-missing-imports
 ```
 
 CI should fail on lint violations or type errors. When type stubs are missing for third-party libraries, annotate `# type: ignore[import]` and leave a TODO to replace with proper typing later.

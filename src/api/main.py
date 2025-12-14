@@ -1,4 +1,5 @@
 """FastAPI application for Chicago crash data pipeline monitoring and control."""
+
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime

@@ -1,4 +1,5 @@
 """Health check and system status endpoints."""
+
 import asyncio
 import sys
 from datetime import datetime

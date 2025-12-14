@@ -1,4 +1,5 @@
 """Base model configuration for SQLAlchemy with PostGIS support."""
+
 from typing import Any
 
 from geoalchemy2 import Geometry  # noqa: F401 - exported for model modules

@@ -1,5 +1,6 @@
 """Validation logic for crash data records."""
-from typing import Any, Dict, List
+
+from typing import Any
 
 from src.utils.config import settings
 from src.utils.logging import get_logger
@@ -14,7 +15,7 @@ class CrashValidator:
         """Initialize crash validator."""
         self.validation_settings = settings.validation
 
-    def validate_crash_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_crash_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Validate a crash record and return validation results.
 
         Args:
@@ -23,7 +24,7 @@ class CrashValidator:
         Returns:
             Validation results with errors and warnings
         """
-        results: Dict[str, Any] = {"valid": True, "errors": [], "warnings": []}
+        results: dict[str, Any] = {"valid": True, "errors": [], "warnings": []}
 
         # Check required fields
         required_fields = self.validation_settings.required_fields.get("crashes", [])
@@ -51,7 +52,7 @@ class CrashValidator:
 
         return results
 
-    def validate_batch(self, records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def validate_batch(self, records: list[dict[str, Any]]) -> dict[str, Any]:
         """Validate a batch of records.
 
         Args:

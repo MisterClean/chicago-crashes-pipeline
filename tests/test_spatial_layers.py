@@ -1,4 +1,5 @@
 """Tests for spatial layer management endpoints."""
+
 import json
 import shutil
 import subprocess

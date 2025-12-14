@@ -1,7 +1,9 @@
 """SODA API client for Chicago Open Data Portal."""
+
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -56,10 +58,10 @@ class SODAClient:
         endpoint: str,
         limit: int = 50000,
         offset: int = 0,
-        where_clause: Optional[str] = None,
-        order_by: Optional[str] = None,
-        select_fields: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        where_clause: str | None = None,
+        order_by: str | None = None,
+        select_fields: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Fetch records from SODA API endpoint.
 
         Args:
@@ -104,12 +106,12 @@ class SODAClient:
         self,
         endpoint: str,
         batch_size: int = 50000,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         date_field: str = "crash_date",
-        order_by: Optional[str] = None,
+        order_by: str | None = None,
         show_progress: bool = False,
-    ) -> AsyncIterator[List[Dict[str, Any]]]:
+    ) -> AsyncIterator[list[dict[str, Any]]]:
         """Yield batches of records without loading everything into memory."""
 
         where_clause = self._build_date_where_clause(start_date, end_date, date_field)
@@ -155,12 +157,12 @@ class SODAClient:
         self,
         endpoint: str,
         batch_size: int = 50000,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
         date_field: str = "crash_date",
-        order_by: Optional[str] = None,
+        order_by: str | None = None,
         show_progress: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch all records from endpoint with pagination.
 
         Args:
@@ -177,7 +179,7 @@ class SODAClient:
         """
         logger.info("Starting data fetch", endpoint=endpoint, batch_size=batch_size)
 
-        all_records: List[Dict[str, Any]] = []
+        all_records: list[dict[str, Any]] = []
         async for batch in self.iter_batches(
             endpoint=endpoint,
             batch_size=batch_size,
@@ -199,7 +201,7 @@ class SODAClient:
         last_modified: datetime,
         batch_size: int = 50000,
         show_progress: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Fetch records modified since last sync.
 
         Args:
@@ -226,7 +228,7 @@ class SODAClient:
         where_clause = f":updated_at > '{last_modified_str}'"
         order_clause = ":updated_at"
 
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         offset = 0
 
         while True:
@@ -251,11 +253,11 @@ class SODAClient:
 
     @staticmethod
     def _build_date_where_clause(
-        start_date: Optional[str],
-        end_date: Optional[str],
+        start_date: str | None,
+        end_date: str | None,
         date_field: str,
-    ) -> Optional[str]:
-        clauses: List[str] = []
+    ) -> str | None:
+        clauses: list[str] = []
         if start_date:
             clauses.append(f"{date_field} >= '{start_date}T00:00:00'")
         if end_date:
@@ -311,7 +313,7 @@ class SODAClient:
         )
 
     async def _get_record_count(
-        self, endpoint: str, where_clause: Optional[str] = None
+        self, endpoint: str, where_clause: str | None = None
     ) -> int:
         """Get total record count for endpoint.
 

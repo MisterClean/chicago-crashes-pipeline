@@ -1,7 +1,8 @@
 """Job management service for handling scheduled jobs and executions."""
+
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import and_, desc
 from sqlalchemy.orm import Session, joinedload
@@ -37,7 +38,7 @@ class JobService:
         """Get database session."""
         return SessionLocal()
 
-    def initialize_default_jobs(self) -> List[Dict[str, Any]]:
+    def initialize_default_jobs(self) -> list[dict[str, Any]]:
         """Initialize default job templates if they don't exist."""
         session = self.get_session()
         created_jobs = []
@@ -93,7 +94,7 @@ class JobService:
             session.close()
 
     def create_job(
-        self, job_data: Dict[str, Any], created_by: str = "admin"
+        self, job_data: dict[str, Any], created_by: str = "admin"
     ) -> ScheduledJob:
         """Create a new scheduled job."""
         session = self.get_session()
@@ -139,9 +140,7 @@ class JobService:
         finally:
             session.close()
 
-    def update_job(
-        self, job_id: int, updates: Dict[str, Any]
-    ) -> Optional[ScheduledJob]:
+    def update_job(self, job_id: int, updates: dict[str, Any]) -> ScheduledJob | None:
         """Update an existing job."""
         session = self.get_session()
 
@@ -202,7 +201,7 @@ class JobService:
         finally:
             session.close()
 
-    def get_job(self, job_id: int) -> Optional[ScheduledJob]:
+    def get_job(self, job_id: int) -> ScheduledJob | None:
         """Get a job by ID."""
         session = self.get_session()
         try:
@@ -210,7 +209,7 @@ class JobService:
         finally:
             session.close()
 
-    def get_jobs(self, enabled_only: bool = False) -> List[ScheduledJob]:
+    def get_jobs(self, enabled_only: bool = False) -> list[ScheduledJob]:
         """Get all jobs."""
         session = self.get_session()
         try:
@@ -221,7 +220,7 @@ class JobService:
         finally:
             session.close()
 
-    def get_jobs_due_for_execution(self) -> List[ScheduledJob]:
+    def get_jobs_due_for_execution(self) -> list[ScheduledJob]:
         """Get jobs that are due for execution."""
         session = self.get_session()
         try:
@@ -241,7 +240,7 @@ class JobService:
             session.close()
 
     async def execute_job(
-        self, job_id: int, force: bool = False, override_config: Dict[str, Any] = None
+        self, job_id: int, force: bool = False, override_config: dict[str, Any] = None
     ) -> str:
         """Execute a job manually."""
         session = self.get_session()
@@ -314,10 +313,10 @@ class JobService:
         finally:
             session.close()
 
-    async def _run_job_execution(self, execution_id: int, config: Dict[str, Any]):
+    async def _run_job_execution(self, execution_id: int, config: dict[str, Any]):
         """Run job execution in background."""
         session = self.get_session()
-        execution: Optional[JobExecution] = None
+        execution: JobExecution | None = None
 
         try:
             execution = (
@@ -525,8 +524,8 @@ class JobService:
         self,
         session: Session,
         execution: JobExecution,
-        updates: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        updates: dict[str, Any],
+    ) -> dict[str, Any]:
         """Merge updates into execution context, preserving existing keys."""
         context = (
             execution.execution_context
@@ -541,10 +540,10 @@ class JobService:
 
     @staticmethod
     def _deep_merge_dicts(
-        original: Dict[str, Any], updates: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        original: dict[str, Any], updates: dict[str, Any]
+    ) -> dict[str, Any]:
         """Recursively merge two dictionaries."""
-        result: Dict[str, Any] = dict(original)
+        result: dict[str, Any] = dict(original)
         for key, value in updates.items():
             if (
                 key in result
@@ -557,8 +556,8 @@ class JobService:
         return result
 
     def _build_sync_params(
-        self, job_type: str, config: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, job_type: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
         """Build sync parameters based on job type and config."""
         now = datetime.now()
 
@@ -633,7 +632,7 @@ class JobService:
 
     def get_job_executions(
         self, job_id: int = None, limit: int = 50
-    ) -> List[JobExecution]:
+    ) -> list[JobExecution]:
         """Get job execution history."""
         session = self.get_session()
         try:
@@ -651,7 +650,7 @@ class JobService:
         finally:
             session.close()
 
-    def get_execution_by_identifier(self, identifier: str) -> Optional[JobExecution]:
+    def get_execution_by_identifier(self, identifier: str) -> JobExecution | None:
         """Fetch a single execution by execution_id or numeric ID."""
         session = self.get_session()
         try:
@@ -677,8 +676,8 @@ class JobService:
             session.close()
 
     def delete_all_data(
-        self, table_name: str, date_range: Dict[str, str] = None
-    ) -> Dict[str, Any]:
+        self, table_name: str, date_range: dict[str, str] = None
+    ) -> dict[str, Any]:
         """Delete all data from a table with optional date filtering."""
         session = self.get_session()
         start_time = datetime.now()
@@ -744,7 +743,7 @@ class JobService:
         finally:
             session.close()
 
-    def get_job_summary(self) -> Dict[str, Any]:
+    def get_job_summary(self) -> dict[str, Any]:
         """Get summary statistics for all jobs."""
         session = self.get_session()
         try:

@@ -1,4 +1,5 @@
 """Service for managing user-uploaded spatial layers."""
+
 import io
 import json
 import re
@@ -6,8 +7,9 @@ import shutil
 import subprocess
 import tempfile
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -36,7 +38,7 @@ class SpatialLayerService:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def list_layers(self) -> List[Dict[str, Any]]:
+    def list_layers(self) -> list[dict[str, Any]]:
         """Return metadata for all spatial layers."""
         session = self.session_factory()
         try:
@@ -45,9 +47,7 @@ class SpatialLayerService:
         finally:
             session.close()
 
-    def get_layer(
-        self, layer_id: int, sample_size: int = 10
-    ) -> Optional[Dict[str, Any]]:
+    def get_layer(self, layer_id: int, sample_size: int = 10) -> dict[str, Any] | None:
         """Fetch a spatial layer with optional feature samples."""
         session = self.session_factory()
         try:
@@ -78,10 +78,10 @@ class SpatialLayerService:
         self,
         name: str,
         geojson_payload: bytes,
-        description: Optional[str] = None,
+        description: str | None = None,
         srid: int = 4326,
-        original_filename: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        original_filename: str | None = None,
+    ) -> dict[str, Any]:
         """Store a new GeoJSON layer and its features."""
         session = self.session_factory()
         try:
@@ -124,10 +124,10 @@ class SpatialLayerService:
         self,
         name: str,
         upload_payload: bytes,
-        filename: Optional[str],
-        description: Optional[str] = None,
+        filename: str | None,
+        description: str | None = None,
         srid: int = 4326,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a spatial layer from an uploaded file, detecting the format."""
         try:
             (
@@ -156,10 +156,10 @@ class SpatialLayerService:
     def update_layer(
         self,
         layer_id: int,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        is_active: Optional[bool] = None,
-    ) -> Optional[Dict[str, Any]]:
+        name: str | None = None,
+        description: str | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any] | None:
         """Update spatial layer metadata."""
         session = self.session_factory()
         try:
@@ -190,9 +190,9 @@ class SpatialLayerService:
         self,
         layer_id: int,
         geojson_payload: bytes,
-        srid: Optional[int] = None,
-        original_filename: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        srid: int | None = None,
+        original_filename: str | None = None,
+    ) -> dict[str, Any] | None:
         """Replace the features for an existing layer."""
         session = self.session_factory()
         try:
@@ -233,9 +233,9 @@ class SpatialLayerService:
         self,
         layer_id: int,
         upload_payload: bytes,
-        filename: Optional[str],
-        srid: Optional[int] = None,
-    ) -> Optional[Dict[str, Any]]:
+        filename: str | None,
+        srid: int | None = None,
+    ) -> dict[str, Any] | None:
         try:
             (
                 processed_payload,
@@ -286,7 +286,7 @@ class SpatialLayerService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _parse_geojson(self, payload: bytes) -> Dict[str, Any]:
+    def _parse_geojson(self, payload: bytes) -> dict[str, Any]:
         try:
             parsed = (
                 json.loads(payload.decode("utf-8"))
@@ -301,14 +301,14 @@ class SpatialLayerService:
         return parsed
 
     def _extract_features(
-        self, geojson: Dict[str, Any]
-    ) -> Tuple[List[Dict[str, Any]], str]:
+        self, geojson: dict[str, Any]
+    ) -> tuple[list[dict[str, Any]], str]:
         features = geojson.get("features") or []
         if not features:
             raise ValueError("GeoJSON FeatureCollection contains no features")
 
         geometry_type = "Geometry"
-        cleaned: List[Dict[str, Any]] = []
+        cleaned: list[dict[str, Any]] = []
         for feature in features:
             geometry = feature.get("geometry")
             if not geometry:
@@ -328,7 +328,7 @@ class SpatialLayerService:
         return cleaned, geometry_type
 
     def _persist_features(
-        self, session: Session, layer_id: int, features: List[Dict[str, Any]], srid: int
+        self, session: Session, layer_id: int, features: list[dict[str, Any]], srid: int
     ) -> None:
         inserted = 0
         for feature in features:
@@ -351,7 +351,7 @@ class SpatialLayerService:
         )
 
     def _ensure_unique_slug(
-        self, session: Session, base_slug: str, current_layer_id: Optional[int] = None
+        self, session: Session, base_slug: str, current_layer_id: int | None = None
     ) -> str:
         slug = base_slug
         counter = 1
@@ -365,7 +365,7 @@ class SpatialLayerService:
             counter += 1
             slug = f"{base_slug}-{counter}"
 
-    def _serialize_layer(self, layer: SpatialLayer) -> Dict[str, Any]:
+    def _serialize_layer(self, layer: SpatialLayer) -> dict[str, Any]:
         return {
             "id": layer.id,
             "name": layer.name,
@@ -383,9 +383,9 @@ class SpatialLayerService:
     def _prepare_upload_payload(
         self,
         upload_payload: bytes,
-        filename: Optional[str],
+        filename: str | None,
         srid: int,
-    ) -> Tuple[bytes, int, Optional[str]]:
+    ) -> tuple[bytes, int, str | None]:
         """Normalize uploaded spatial data to GeoJSON bytes and target SRID."""
         if not upload_payload:
             raise ValueError("Uploaded file is empty")

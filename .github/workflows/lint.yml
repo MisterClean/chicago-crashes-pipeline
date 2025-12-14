@@ -9,10 +9,6 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        linter: [black, isort, flake8, mypy]
 
     steps:
     - uses: actions/checkout@v4
@@ -29,22 +25,11 @@ jobs:
         pip install -r requirements.txt
         pip install -r requirements-dev.txt
 
-    - name: Run black (code formatting check)
-      if: matrix.linter == 'black'
-      run: |
-        black --check src tests --exclude 'src/static/documentation/'
+    - name: Run Ruff (linting)
+      run: ruff check src tests
 
-    - name: Run isort (import sorting check)
-      if: matrix.linter == 'isort'
-      run: |
-        isort --check-only src tests --skip-glob 'src/static/documentation/**/*.py'
-
-    - name: Run flake8 (linting)
-      if: matrix.linter == 'flake8'
-      run: |
-        flake8 src tests --max-line-length=88 --extend-ignore=E203 --exclude=src/static/documentation
+    - name: Run Ruff (formatting check)
+      run: ruff format --check src tests
 
     - name: Run mypy (type checking)
-      if: matrix.linter == 'mypy'
-      run: |
-        mypy src/utils src/etl src/validators --ignore-missing-imports --exclude 'src/static/documentation'
+      run: mypy src/utils src/etl src/validators --ignore-missing-imports --exclude 'src/static/documentation'
