@@ -1,14 +1,14 @@
 """CLI entry points for orchestrating pipeline sync operations."""
+
 from __future__ import annotations
 
 import argparse
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import List, Sequence
 
 from src.services.sync_service import run_sync
 from src.utils.logging import get_logger
-
 
 logger = get_logger(__name__)
 
@@ -21,7 +21,7 @@ def _parse_date(value: str) -> str:
     return value
 
 
-def _default_endpoints() -> List[str]:
+def _default_endpoints() -> list[str]:
     return ["crashes", "people", "vehicles", "fatalities"]
 
 
@@ -118,4 +118,3 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     main()
-

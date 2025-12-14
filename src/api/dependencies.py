@@ -1,6 +1,7 @@
 """FastAPI dependencies for the Chicago crash data pipeline API."""
+
 import asyncio
-from typing import Generator
+from collections.abc import Generator
 
 from src.etl.soda_client import SODAClient
 from src.utils.logging import get_logger
@@ -41,8 +42,8 @@ sync_state = {
         "failed_syncs": 0,
         "last_error": None,
         "total_records_processed": 0,
-        "last_sync_duration": None
-    }
+        "last_sync_duration": None,
+    },
 }
 
 

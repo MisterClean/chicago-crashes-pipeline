@@ -1,8 +1,8 @@
 """FastAPI application for Chicago crash data pipeline monitoring and control."""
-from contextlib import asynccontextmanager
-from datetime import datetime
 
 import os
+from contextlib import asynccontextmanager
+from datetime import datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,43 +23,47 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     logger.info("Starting Chicago Crash Data Pipeline API")
-    
+
     # Initialize database tables
     try:
         # Import models to register all tables with Base.metadata
-        from src import models  # This imports all models including jobs
+        from src import models  # noqa: F401 - This imports all models including jobs
         from src.models.base import Base, engine
+
         logger.info("Creating database tables...")
         Base.metadata.create_all(engine)
-        logger.info("Database tables created successfully (including job management tables)")
+        logger.info(
+            "Database tables created successfully (including job management tables)"
+        )
     except Exception as e:
         logger.error("Failed to create database tables", error=str(e))
         # Continue startup even if table creation fails
-    
+
     # Initialize startup tasks
     sync_state["started_at"] = datetime.now()
-    
+
     # Initialize default jobs
     try:
         from src.services.job_service import JobService
+
         job_service = JobService()
         created_jobs = job_service.initialize_default_jobs()
         if created_jobs:
             logger.info(f"Initialized {len(created_jobs)} default jobs")
     except Exception as e:
         logger.error("Failed to initialize default jobs", error=str(e))
-    
+
     # Start job scheduler
     try:
         await start_job_scheduler()
         logger.info("Job scheduler started successfully")
     except Exception as e:
         logger.error("Failed to start job scheduler", error=str(e))
-    
+
     logger.info("API started successfully", startup_time=datetime.now())
-    
+
     yield
-    
+
     # Cleanup tasks
     logger.info("Shutting down Chicago Crash Data Pipeline API")
 
@@ -74,17 +78,29 @@ async def lifespan(app: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="Chicago Crash Data Pipeline",
-    description="REST API for monitoring and controlling the Chicago traffic crash data pipeline",
+    description=(
+        "REST API for monitoring and controlling the "
+        "Chicago traffic crash data pipeline"
+    ),
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
-# Add CORS middleware
+# Add CORS middleware - configure allowed origins via environment variable
+# For local development, defaults to localhost origins
+# For production, set CORS_ORIGINS environment variable to
+# comma-separated list of allowed domains
+# WARNING: Never use "*" (wildcard) in production with
+# allow_credentials=True - this is a security vulnerability
+allowed_origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:3000,http://localhost:8000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -120,11 +136,11 @@ app.include_router(spatial_layers.router)
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     uvicorn.run(
         "main:app",
         host=settings.api_host,
         port=settings.api_port,
         reload=True,
-        log_level=settings.logging.level.lower()
+        log_level=settings.logging.level.lower(),
     )

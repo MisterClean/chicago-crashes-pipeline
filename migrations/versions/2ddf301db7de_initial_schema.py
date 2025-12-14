@@ -31,10 +31,13 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('tractce10', name=op.f('pk_census_tracts'))
     )
+    # Create spatial index with IF NOT EXISTS to ensure idempotency
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_census_tracts_geometry
+        ON census_tracts USING gist (geometry)
+    """)
     with op.batch_alter_table('census_tracts', schema=None) as batch_op:
-        batch_op.create_index('idx_census_tracts_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_census_tracts_geoid10'), ['geoid10'], unique=False)
-        batch_op.create_index(batch_op.f('ix_census_tracts_geometry'), ['geometry'], unique=False)
 
     op.create_table('community_areas',
     sa.Column('area_numbe', sa.Integer(), nullable=False),
@@ -47,8 +50,12 @@ def upgrade() -> None:
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('area_numbe', name=op.f('pk_community_areas'))
     )
+    # Create spatial index with IF NOT EXISTS to ensure idempotency
+    op.execute("""
+        CREATE INDEX IF NOT EXISTS idx_community_areas_geometry
+        ON community_areas USING gist (geometry)
+    """)
     with op.batch_alter_table('community_areas', schema=None) as batch_op:
-        batch_op.create_index('idx_community_areas_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_community_areas_geometry'), ['geometry'], unique=False)
 
     op.create_table('crashes',
@@ -71,7 +78,7 @@ def upgrade() -> None:
     sa.Column('crash_date_original', sa.DateTime(), nullable=True),
     sa.Column('latitude', sa.Float(), nullable=True),
     sa.Column('longitude', sa.Float(), nullable=True),
-    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='POINT', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry'), nullable=True),
+    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='POINT', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry', spatial_index=False), nullable=True),
     sa.Column('beat_of_occurrence', sa.String(length=10), nullable=True),
     sa.Column('photos_taken_i', sa.String(length=1), nullable=True),
     sa.Column('statements_taken_i', sa.String(length=1), nullable=True),
@@ -108,7 +115,6 @@ def upgrade() -> None:
         batch_op.create_index(batch_op.f('ix_crashes_crash_date'), ['crash_date'], unique=False)
         batch_op.create_index('ix_crashes_date_location', ['crash_date', 'latitude', 'longitude'], unique=False)
         batch_op.create_index('ix_crashes_fatal', ['injuries_fatal'], unique=False)
-        batch_op.create_index(batch_op.f('ix_crashes_geometry'), ['geometry'], unique=False)
         batch_op.create_index('ix_crashes_hit_run', ['hit_and_run_i'], unique=False)
         batch_op.create_index('ix_crashes_injuries', ['injuries_total'], unique=False)
         batch_op.create_index(batch_op.f('ix_crashes_latitude'), ['latitude'], unique=False)
@@ -118,7 +124,7 @@ def upgrade() -> None:
     sa.Column('district', sa.String(length=10), nullable=False),
     sa.Column('rep_name', sa.String(length=100), nullable=True),
     sa.Column('party', sa.String(length=20), nullable=True),
-    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry'), nullable=True),
+    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry', spatial_index=False), nullable=True),
     sa.Column('population', sa.Integer(), nullable=True),
     sa.Column('shape_area', sa.Float(), nullable=True),
     sa.Column('shape_len', sa.Float(), nullable=True),
@@ -128,14 +134,13 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('house_districts', schema=None) as batch_op:
         batch_op.create_index('idx_house_districts_geometry', ['geometry'], unique=False, postgresql_using='gist')
-        batch_op.create_index(batch_op.f('ix_house_districts_geometry'), ['geometry'], unique=False)
 
     op.create_table('police_beats',
     sa.Column('beat_num', sa.String(length=10), nullable=False),
     sa.Column('beat', sa.String(length=10), nullable=True),
     sa.Column('district', sa.String(length=10), nullable=True),
     sa.Column('sector', sa.String(length=10), nullable=True),
-    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry'), nullable=True),
+    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry', spatial_index=False), nullable=True),
     sa.Column('shape_area', sa.Float(), nullable=True),
     sa.Column('shape_len', sa.Float(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
@@ -145,13 +150,12 @@ def upgrade() -> None:
     with op.batch_alter_table('police_beats', schema=None) as batch_op:
         batch_op.create_index('idx_police_beats_geometry', ['geometry'], unique=False, postgresql_using='gist')
         batch_op.create_index(batch_op.f('ix_police_beats_district'), ['district'], unique=False)
-        batch_op.create_index(batch_op.f('ix_police_beats_geometry'), ['geometry'], unique=False)
 
     op.create_table('senate_districts',
     sa.Column('district', sa.String(length=10), nullable=False),
     sa.Column('senator_name', sa.String(length=100), nullable=True),
     sa.Column('party', sa.String(length=20), nullable=True),
-    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry'), nullable=True),
+    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry', spatial_index=False), nullable=True),
     sa.Column('population', sa.Integer(), nullable=True),
     sa.Column('shape_area', sa.Float(), nullable=True),
     sa.Column('shape_len', sa.Float(), nullable=True),
@@ -161,7 +165,6 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('senate_districts', schema=None) as batch_op:
         batch_op.create_index('idx_senate_districts_geometry', ['geometry'], unique=False, postgresql_using='gist')
-        batch_op.create_index(batch_op.f('ix_senate_districts_geometry'), ['geometry'], unique=False)
 
     op.create_table('vision_zero_fatalities',
     sa.Column('person_id', sa.String(length=50), nullable=False),
@@ -172,7 +175,7 @@ def upgrade() -> None:
     sa.Column('crash_circumstances', sa.Text(), nullable=True),
     sa.Column('longitude', sa.Float(), nullable=True),
     sa.Column('latitude', sa.Float(), nullable=True),
-    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='POINT', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry'), nullable=True),
+    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='POINT', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry', spatial_index=False), nullable=True),
     sa.Column('geocoded_column', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
@@ -184,14 +187,13 @@ def upgrade() -> None:
         batch_op.create_index('ix_fatalities_rd_no', ['rd_no'], unique=False)
         batch_op.create_index('ix_fatalities_victim', ['victim'], unique=False)
         batch_op.create_index(batch_op.f('ix_vision_zero_fatalities_crash_date'), ['crash_date'], unique=False)
-        batch_op.create_index(batch_op.f('ix_vision_zero_fatalities_geometry'), ['geometry'], unique=False)
         batch_op.create_index(batch_op.f('ix_vision_zero_fatalities_rd_no'), ['rd_no'], unique=False)
 
     op.create_table('wards',
     sa.Column('ward', sa.Integer(), nullable=False),
     sa.Column('ward_name', sa.String(length=100), nullable=True),
     sa.Column('alderman', sa.String(length=100), nullable=True),
-    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry'), nullable=True),
+    sa.Column('geometry', geoalchemy2.types.Geometry(geometry_type='MULTIPOLYGON', srid=4326, dimension=2, from_text='ST_GeomFromEWKT', name='geometry', spatial_index=False), nullable=True),
     sa.Column('area_num_1', sa.String(length=10), nullable=True),
     sa.Column('shape_area', sa.Float(), nullable=True),
     sa.Column('shape_len', sa.Float(), nullable=True),
@@ -201,7 +203,6 @@ def upgrade() -> None:
     )
     with op.batch_alter_table('wards', schema=None) as batch_op:
         batch_op.create_index('idx_wards_geometry', ['geometry'], unique=False, postgresql_using='gist')
-        batch_op.create_index(batch_op.f('ix_wards_geometry'), ['geometry'], unique=False)
 
     op.create_table('crash_people',
     sa.Column('crash_record_id', sa.String(length=50), nullable=False),
@@ -280,6 +281,12 @@ def upgrade() -> None:
         batch_op.create_index('ix_vehicles_make', ['make'], unique=False)
         batch_op.create_index('ix_vehicles_type', ['vehicle_type'], unique=False)
         batch_op.create_index('ix_vehicles_year', ['vehicle_year'], unique=False)
+
+    # PostGIS extension objects (including tiger geocoder tables) are not
+    # managed by this project's Alembic migrations. They may exist already when
+    # using images like `postgis/postgis`, and attempting to drop/recreate them
+    # breaks the extension dependency graph.
+    return
 
     op.drop_table('state_lookup')
     op.drop_table('pagc_rules')
@@ -381,6 +388,76 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
+    # This revision only manages application tables. PostGIS extension objects
+    # (including tiger geocoder tables) are intentionally left as-is.
+    with op.batch_alter_table('crash_vehicles', schema=None) as batch_op:
+        batch_op.drop_index('ix_vehicles_year')
+        batch_op.drop_index('ix_vehicles_type')
+        batch_op.drop_index('ix_vehicles_make')
+
+    op.drop_table('crash_vehicles')
+    with op.batch_alter_table('crash_people', schema=None) as batch_op:
+        batch_op.drop_index('ix_people_person_type')
+        batch_op.drop_index('ix_people_injury')
+        batch_op.drop_index('ix_people_age')
+
+    op.drop_table('crash_people')
+    with op.batch_alter_table('wards', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_wards_geometry'))
+        batch_op.drop_index('idx_wards_geometry', postgresql_using='gist')
+
+    op.drop_table('wards')
+    with op.batch_alter_table('vision_zero_fatalities', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_vision_zero_fatalities_rd_no'))
+        batch_op.drop_index(batch_op.f('ix_vision_zero_fatalities_geometry'))
+        batch_op.drop_index(batch_op.f('ix_vision_zero_fatalities_crash_date'))
+        batch_op.drop_index('ix_fatalities_victim')
+        batch_op.drop_index('ix_fatalities_rd_no')
+        batch_op.drop_index('ix_fatalities_date')
+        batch_op.drop_index('idx_vision_zero_fatalities_geometry', postgresql_using='gist')
+
+    op.drop_table('vision_zero_fatalities')
+    with op.batch_alter_table('senate_districts', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_senate_districts_geometry'))
+        batch_op.drop_index('idx_senate_districts_geometry', postgresql_using='gist')
+
+    op.drop_table('senate_districts')
+    with op.batch_alter_table('police_beats', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_police_beats_geometry'))
+        batch_op.drop_index(batch_op.f('ix_police_beats_district'))
+        batch_op.drop_index('idx_police_beats_geometry', postgresql_using='gist')
+
+    op.drop_table('police_beats')
+    with op.batch_alter_table('house_districts', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_house_districts_geometry'))
+        batch_op.drop_index('idx_house_districts_geometry', postgresql_using='gist')
+
+    op.drop_table('house_districts')
+    with op.batch_alter_table('crashes', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_crashes_longitude'))
+        batch_op.drop_index(batch_op.f('ix_crashes_latitude'))
+        batch_op.drop_index('ix_crashes_injuries')
+        batch_op.drop_index('ix_crashes_hit_run')
+        batch_op.drop_index(batch_op.f('ix_crashes_geometry'))
+        batch_op.drop_index('ix_crashes_fatal')
+        batch_op.drop_index('ix_crashes_date_location')
+        batch_op.drop_index(batch_op.f('ix_crashes_crash_date'))
+        batch_op.drop_index('ix_crashes_beat')
+        batch_op.drop_index('idx_crashes_geometry', postgresql_using='gist')
+
+    op.drop_table('crashes')
+    with op.batch_alter_table('community_areas', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_community_areas_geometry'))
+        batch_op.drop_index('idx_community_areas_geometry', postgresql_using='gist')
+
+    op.drop_table('community_areas')
+    with op.batch_alter_table('census_tracts', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_census_tracts_geoid10'))
+        batch_op.drop_index('idx_census_tracts_geometry', postgresql_using='gist')
+
+    op.drop_table('census_tracts')
+    return
+
     op.create_table('countysub_lookup',
     sa.Column('st_code', sa.INTEGER(), autoincrement=False, nullable=False),
     sa.Column('state', sa.VARCHAR(length=2), autoincrement=False, nullable=True),
@@ -1102,7 +1179,6 @@ def downgrade() -> None:
 
     op.drop_table('community_areas')
     with op.batch_alter_table('census_tracts', schema=None) as batch_op:
-        batch_op.drop_index(batch_op.f('ix_census_tracts_geometry'))
         batch_op.drop_index(batch_op.f('ix_census_tracts_geoid10'))
         batch_op.drop_index('idx_census_tracts_geometry', postgresql_using='gist')
 

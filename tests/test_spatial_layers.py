@@ -1,4 +1,5 @@
 """Tests for spatial layer management endpoints."""
+
 import json
 import shutil
 import subprocess
@@ -65,13 +66,15 @@ def _create_geojson_bytes() -> bytes:
                 "properties": {"district": "Test"},
                 "geometry": {
                     "type": "Polygon",
-                    "coordinates": [[
-                        [-87.7, 41.8],
-                        [-87.6, 41.8],
-                        [-87.6, 41.9],
-                        [-87.7, 41.9],
-                        [-87.7, 41.8],
-                    ]],
+                    "coordinates": [
+                        [
+                            [-87.7, 41.8],
+                            [-87.6, 41.8],
+                            [-87.6, 41.9],
+                            [-87.7, 41.9],
+                            [-87.7, 41.8],
+                        ]
+                    ],
                 },
             }
         ],

@@ -569,7 +569,7 @@ grep ".env" .gitignore
 
 **Generate Coverage Report**:
 ```bash
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# Run from project root directory
 source venv/bin/activate
 pytest tests/ -v --cov=src --cov-report=html
 open htmlcov/index.html

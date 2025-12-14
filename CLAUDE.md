@@ -8,7 +8,7 @@ Before any work, ensure the environment is ready:
 
 ```bash
 # 1. Get to project root
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+cd chicago-crashes-pipeline  # Or: cd $(git rev-parse --show-toplevel)
 
 # 2. Check/start PostgreSQL 
 docker ps | grep postgres || (cd docker && docker-compose up -d postgres && sleep 15)
@@ -25,8 +25,8 @@ python3 -c "import sys; sys.path.append('src'); from utils.config import setting
 ### PostgreSQL Connection Refused
 - **Fix**: `cd docker && docker-compose up -d postgres && sleep 15`
 
-### Module Import Errors  
-- **Fix**: `cd /Users/mmclean/dev/python/chicago-crashes-pipeline && source venv/bin/activate`
+### Module Import Errors
+- **Fix**: `cd <project-root> && source venv/bin/activate` (run from project root directory)
 - **For scripts**: Always add `sys.path.append('src')` before project imports
 
 ### F-String Syntax Errors in Bash
@@ -101,7 +101,7 @@ sg run -l python -p 'settings.$_' src/
 
 For database analysis tasks:
 ```bash
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# Run from project root directory
 source venv/bin/activate
 docker ps | grep postgres || (cd docker && docker-compose up -d postgres && sleep 15)
 
@@ -157,7 +157,7 @@ curl -s http://localhost:8000/sync/counts
 ## Nuclear Reset (If Everything Breaks)
 
 ```bash
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# Run from project root directory
 pkill -f uvicorn || true
 cd docker && docker-compose down && docker-compose up -d postgres && sleep 15
 cd .. && source venv/bin/activate
@@ -166,7 +166,7 @@ python3 -c "import sys; sys.path.append('src'); from utils.config import setting
 
 ## Development Guidelines
 
-1. **Always work from project root**: `/Users/mmclean/dev/python/chicago-crashes-pipeline`
+1. **Always work from project root**: All commands should be run from the repository root directory
 2. **Use virtual environment**: `source venv/bin/activate`
 3. **Add src to path**: `sys.path.append('src')` in Python scripts
 4. **Follow existing patterns**: Check similar code before writing new features

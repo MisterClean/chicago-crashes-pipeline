@@ -817,7 +817,7 @@ The development team would:
 
 **Step 1: Generate coverage report**
 ```bash
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# Run from project root directory
 source venv/bin/activate
 pytest tests/test_sync_service.py -v --cov=src/services/sync_service --cov-report=term --cov-report=html
 ```
@@ -1645,7 +1645,7 @@ The developer would:
 
 **Step 1: Run mypy with strict settings**
 ```bash
-cd /Users/mmclean/dev/python/chicago-crashes-pipeline
+# Run from project root directory
 source venv/bin/activate
 mypy src --strict --show-error-codes > mypy_report.txt
 ```

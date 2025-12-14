@@ -1,17 +1,18 @@
 """High-level data synchronization orchestration for Chicago crash datasets."""
+
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any
 
 from src.etl.soda_client import SODAClient
 from src.services.database_service import DatabaseService
 from src.utils.config import settings
 from src.utils.logging import get_logger
 from src.validators.data_sanitizer import DataSanitizer
-
 
 logger = get_logger(__name__)
 
@@ -33,8 +34,8 @@ class SyncResult:
     """Aggregate sync run summary across all endpoints."""
 
     started_at: datetime
-    completed_at: Optional[datetime] = None
-    endpoint_results: Dict[str, EndpointSyncResult] = field(default_factory=dict)
+    completed_at: datetime | None = None
+    endpoint_results: dict[str, EndpointSyncResult] = field(default_factory=dict)
 
     @property
     def total_records(self) -> int:
@@ -58,10 +59,10 @@ class SyncService:
 
     def __init__(
         self,
-        batch_size: Optional[int] = None,
-        sanitizer: Optional[DataSanitizer] = None,
-        database_service: Optional[DatabaseService] = None,
-        client_factory: Optional[Callable[[], SODAClient]] = None,
+        batch_size: int | None = None,
+        sanitizer: DataSanitizer | None = None,
+        database_service: DatabaseService | None = None,
+        client_factory: Callable[[], SODAClient] | None = None,
     ) -> None:
         self.batch_size = batch_size or settings.api.batch_size
         self.sanitizer = sanitizer or DataSanitizer()
@@ -71,9 +72,9 @@ class SyncService:
     async def sync(
         self,
         endpoints: Sequence[str],
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        batch_callback: Optional[Callable[[EndpointSyncResult], None]] = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        batch_callback: Callable[[EndpointSyncResult], None] | None = None,
     ) -> SyncResult:
         """Synchronise one or more endpoints.
 
@@ -116,9 +117,9 @@ class SyncService:
         *,
         client: SODAClient,
         endpoint: str,
-        start_date: Optional[str],
-        end_date: Optional[str],
-        batch_callback: Optional[Callable[[EndpointSyncResult], None]],
+        start_date: str | None,
+        end_date: str | None,
+        batch_callback: Callable[[EndpointSyncResult], None] | None,
     ) -> EndpointSyncResult:
         endpoint_result = EndpointSyncResult(name=endpoint)
 
@@ -178,21 +179,25 @@ class SyncService:
 
         return endpoint_result
 
-    def _sanitize_batch(self, endpoint: str, records: Iterable[Dict]) -> List[Dict]:
+    def _sanitize_batch(self, endpoint: str, records: Iterable[dict]) -> list[dict]:
         if endpoint == "crashes":
             return [self.sanitizer.sanitize_crash_record(record) for record in records]
         if endpoint == "people":
             return [self.sanitizer.sanitize_person_record(record) for record in records]
         if endpoint == "vehicles":
-            return [self.sanitizer.sanitize_vehicle_record(record) for record in records]
+            return [
+                self.sanitizer.sanitize_vehicle_record(record) for record in records
+            ]
         if endpoint == "fatalities":
-            cleaned = [self.sanitizer.sanitize_fatality_record(record) for record in records]
+            cleaned = [
+                self.sanitizer.sanitize_fatality_record(record) for record in records
+            ]
             return self.sanitizer.remove_duplicates(cleaned, "person_id")
 
         logger.warning("Unknown endpoint requested during sync", endpoint=endpoint)
         return list(records)
 
-    def _persist_batch(self, endpoint: str, records: List[Dict]) -> Dict[str, int]:
+    def _persist_batch(self, endpoint: str, records: list[dict]) -> dict[str, int]:
         if not records:
             return {"inserted": 0, "updated": 0, "skipped": 0}
 
@@ -218,17 +223,21 @@ class SyncService:
 
 async def run_sync(  # pragma: no cover - thin convenience wrapper used by CLI
     endpoints: Sequence[str],
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    batch_size: Optional[int] = None,
-    client_factory: Optional[Callable[[], SODAClient]] = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    batch_size: int | None = None,
+    client_factory: Callable[[], SODAClient] | None = None,
 ) -> SyncResult:
     service = SyncService(batch_size=batch_size, client_factory=client_factory)
-    return await service.sync(endpoints=endpoints, start_date=start_date, end_date=end_date)
+    return await service.sync(
+        endpoints=endpoints, start_date=start_date, end_date=end_date
+    )
 
 
 class _AsyncNullContext:
-    """Utility context manager so SyncService can treat sync + async clients the same."""
+    """Utility context manager for SyncService."""
+
+    # Allows treating sync + async clients the same
 
     def __init__(self, value: Any) -> None:
         self.value = value

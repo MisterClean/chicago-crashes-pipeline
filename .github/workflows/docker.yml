@@ -1,0 +1,58 @@
+name: Docker
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  docker-build:
+    name: Build and Test Docker Images
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build application image
+      run: |
+        docker build -f docker/Dockerfile -t chicago-crashes-pipeline:test .
+
+    - name: Start services with docker-compose
+      run: |
+        cd docker
+        docker compose up -d
+        sleep 15  # Wait for services to be ready
+
+    - name: Check PostgreSQL health
+      run: |
+        cd docker
+        docker compose exec -T postgres pg_isready -U postgres
+
+    - name: Check API health
+      run: |
+        # Wait for API to be ready
+        timeout 60 bash -c 'until curl -f http://localhost:8000/health; do sleep 2; done'
+
+    - name: Run basic smoke tests
+      run: |
+        # Test health endpoint
+        curl -f http://localhost:8000/health || exit 1
+
+        # Test sync status endpoint
+        curl -f http://localhost:8000/sync/status || exit 1
+
+    - name: Show logs on failure
+      if: failure()
+      run: |
+        cd docker
+        docker compose logs
+
+    - name: Cleanup
+      if: always()
+      run: |
+        cd docker
+        docker compose down -v
