@@ -1,7 +1,8 @@
 """Data sanitization and cleaning utilities."""
+
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.utils.config import settings
 from src.utils.logging import get_logger
@@ -16,7 +17,7 @@ class DataSanitizer:
         """Initialize data sanitizer."""
         self.validation_settings = settings.validation
 
-    def sanitize_crash_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def sanitize_crash_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Sanitize a crash record.
 
         Args:
@@ -25,7 +26,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized: Dict[str, Any] = {}
+        sanitized: dict[str, Any] = {}
 
         # Handle required fields
         sanitized["crash_record_id"] = self._clean_string(record.get("crash_record_id"))
@@ -98,7 +99,7 @@ class DataSanitizer:
 
         return sanitized
 
-    def sanitize_person_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def sanitize_person_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Sanitize a person record.
 
         Args:
@@ -107,7 +108,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized: Dict[str, Any] = {}
+        sanitized: dict[str, Any] = {}
 
         # Required fields
         sanitized["crash_record_id"] = self._clean_string(record.get("crash_record_id"))
@@ -152,7 +153,7 @@ class DataSanitizer:
 
         return sanitized
 
-    def sanitize_vehicle_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def sanitize_vehicle_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Sanitize a vehicle record.
 
         Args:
@@ -161,7 +162,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized: Dict[str, Any] = {}
+        sanitized: dict[str, Any] = {}
 
         # Required fields
         sanitized["crash_unit_id"] = self._clean_string(record.get("crash_unit_id"))
@@ -205,7 +206,7 @@ class DataSanitizer:
 
         return sanitized
 
-    def sanitize_fatality_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def sanitize_fatality_record(self, record: dict[str, Any]) -> dict[str, Any]:
         """Sanitize a fatality record.
 
         Args:
@@ -214,7 +215,7 @@ class DataSanitizer:
         Returns:
             Sanitized record
         """
-        sanitized: Dict[str, Any] = {}
+        sanitized: dict[str, Any] = {}
 
         # Required fields
         sanitized["person_id"] = self._clean_string(record.get("person_id"))
@@ -244,8 +245,8 @@ class DataSanitizer:
         return sanitized
 
     def remove_duplicates(
-        self, records: List[Dict[str, Any]], key_field: str
-    ) -> List[Dict[str, Any]]:
+        self, records: list[dict[str, Any]], key_field: str
+    ) -> list[dict[str, Any]]:
         """Remove duplicate records based on key field.
 
         Args:
@@ -277,9 +278,7 @@ class DataSanitizer:
 
         return unique_records
 
-    def _clean_string(
-        self, value: Any, max_length: Optional[int] = None
-    ) -> Optional[str]:
+    def _clean_string(self, value: Any, max_length: int | None = None) -> str | None:
         """Clean and validate string value.
 
         Args:
@@ -316,7 +315,7 @@ class DataSanitizer:
 
         return cleaned
 
-    def _clean_text(self, value: Any) -> Optional[str]:
+    def _clean_text(self, value: Any) -> str | None:
         """Clean text field (longer strings).
 
         Args:
@@ -327,7 +326,7 @@ class DataSanitizer:
         """
         return self._clean_string(value)
 
-    def _clean_integer(self, value: Any) -> Optional[int]:
+    def _clean_integer(self, value: Any) -> int | None:
         """Clean and validate integer value.
 
         Args:
@@ -352,7 +351,7 @@ class DataSanitizer:
             logger.debug("Invalid integer value", value=value)
             return None
 
-    def _clean_float(self, value: Any) -> Optional[float]:
+    def _clean_float(self, value: Any) -> float | None:
         """Clean and validate float value.
 
         Args:
@@ -376,7 +375,7 @@ class DataSanitizer:
             logger.debug("Invalid float value", value=value)
             return None
 
-    def _parse_datetime(self, value: Any) -> Optional[datetime]:
+    def _parse_datetime(self, value: Any) -> datetime | None:
         """Parse datetime value from various formats.
 
         Args:
@@ -412,7 +411,7 @@ class DataSanitizer:
         logger.debug("Could not parse datetime", value=value)
         return None
 
-    def _clean_coordinate(self, value: Any, coord_type: str) -> Optional[float]:
+    def _clean_coordinate(self, value: Any, coord_type: str) -> float | None:
         """Clean and validate coordinate value.
 
         Args:
@@ -462,7 +461,7 @@ class DataSanitizer:
 
         return coord
 
-    def _clean_age(self, value: Any) -> Optional[int]:
+    def _clean_age(self, value: Any) -> int | None:
         """Clean and validate age value.
 
         Args:
@@ -492,7 +491,7 @@ class DataSanitizer:
 
         return age
 
-    def _clean_vehicle_year(self, value: Any) -> Optional[int]:
+    def _clean_vehicle_year(self, value: Any) -> int | None:
         """Clean and validate vehicle year.
 
         Args:

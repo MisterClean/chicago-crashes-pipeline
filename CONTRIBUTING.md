@@ -79,16 +79,22 @@ Before submitting a PR, ensure:
 ### Code Style
 
 We follow Python best practices:
-- **Black** for code formatting (88 character line length)
-- **isort** for import sorting
-- **flake8** for linting
+- **Ruff** for linting and code formatting (88 character line length)
 - **mypy** for type checking
 - **PEP 8** style guide
 
 Run all formatters and linters:
 ```bash
-make format  # Auto-format code
+make format  # Auto-format code and fix linting issues
 make lint    # Check for issues
+```
+
+To run checks manually:
+```bash
+ruff check src tests           # Lint code
+ruff format src tests          # Format code
+ruff check --fix src tests     # Auto-fix linting issues
+mypy src/utils src/etl src/validators  # Type check
 ```
 
 ### Testing

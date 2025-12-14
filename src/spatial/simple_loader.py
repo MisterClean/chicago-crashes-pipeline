@@ -1,6 +1,7 @@
 """Simple shapefile loader - just drop files in data/shapefiles/ and run this."""
+
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from sqlalchemy import text
 
@@ -34,7 +35,7 @@ class SimpleShapefileLoader:
 
     def load_all_shapefiles(
         self, shapefiles_dir: str = "data/shapefiles"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Load all shapefiles found in the directory.
 
         Args:
@@ -81,7 +82,7 @@ class SimpleShapefileLoader:
 
     def _load_single_shapefile(
         self, shapefile_path: Path, table_name: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Load a single shapefile into PostGIS.
 
         Args:
@@ -139,7 +140,7 @@ class SimpleShapefileLoader:
             "crs": "EPSG:4326",
         }
 
-    def list_loaded_tables(self) -> Dict[str, Any]:
+    def list_loaded_tables(self) -> dict[str, Any]:
         """List all spatial tables in the database."""
         try:
             # Query for tables with geometry columns
@@ -177,7 +178,7 @@ class SimpleShapefileLoader:
             logger.error("Error listing spatial tables", error=str(e))
             return {"error": str(e)}
 
-    def query_table(self, table_name: str, limit: int = 10) -> Dict[str, Any]:
+    def query_table(self, table_name: str, limit: int = 10) -> dict[str, Any]:
         """Query a spatial table to see sample data.
 
         Args:

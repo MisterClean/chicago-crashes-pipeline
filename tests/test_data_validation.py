@@ -1,4 +1,5 @@
 """Tests for data validation functionality."""
+
 import pytest
 
 from validators.crash_validator import CrashValidator
@@ -57,7 +58,7 @@ class TestCrashValidator:
         # Record missing required fields
         incomplete_record = {
             "latitude": "41.8781",
-            "longitude": "-87.6298"
+            "longitude": "-87.6298",
             # Missing crash_record_id and crash_date
         }
 

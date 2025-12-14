@@ -1,6 +1,7 @@
 """Pydantic models for API requests and responses."""
+
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -8,14 +9,14 @@ from pydantic import BaseModel, Field
 class SyncRequest(BaseModel):
     """Request model for sync operations."""
 
-    start_date: Optional[str] = Field(
+    start_date: str | None = Field(
         None, description="Start date for sync in YYYY-MM-DD format"
     )
-    end_date: Optional[str] = Field(
+    end_date: str | None = Field(
         None, description="End date for sync in YYYY-MM-DD format"
     )
     force: bool = Field(False, description="Force sync even if recently completed")
-    endpoint: Optional[str] = Field(
+    endpoint: str | None = Field(
         None,
         description="Specific endpoint to sync (crashes, people, vehicles, fatalities)",
     )
@@ -34,9 +35,9 @@ class StatusResponse(BaseModel):
     """Response model for status checks."""
 
     status: str
-    last_sync: Optional[datetime]
-    current_operation: Optional[str]
-    stats: Dict[str, Any]
+    last_sync: datetime | None
+    current_operation: str | None
+    stats: dict[str, Any]
     uptime: str
 
 
@@ -45,7 +46,7 @@ class HealthResponse(BaseModel):
 
     status: str
     timestamp: datetime
-    services: Dict[str, str]
+    services: dict[str, str]
 
 
 class TestSyncResponse(BaseModel):
@@ -55,14 +56,14 @@ class TestSyncResponse(BaseModel):
     message: str
     records_fetched: int
     records_cleaned: int
-    sample_record: Optional[Dict[str, Any]]
+    sample_record: dict[str, Any] | None
 
 
 class ErrorResponse(BaseModel):
     """Response model for errors."""
 
     detail: str
-    error_code: Optional[str] = None
+    error_code: str | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
@@ -73,8 +74,8 @@ class DataValidationResponse(BaseModel):
     total_records: int
     valid_records: int
     invalid_records: int
-    validation_errors: List[str]
-    warnings: List[str]
+    validation_errors: list[str]
+    warnings: list[str]
 
 
 class EndpointInfo(BaseModel):
@@ -83,8 +84,8 @@ class EndpointInfo(BaseModel):
     name: str
     url: str
     description: str
-    record_count_estimate: Optional[int] = None
-    last_updated: Optional[datetime] = None
+    record_count_estimate: int | None = None
+    last_updated: datetime | None = None
 
 
 # Job Management API Models
@@ -93,23 +94,23 @@ class EndpointInfo(BaseModel):
 class JobConfig(BaseModel):
     """Job configuration parameters."""
 
-    endpoints: Optional[List[str]] = None
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    date_range_days: Optional[int] = None
+    endpoints: list[str] | None = None
+    start_date: str | None = None
+    end_date: str | None = None
+    date_range_days: int | None = None
     force: bool = False
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class CreateJobRequest(BaseModel):
     """Request model for creating a new job."""
 
     name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
+    description: str | None = None
     job_type: str
     enabled: bool = True
     recurrence_type: str
-    cron_expression: Optional[str] = None
+    cron_expression: str | None = None
     config: JobConfig
     timeout_minutes: int = Field(default=60, gt=0, le=480)  # Max 8 hours
     max_retries: int = Field(default=3, ge=0, le=10)
@@ -119,15 +120,15 @@ class CreateJobRequest(BaseModel):
 class UpdateJobRequest(BaseModel):
     """Request model for updating an existing job."""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    enabled: Optional[bool] = None
-    recurrence_type: Optional[str] = None
-    cron_expression: Optional[str] = None
-    config: Optional[JobConfig] = None
-    timeout_minutes: Optional[int] = Field(None, gt=0, le=480)
-    max_retries: Optional[int] = Field(None, ge=0, le=10)
-    retry_delay_minutes: Optional[int] = Field(None, ge=1, le=60)
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    enabled: bool | None = None
+    recurrence_type: str | None = None
+    cron_expression: str | None = None
+    config: JobConfig | None = None
+    timeout_minutes: int | None = Field(None, gt=0, le=480)
+    max_retries: int | None = Field(None, ge=0, le=10)
+    retry_delay_minutes: int | None = Field(None, ge=1, le=60)
 
 
 class JobResponse(BaseModel):
@@ -135,14 +136,14 @@ class JobResponse(BaseModel):
 
     id: int
     name: str
-    description: Optional[str]
+    description: str | None
     job_type: str
     enabled: bool
     recurrence_type: str
-    cron_expression: Optional[str]
-    next_run: Optional[datetime]
-    last_run: Optional[datetime]
-    config: Dict[str, Any]
+    cron_expression: str | None
+    next_run: datetime | None
+    last_run: datetime | None
+    config: dict[str, Any]
     timeout_minutes: int
     max_retries: int
     retry_delay_minutes: int
@@ -157,16 +158,16 @@ class JobExecutionResponse(BaseModel):
     id: int
     execution_id: str
     job_id: int
-    job_name: Optional[str]
+    job_name: str | None
     status: str
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
-    duration_seconds: Optional[int]
+    started_at: datetime | None
+    completed_at: datetime | None
+    duration_seconds: int | None
     records_processed: int
     records_inserted: int
     records_updated: int
     records_skipped: int
-    error_message: Optional[str]
+    error_message: str | None
     retry_count: int
     created_at: datetime
 
@@ -182,15 +183,15 @@ class ExecutionLogEntry(BaseModel):
 class JobExecutionDetailResponse(JobExecutionResponse):
     """Detailed response for job execution with logs and context."""
 
-    execution_context: Optional[Dict[str, Any]] = None
-    logs: List[ExecutionLogEntry] = Field(default_factory=list)
+    execution_context: dict[str, Any] | None = None
+    logs: list[ExecutionLogEntry] = Field(default_factory=list)
 
 
 class ExecuteJobRequest(BaseModel):
     """Request model for manual job execution."""
 
     force: bool = False
-    override_config: Optional[JobConfig] = None
+    override_config: JobConfig | None = None
 
 
 class ExecuteJobResponse(BaseModel):
@@ -209,9 +210,9 @@ class DataDeletionRequest(BaseModel):
     table_name: str
     confirm: bool = False
     backup: bool = True
-    date_range: Optional[
-        Dict[str, str]
-    ] = None  # {"start": "2023-01-01", "end": "2023-12-31"}
+    date_range: dict[str, str] | None = (
+        None  # {"start": "2023-01-01", "end": "2023-12-31"}
+    )
 
 
 class DataDeletionResponse(BaseModel):
@@ -221,7 +222,7 @@ class DataDeletionResponse(BaseModel):
     table_name: str
     records_deleted: int
     execution_time_seconds: float
-    backup_location: Optional[str]
+    backup_location: str | None
     can_restore: bool
 
 
@@ -232,7 +233,7 @@ class JobSummaryResponse(BaseModel):
     active_jobs: int
     running_jobs: int
     failed_jobs_24h: int
-    last_execution: Optional[datetime]
+    last_execution: datetime | None
 
 
 class SpatialLayerResponse(BaseModel):
@@ -241,11 +242,11 @@ class SpatialLayerResponse(BaseModel):
     id: int
     name: str
     slug: str
-    description: Optional[str]
+    description: str | None
     geometry_type: str
     srid: int
     feature_count: int
-    original_filename: Optional[str]
+    original_filename: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -254,12 +255,12 @@ class SpatialLayerResponse(BaseModel):
 class SpatialLayerDetailResponse(SpatialLayerResponse):
     """Detailed response including sample features."""
 
-    feature_samples: List[Dict[str, Any]] = []
+    feature_samples: list[dict[str, Any]] = []
 
 
 class SpatialLayerUpdateRequest(BaseModel):
     """Payload for updating a spatial layer."""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=150)
-    description: Optional[str] = None
-    is_active: Optional[bool] = None
+    name: str | None = Field(None, min_length=1, max_length=150)
+    description: str | None = None
+    is_active: bool | None = None

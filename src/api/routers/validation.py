@@ -1,4 +1,5 @@
 """Data validation endpoints."""
+
 import asyncio
 
 from fastapi import APIRouter, HTTPException, Query

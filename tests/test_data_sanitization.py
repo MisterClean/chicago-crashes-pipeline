@@ -1,4 +1,5 @@
 """Tests for data sanitization functionality."""
+
 from datetime import datetime
 
 import pytest

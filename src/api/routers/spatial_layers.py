@@ -1,5 +1,4 @@
 """API endpoints for managing GeoJSON spatial layers."""
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
@@ -17,7 +16,7 @@ def get_service() -> SpatialLayerService:
     return SpatialLayerService()
 
 
-@router.get("/layers", response_model=List[SpatialLayerResponse])
+@router.get("/layers", response_model=list[SpatialLayerResponse])
 async def list_layers(service: SpatialLayerService = Depends(get_service)):
     return service.list_layers()
 
@@ -38,7 +37,7 @@ async def get_layer(layer_id: int, service: SpatialLayerService = Depends(get_se
 async def upload_layer(
     name: str = Form(...),
     file: UploadFile = File(...),
-    description: Optional[str] = Form(None),
+    description: str | None = Form(None),
     srid: int = Form(4326),
     service: SpatialLayerService = Depends(get_service),
 ):
@@ -85,7 +84,7 @@ async def update_layer(
 async def replace_layer(
     layer_id: int,
     file: UploadFile = File(...),
-    srid: Optional[int] = Form(None),
+    srid: int | None = Form(None),
     service: SpatialLayerService = Depends(get_service),
 ):
     try:

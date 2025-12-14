@@ -50,15 +50,15 @@ chicago-crashes-pipeline/
 | Target | Action |
 | --- | --- |
 | `make test` | Run pytest with coverage report |
-| `make lint` | Run flake8 + mypy |
-| `make format` | Apply Black and isort |
+| `make lint` | Run Ruff linter + mypy type checker |
+| `make format` | Apply Ruff formatter and auto-fixes |
 | `make sync` | Execute a rolling delta sync via CLI |
 | `make load-shapefiles` | Import shapefiles listed in `config/config.yaml` |
 | `make serve` | Launch the API with auto-reload |
 
 ## Code Style
 
-- Format with **Black** (`black src tests`) and **isort** for imports.
+- Format with **Ruff** (`ruff format src tests`) and auto-fix linting issues (`ruff check --fix src tests`).
 - Follow **PEP 8** plus type hints on public functions.
 - Prefer dependency injection via FastAPI routers to keep modules testable.
 - Use structured logging (`get_logger(__name__)`) with contextual keyword arguments.

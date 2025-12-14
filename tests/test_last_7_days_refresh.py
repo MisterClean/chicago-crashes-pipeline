@@ -1,4 +1,5 @@
 """Test for last 7 days data refresh functionality."""
+
 import time
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, patch

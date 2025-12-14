@@ -1,4 +1,5 @@
 """Spatial models for geographic boundaries and reference data."""
+
 from geoalchemy2 import Geometry
 from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB

@@ -1,4 +1,5 @@
 """Pytest configuration and fixtures for the Chicago crash data pipeline tests."""
+
 import asyncio
 import sys
 from pathlib import Path

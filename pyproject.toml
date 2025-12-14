@@ -1,4 +1,37 @@
-[tool.isort]
-profile = "black"
-line_length = 88
-skip_glob = ["src/static/documentation/**/*.py"]
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+exclude = [
+    "src/static/documentation",
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "*.pyc",
+    ".mypy_cache",
+    ".pytest_cache",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+# E/F: flake8, I: isort, B: bugbear, UP: pyupgrade, W: warnings
+select = ["E", "F", "I", "B", "UP", "W"]
+ignore = [
+    "E203",  # whitespace before ':' (formatter compatibility)
+    "B008",  # function call in argument defaults (required for FastAPI Depends)
+    "B904",  # raise from inside except (stylistic choice)
+    "B028",  # warnings without stacklevel (not critical)
+    "B007",  # unused loop variable (intentional in some cases)
+    "UP038", # isinstance with tuple (acceptable pattern)
+]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B011", "TID252"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"

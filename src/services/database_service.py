@@ -1,8 +1,10 @@
 """Database service for streaming upserts into the pipeline datastore."""
+
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import datetime
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any
 
 from geoalchemy2.elements import WKTElement
 from sqlalchemy import inspect
@@ -24,27 +26,27 @@ class DatabaseService:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def upsert_crash_records(self, records: Sequence[Dict[str, Any]]) -> Dict[str, int]:
+    def upsert_crash_records(self, records: Sequence[dict[str, Any]]) -> dict[str, int]:
         return self._upsert_records(Crash, records, self._prepare_crash_record)
 
     def upsert_person_records(
-        self, records: Sequence[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]]
+    ) -> dict[str, int]:
         return self._upsert_records(CrashPerson, records, self._prepare_person_record)
 
     def upsert_vehicle_records(
-        self, records: Sequence[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]]
+    ) -> dict[str, int]:
         return self._upsert_records(CrashVehicle, records, self._prepare_vehicle_record)
 
     def upsert_fatality_records(
-        self, records: Sequence[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]]
+    ) -> dict[str, int]:
         return self._upsert_records(
             VisionZeroFatality, records, self._prepare_fatality_record
         )
 
-    def get_record_counts(self) -> Dict[str, int]:
+    def get_record_counts(self) -> dict[str, int]:
         """Return simple table counts for status endpoints."""
         session = self.session_factory()
         try:
@@ -66,9 +68,9 @@ class DatabaseService:
     def _upsert_records(
         self,
         model: type,
-        records: Sequence[Dict[str, Any]],
-        prepare: Callable[[Dict[str, Any]], Optional[Dict[str, Any]]],
-    ) -> Dict[str, int]:
+        records: Sequence[dict[str, Any]],
+        prepare: Callable[[dict[str, Any]], dict[str, Any] | None],
+    ) -> dict[str, int]:
         inserted = updated = skipped = 0
         session = self.session_factory()
 
@@ -117,7 +119,7 @@ class DatabaseService:
     # ------------------------------------------------------------------
     # Record preparation helpers
     # ------------------------------------------------------------------
-    def _prepare_crash_record(self, record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _prepare_crash_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
         filtered = self._filter_columns(Crash, record)
         crash_id = filtered.get("crash_record_id")
         crash_date = filtered.get("crash_date")
@@ -134,25 +136,19 @@ class DatabaseService:
         filtered["geometry"] = geometry
         return filtered
 
-    def _prepare_person_record(
-        self, record: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def _prepare_person_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
         filtered = self._filter_columns(CrashPerson, record)
         if not filtered.get("crash_record_id") or not filtered.get("person_id"):
             return None
         return filtered
 
-    def _prepare_vehicle_record(
-        self, record: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def _prepare_vehicle_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
         filtered = self._filter_columns(CrashVehicle, record)
         if not filtered.get("crash_unit_id"):
             return None
         return filtered
 
-    def _prepare_fatality_record(
-        self, record: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def _prepare_fatality_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
         filtered = self._filter_columns(VisionZeroFatality, record)
         if not filtered.get("person_id"):
             return None
@@ -169,11 +165,11 @@ class DatabaseService:
     # ------------------------------------------------------------------
     # Utility helpers
     # ------------------------------------------------------------------
-    def _filter_columns(self, model: type, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _filter_columns(self, model: type, data: dict[str, Any]) -> dict[str, Any]:
         column_names = {column.name for column in model.__table__.columns}
         return {name: data.get(name) for name in column_names if name in data}
 
-    def _extract_primary_key(self, model: type, data: Dict[str, Any]) -> Optional[Any]:
+    def _extract_primary_key(self, model: type, data: dict[str, Any]) -> Any | None:
         mapper = inspect(model)
         key_components: list[Any] = []
         for column in mapper.primary_key:
@@ -189,12 +185,12 @@ class DatabaseService:
         return tuple(key_components)
 
     @staticmethod
-    def _assign_columns(instance: Any, values: Dict[str, Any]) -> None:
+    def _assign_columns(instance: Any, values: dict[str, Any]) -> None:
         for key, value in values.items():
             setattr(instance, key, value)
 
     @staticmethod
-    def _create_geometry(latitude: Any, longitude: Any) -> Optional[WKTElement]:
+    def _create_geometry(latitude: Any, longitude: Any) -> WKTElement | None:
         lat = DatabaseService._parse_float(latitude)
         lon = DatabaseService._parse_float(longitude)
         if lat is None or lon is None:
@@ -205,7 +201,7 @@ class DatabaseService:
     # Legacy parsing helpers (retained for compatibility)
     # ------------------------------------------------------------------
     @staticmethod
-    def _parse_datetime(value: Any) -> Optional[datetime]:
+    def _parse_datetime(value: Any) -> datetime | None:
         if not value:
             return None
         if isinstance(value, datetime):
@@ -228,7 +224,7 @@ class DatabaseService:
         return None
 
     @staticmethod
-    def _parse_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    def _parse_int(value: Any, default: int | None = None) -> int | None:
         if value is None or value == "":
             return default
         try:
@@ -237,7 +233,7 @@ class DatabaseService:
             return default
 
     @staticmethod
-    def _parse_float(value: Any) -> Optional[float]:
+    def _parse_float(value: Any) -> float | None:
         if value is None or value == "":
             return None
         try:
@@ -249,24 +245,24 @@ class DatabaseService:
     # Backwards-compatibility shims (legacy method names used in tests)
     # ------------------------------------------------------------------
     def insert_crash_records(
-        self, records: Sequence[Dict[str, Any]], batch_size: int = 1000
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]], batch_size: int = 1000
+    ) -> dict[str, int]:
         del batch_size  # preserved for signature compatibility
         return self.upsert_crash_records(records)
 
     def insert_person_records(
-        self, records: Sequence[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]]
+    ) -> dict[str, int]:
         return self.upsert_person_records(records)
 
     def insert_vehicle_records(
-        self, records: Sequence[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]]
+    ) -> dict[str, int]:
         return self.upsert_vehicle_records(records)
 
     def insert_fatality_records(
-        self, records: Sequence[Dict[str, Any]]
-    ) -> Dict[str, int]:
+        self, records: Sequence[dict[str, Any]]
+    ) -> dict[str, int]:
         return self.upsert_fatality_records(records)
 
 

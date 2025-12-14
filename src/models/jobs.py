@@ -1,4 +1,5 @@
 """Models for job management and scheduling system."""
+
 from datetime import datetime, timedelta
 from enum import Enum
 

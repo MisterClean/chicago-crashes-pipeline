@@ -28,12 +28,12 @@ test:
 	pytest tests/ -v --cov=src --cov-report=html
 
 lint:
-	flake8 src tests
-	mypy src
+	ruff check src tests
+	mypy src/utils src/etl src/validators --ignore-missing-imports
 
 format:
-	black src tests
-	isort src tests
+	ruff format src tests
+	ruff check --fix src tests
 
 # Cleanup
 clean:

@@ -1,9 +1,10 @@
 """Logging configuration for the Chicago crash data pipeline."""
+
 import logging
 import logging.handlers
 import sys
 from pathlib import Path
-from typing import Optional, cast
+from typing import cast
 
 import structlog
 from structlog.types import Processor
@@ -12,7 +13,7 @@ from .config import settings
 
 
 def setup_logging(
-    service_name: str, log_level: Optional[str] = None, log_file: Optional[str] = None
+    service_name: str, log_level: str | None = None, log_file: str | None = None
 ) -> None:
     """Configure structured logging for the application.
 
