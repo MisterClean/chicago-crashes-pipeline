@@ -332,3 +332,61 @@ Invoke the Backend Architecture Agent for:
 
 - **Agent Configuration**: [.claude/agents/backend-architecture.md](.claude/agents/backend-architecture.md)
 - **Usage Examples**: [docs/agents/backend-architecture-examples.md](docs/agents/backend-architecture-examples.md)
+
+## Feature Planning Skill
+
+For complex feature requests requiring structured planning, the **Feature Planning Skill** (`/feature-planning`) provides a systematic workflow to break down requests into actionable implementation plans.
+
+### Skill Capabilities
+
+The Feature Planning Skill provides:
+
+- **Requirements Clarification**: Asks targeted questions about problem domain, users, constraints, and success metrics
+- **Codebase Exploration**: Analyzes existing patterns and architecture to inform design decisions
+- **Component Identification**: Breaks features into database, backend, frontend, testing, and documentation tasks
+- **Implementation Planning**: Creates sequential task lists with file references, descriptions, and dependencies
+- **User Review**: Confirms plans before execution to ensure alignment
+
+### When to Use
+
+Invoke `/feature-planning` when:
+
+- Requesting new features ("add user authentication", "build dashboard")
+- Asking for enhancements ("improve performance", "add export functionality")
+- Describing complex multi-step changes
+- Explicitly requesting planning ("plan how to implement X")
+- Providing vague requirements that need clarification
+
+### Planning Workflow
+
+1. **Understand Requirements**: Clarifying questions and codebase exploration
+2. **Analyze & Design**: Component identification, architecture decisions, dependency checking
+3. **Create Plan**: Discrete, sequential tasks with file paths and specific implementation details
+4. **Review with User**: Confirmation and adjustments before proceeding
+5. **Execute**: Sequential implementation with testing and verification
+
+### Example Usage
+
+```bash
+# Request feature planning
+"I want to add user authentication to the admin portal"
+
+# The skill will:
+# 1. Ask about auth requirements (OAuth, JWT, session-based?)
+# 2. Explore existing code patterns in src/api/
+# 3. Design auth flow matching project architecture
+# 4. Create plan with tasks for models, API endpoints, frontend, tests
+# 5. Get your approval before implementation
+```
+
+### Best Practices
+
+- **Specific References**: Plans include file paths with line numbers (`src/utils/auth.py:45`)
+- **Follow Patterns**: Adheres to existing code patterns from CLAUDE.md and codebase
+- **Atomic Tasks**: Each task is focused and independently testable
+- **Architectural Thinking**: Considers edge cases, security, performance upfront
+- **Clear Communication**: Explains decisions, trade-offs, and assumptions
+
+### Documentation
+
+- **Skill Configuration**: [.claude/skills/feature-planning/SKILL.md](.claude/skills/feature-planning/SKILL.md)
