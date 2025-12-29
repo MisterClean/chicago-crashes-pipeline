@@ -1,0 +1,89 @@
+import type { Metadata } from "next";
+import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Chicago Crash Dashboard | Lakeview Urbanists",
+  description:
+    "Public dashboard visualizing Chicago traffic crash data. Explore patterns, trends, and safety insights across Chicago neighborhoods.",
+  openGraph: {
+    title: "Chicago Crash Dashboard",
+    description: "Visualizing traffic safety data for Chicago",
+    type: "website",
+  },
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en">
+      <body className="antialiased">
+        <header className="bg-gray-900 text-white">
+          <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center">
+                <a href="/" className="text-xl font-bold">
+                  Chicago Crash Dashboard
+                </a>
+              </div>
+              <div className="flex items-center space-x-4">
+                <a
+                  href="/dashboard"
+                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Dashboard
+                </a>
+                <a
+                  href="https://lakeviewurbanists.org"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Lakeview Urbanists
+                </a>
+              </div>
+            </div>
+          </nav>
+        </header>
+        <main>{children}</main>
+        <footer className="bg-gray-100 dark:bg-gray-900 py-8 mt-auto">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-600 dark:text-gray-400">
+            <p>
+              Data from{" "}
+              <a
+                href="https://data.cityofchicago.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-gray-900 dark:hover:text-gray-200"
+              >
+                Chicago Open Data Portal
+              </a>
+              . Built by{" "}
+              <a
+                href="https://lakeviewurbanists.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-gray-900 dark:hover:text-gray-200"
+              >
+                Lakeview Urbanists
+              </a>
+              .
+            </p>
+            <p className="mt-2">
+              <a
+                href="https://github.com/lakeview-urbanists/chicago-crash-dashboard"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline hover:text-gray-900 dark:hover:text-gray-200"
+              >
+                Open Source on GitHub
+              </a>
+            </p>
+          </div>
+        </footer>
+      </body>
+    </html>
+  );
+}
