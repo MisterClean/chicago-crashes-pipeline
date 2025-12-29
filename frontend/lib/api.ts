@@ -118,3 +118,75 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
 
   return res.json();
 }
+
+// Location Report Types
+export interface LocationReportStats {
+  total_crashes: number;
+  total_injuries: number;
+  total_fatalities: number;
+  pedestrians_involved: number;
+  cyclists_involved: number;
+  hit_and_run_count: number;
+  incapacitating_injuries: number;
+  crashes_with_injuries: number;
+  crashes_with_fatalities: number;
+}
+
+export interface CrashCauseSummary {
+  cause: string;
+  crashes: number;
+  injuries: number;
+  fatalities: number;
+  percentage: number;
+}
+
+export interface MonthlyTrendPoint {
+  month: string;
+  crashes: number;
+  injuries: number;
+  fatalities: number;
+}
+
+export interface LocationReportResponse {
+  stats: LocationReportStats;
+  causes: CrashCauseSummary[];
+  monthly_trends: MonthlyTrendPoint[];
+  crashes_geojson: CrashGeoJSON;
+  query_area_geojson: {
+    type: "Feature";
+    geometry: {
+      type: "Polygon";
+      coordinates: number[][][];
+    };
+    properties: Record<string, unknown>;
+  };
+}
+
+export interface LocationReportRequest {
+  latitude?: number;
+  longitude?: number;
+  radius_feet?: number;
+  polygon?: [number, number][];
+  start_date?: string;
+  end_date?: string;
+}
+
+export async function fetchLocationReport(
+  request: LocationReportRequest
+): Promise<LocationReportResponse> {
+  const res = await fetch(`${API_BASE}/dashboard/location-report`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to fetch location report: ${errorText}`);
+  }
+
+  return res.json();
+}
