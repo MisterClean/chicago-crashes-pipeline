@@ -1,0 +1,134 @@
+# =============================================================================
+# Chicago Crash Dashboard - Full Stack Docker Compose
+# =============================================================================
+# Complete deployment with:
+# - PostgreSQL/PostGIS (crash data + spatial layers)
+# - Redis (caching)
+# - FastAPI Backend (data API)
+# - Martin (vector tile server)
+# - Next.js Frontend (dashboard)
+# - Nginx (reverse proxy)
+#
+# Usage:
+#   docker-compose -f docker-compose.fullstack.yml up -d
+#
+# Endpoints:
+#   http://localhost         - Dashboard
+#   http://localhost/api     - FastAPI backend
+#   http://localhost/tiles   - Martin tile server
+# =============================================================================
+
+services:
+  # PostgreSQL with PostGIS extension
+  postgres:
+    image: postgis/postgis:17-3.5-alpine
+    environment:
+      POSTGRES_DB: chicago_crashes
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis for caching and job queue
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: chicago_crashes
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../logs:/app/logs
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Martin Vector Tile Server
+  martin:
+    image: ghcr.io/maplibre/martin:v0.14.2
+    environment:
+      DATABASE_URL: postgres://postgres:${DB_PASSWORD:-postgres}@postgres:5432/chicago_crashes
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./martin.yaml:/config/martin.yaml:ro
+      - ./tiles:/tiles:ro
+    command: --config /config/martin.yaml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Next.js Frontend
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_URL: http://backend:8000
+      TILES_URL: http://martin:3000
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./tiles:/tiles:ro
+    depends_on:
+      - frontend
+      - backend
+      - martin
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
