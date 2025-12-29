@@ -59,7 +59,7 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
 
   if (loading) {
     return (
-      <div className="h-[500px] bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
+      <div className="h-[600px] bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
         <span className="text-gray-500">Loading crash data...</span>
       </div>
     );
@@ -67,7 +67,7 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
 
   if (error) {
     return (
-      <div className="h-[500px] bg-red-50 dark:bg-red-900/20 rounded flex items-center justify-center">
+      <div className="h-[600px] bg-red-50 dark:bg-red-900/20 rounded flex items-center justify-center">
         <span className="text-red-600 dark:text-red-400">Error: {error}</span>
       </div>
     );
@@ -80,7 +80,7 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
         maxBounds={CHICAGO_BOUNDS}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
-        style={{ width: "100%", height: "500px", borderRadius: "8px" }}
+        style={{ width: "100%", height: "600px", borderRadius: "8px" }}
         mapStyle={BASEMAP_STYLE_URL}
         interactiveLayerIds={["crashes-circle"]}
         onClick={handleClick}
