@@ -7,11 +7,13 @@
 [![Lint](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Lint/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
 [![Security](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Security/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
 
-A Python-based data pipeline that ingests, validates, and serves Chicago traffic crash data from multiple SODA APIs, supporting spatial analysis and automated refresh workflows.
+A Python-based data pipeline that ingests, validates, and serves Chicago traffic crash data from multiple SODA APIs, supporting spatial analysis and automated refresh workflows. Includes a **public dashboard** for visualizing crash data.
 
 ## Overview
 
 The service orchestrates end-to-end ETL for four interconnected datasets from the Chicago Open Data Portal, keeps them synchronized in PostgreSQL/PostGIS, and exposes a FastAPI layer with an admin UI and documentation.
+
+**Now includes a full-stack public dashboard** built with Next.js, featuring interactive maps, trend charts, and real-time statistics - perfect for advocacy organizations like [Lakeview Urbanists](https://lakeviewurbanists.org).
 
 ## Quick Start
 
@@ -27,6 +29,60 @@ make docker-up  # start Postgres/PostGIS and supporting services
 make migrate
 make serve  # FastAPI + admin portal at http://localhost:8000
 ```
+
+## Public Dashboard
+
+A full-stack public dashboard for visualizing Chicago crash data, built with Next.js 15, MapLibre, and Recharts.
+
+![Dashboard Screenshot](docs/images/dashboard-screenshot.png)
+
+**Features:**
+- Interactive map with 10,000+ crash points color-coded by severity
+- Weekly trend charts showing crashes, injuries, and fatalities
+- Key metrics: total crashes, injuries, fatalities, pedestrians, cyclists, hit & runs
+- Date range filtering with quick presets (7 days, 30 days, 1 year)
+- Responsive design for desktop and mobile
+
+### Quick Start (Dashboard)
+
+```bash
+# Start the backend (if not already running)
+cd docker && docker-compose up -d postgres redis
+cd .. && source venv/bin/activate
+uvicorn src.api.main:app --reload --port 8000
+
+# Start the frontend
+cd frontend && npm install && npm run dev
+# Dashboard at http://localhost:3001/dashboard
+```
+
+### Full Stack Deployment (Docker)
+
+Deploy everything with Docker Compose:
+
+```bash
+# One-time: Download Chicago basemap tiles (~50MB)
+./docker/tiles/download-basemap.sh
+
+# Start all services
+docker-compose -f docker/docker-compose.fullstack.yml up -d
+
+# Access points:
+# - Dashboard: http://localhost
+# - API: http://localhost/api
+# - Tiles: http://localhost/tiles
+```
+
+### Dashboard Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|------------|---------|
+| Frontend | Next.js 15 (App Router) | Server components, TypeScript |
+| Charts | Recharts | Trend visualization |
+| Maps | react-map-gl + MapLibre | Interactive crash map |
+| Tiles | Martin | Vector tiles from PostGIS |
+| Basemap | PMTiles | Self-hosted Chicago map tiles |
+| Proxy | Nginx | Reverse proxy, caching, rate limiting |
 
 ## Datasets
 
@@ -149,9 +205,17 @@ graph TB
 
 ## API Surface
 
+**Sync & Health:**
 - `GET /sync/status` – Current sync status and last run time
 - `POST /sync/trigger` – Manual sync trigger with optional date range
 - `GET /health` – Service health check
+
+**Dashboard (for frontend):**
+- `GET /dashboard/stats` – Aggregate statistics (crashes, injuries, fatalities)
+- `GET /dashboard/trends/weekly` – Weekly crash trends for charts
+- `GET /dashboard/crashes/geojson` – Crash points as GeoJSON for maps
+- `GET /dashboard/crashes/by-hour` – Hourly distribution analysis
+- `GET /dashboard/crashes/by-cause` – Top contributory causes
 
 ## Documentation
 
@@ -220,10 +284,18 @@ chicago-crash-pipeline/
 │   ├── validators/   # Data validation rules
 │   ├── spatial/      # Spatial data handlers
 │   └── utils/        # Shared helpers
+├── frontend/         # Next.js dashboard
+│   ├── app/          # App Router pages
+│   ├── lib/          # API client, map config
+│   └── Dockerfile    # Production build
+├── docker/
+│   ├── docker-compose.fullstack.yml  # Full stack deployment
+│   ├── martin.yaml   # Vector tile server config
+│   ├── nginx.conf    # Reverse proxy config
+│   └── tiles/        # PMTiles basemap
 ├── migrations/       # Alembic migrations
 ├── tests/
 ├── config/
-├── docker/
 └── docs/
 ```
 
