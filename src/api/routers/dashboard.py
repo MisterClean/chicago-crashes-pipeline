@@ -508,9 +508,19 @@ async def get_location_report(
             radius_meters = request.radius_feet * 0.3048
 
             # Create a point and buffer for the query area
+            # Note: For single-table queries, we use unqualified column names.
+            # For JOIN queries (like people_query), we use c.geometry
             spatial_filter = """
                 ST_DWithin(
                     geometry::geography,
+                    ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
+                    :radius_meters
+                )
+            """
+            # Spatial filter with table alias for JOIN queries
+            spatial_filter_aliased = """
+                ST_DWithin(
+                    c.geometry::geography,
                     ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
                     :radius_meters
                 )
@@ -557,6 +567,13 @@ async def get_location_report(
                     geometry
                 )
             """
+            # Spatial filter with table alias for JOIN queries
+            spatial_filter_aliased = """
+                ST_Contains(
+                    ST_SetSRID(ST_GeomFromText(:polygon_wkt), 4326),
+                    c.geometry
+                )
+            """
             spatial_params = {"polygon_wkt": polygon_wkt}
 
             # Query area is the polygon itself
@@ -569,13 +586,17 @@ async def get_location_report(
                 "properties": {"type": "polygon"},
             }
 
-        # Build date filter
+        # Build date filter (unqualified for single-table queries)
         date_filter = ""
+        # Build date filter with table alias for JOIN queries
+        date_filter_aliased = ""
         if request.start_date:
             date_filter += " AND crash_date >= :start_date"
+            date_filter_aliased += " AND c.crash_date >= :start_date"
             spatial_params["start_date"] = request.start_date
         if end_date_normalized:
             date_filter += " AND crash_date <= :end_date"
+            date_filter_aliased += " AND c.crash_date <= :end_date"
             spatial_params["end_date"] = end_date_normalized
 
         # 1. Get aggregate statistics
@@ -598,6 +619,7 @@ async def get_location_report(
 
         # Get pedestrian and cyclist counts from people table
         # Need to join with crashes that match our spatial filter
+        # Use aliased versions since this is a JOIN query
         people_query = text(f"""
             SELECT
                 COUNT(*) FILTER (WHERE person_type ILIKE '%PEDESTRIAN%') AS pedestrians,
@@ -605,8 +627,8 @@ async def get_location_report(
             FROM crash_people cp
             INNER JOIN crashes c ON cp.crash_record_id = c.crash_record_id
             WHERE c.geometry IS NOT NULL
-                AND {spatial_filter}
-                {date_filter}
+                AND {spatial_filter_aliased}
+                {date_filter_aliased}
         """)
 
         people_result = db.execute(people_query, spatial_params).fetchone()
