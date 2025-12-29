@@ -19,7 +19,7 @@ export const DEFAULT_VIEW_STATE = {
 };
 
 // Zoom constraints
-export const MIN_ZOOM = 8; // Allow zooming out to see full Chicago metro area
+export const MIN_ZOOM = 7; // Allow zooming out to see full Chicago metro area
 export const MAX_ZOOM = 18;
 
 // Severity legend for UI

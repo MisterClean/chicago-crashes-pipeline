@@ -10,7 +10,6 @@ import Map, {
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  CHICAGO_BOUNDS,
   DEFAULT_VIEW_STATE,
   SEVERITY_LEGEND,
   MIN_ZOOM,
@@ -77,7 +76,6 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
     <div className="relative">
       <Map
         initialViewState={DEFAULT_VIEW_STATE}
-        maxBounds={CHICAGO_BOUNDS}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         style={{ width: "100%", height: "600px", borderRadius: "8px" }}
