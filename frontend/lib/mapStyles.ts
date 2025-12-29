@@ -13,13 +13,13 @@ export const CHICAGO_BOUNDS: [[number, number], [number, number]] = [
 // Default view state for the map - zoomed out to show all of Chicago
 export const DEFAULT_VIEW_STATE = {
   ...CHICAGO_CENTER,
-  zoom: 10, // Reduced from 11 to show more of the city
+  zoom: 9.5, // Zoomed out to show entire city
   pitch: 0,
   bearing: 0,
 };
 
 // Zoom constraints
-export const MIN_ZOOM = 9; // Allow zooming out to see greater Chicago area
+export const MIN_ZOOM = 8; // Allow zooming out to see full Chicago metro area
 export const MAX_ZOOM = 18;
 
 // Severity legend for UI

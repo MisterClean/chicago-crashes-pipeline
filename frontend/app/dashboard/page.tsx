@@ -120,7 +120,7 @@ function ChartSkeleton() {
 
 function MapSkeleton() {
   return (
-    <div className="h-[500px] bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
+    <div className="h-[600px] bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
       <span className="text-gray-400">Loading map...</span>
     </div>
   );
