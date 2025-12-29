@@ -1,6 +1,6 @@
 """Dashboard API endpoints for the Chicago Crash Dashboard frontend."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -14,6 +14,22 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def normalize_end_date(end_date: Optional[datetime]) -> Optional[datetime]:
+    """
+    Normalize end_date to end of day (23:59:59.999999).
+
+    When users select a date like 2024-01-31, they expect it to include
+    all crashes on that day. FastAPI parses date strings to midnight,
+    so we need to extend to end of day for inclusive filtering.
+    """
+    if end_date is None:
+        return None
+    # If time is midnight (default from date-only input), extend to end of day
+    if end_date.time() == time(0, 0, 0):
+        return datetime.combine(end_date.date(), time(23, 59, 59, 999999))
+    return end_date
 
 
 class DashboardStats(BaseModel):
@@ -74,15 +90,18 @@ async def get_dashboard_stats(
     """
     Get aggregate statistics for dashboard metric cards.
 
-    Optionally filter by date range.
+    Optionally filter by date range. End date is inclusive (includes all of that day).
     """
     try:
+        # Normalize end_date to include the full day
+        end_date_normalized = normalize_end_date(end_date)
+
         # Build base query for crashes
         crash_query = db.query(Crash)
         if start_date:
             crash_query = crash_query.filter(Crash.crash_date >= start_date)
-        if end_date:
-            crash_query = crash_query.filter(Crash.crash_date <= end_date)
+        if end_date_normalized:
+            crash_query = crash_query.filter(Crash.crash_date <= end_date_normalized)
 
         # Get crash statistics
         total_crashes = crash_query.count()
@@ -102,8 +121,8 @@ async def get_dashboard_stats(
         people_query = db.query(CrashPerson)
         if start_date:
             people_query = people_query.filter(CrashPerson.crash_date >= start_date)
-        if end_date:
-            people_query = people_query.filter(CrashPerson.crash_date <= end_date)
+        if end_date_normalized:
+            people_query = people_query.filter(CrashPerson.crash_date <= end_date_normalized)
 
         pedestrians = people_query.filter(
             CrashPerson.person_type.ilike("%PEDESTRIAN%")
@@ -190,8 +209,12 @@ async def get_crashes_geojson(
 
     Returns crash points with properties needed for visualization.
     Limited to 50,000 records max to avoid overwhelming the client.
+    End date is inclusive (includes all of that day).
     """
     try:
+        # Normalize end_date to include the full day
+        end_date_normalized = normalize_end_date(end_date)
+
         # Use raw SQL for efficient GeoJSON generation
         query = text("""
             SELECT
@@ -218,7 +241,7 @@ async def get_crashes_geojson(
             query,
             {
                 "start_date": start_date,
-                "end_date": end_date,
+                "end_date": end_date_normalized,
                 "limit": limit,
             },
         )
@@ -270,8 +293,12 @@ async def get_crashes_by_hour(
     Get crash counts grouped by hour of day.
 
     Useful for time-of-day analysis charts.
+    End date is inclusive (includes all of that day).
     """
     try:
+        # Normalize end_date to include the full day
+        end_date_normalized = normalize_end_date(end_date)
+
         query = text("""
             SELECT
                 EXTRACT(HOUR FROM crash_date)::int AS hour,
@@ -288,7 +315,7 @@ async def get_crashes_by_hour(
 
         result = db.execute(
             query,
-            {"start_date": start_date, "end_date": end_date},
+            {"start_date": start_date, "end_date": end_date_normalized},
         )
         rows = result.fetchall()
 
@@ -318,8 +345,12 @@ async def get_crashes_by_cause(
     Get crash counts grouped by primary contributory cause.
 
     Returns top N causes by crash count.
+    End date is inclusive (includes all of that day).
     """
     try:
+        # Normalize end_date to include the full day
+        end_date_normalized = normalize_end_date(end_date)
+
         query = text("""
             SELECT
                 prim_contributory_cause AS cause,
@@ -338,7 +369,7 @@ async def get_crashes_by_cause(
 
         result = db.execute(
             query,
-            {"start_date": start_date, "end_date": end_date, "limit": limit},
+            {"start_date": start_date, "end_date": end_date_normalized, "limit": limit},
         )
         rows = result.fetchall()
 
