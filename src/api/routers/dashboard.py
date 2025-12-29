@@ -2,6 +2,7 @@
 
 from datetime import datetime, time, timedelta
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -14,6 +15,18 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+# Chicago timezone - all crash data from the Chicago Data Portal is in local Chicago time
+CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+
+def now_chicago() -> datetime:
+    """Get current time in Chicago timezone as a naive datetime.
+
+    The crash data is stored as naive timestamps in Chicago local time,
+    so we need to compare against Chicago time, not UTC or server time.
+    """
+    return datetime.now(CHICAGO_TZ).replace(tzinfo=None)
 
 
 def normalize_end_date(end_date: Optional[datetime]) -> Optional[datetime]:
@@ -159,8 +172,8 @@ async def get_weekly_trends(
     Returns crash, injury, and fatality counts grouped by week.
     """
     try:
-        # Calculate start date
-        start_date = datetime.now() - timedelta(weeks=weeks)
+        # Calculate start date using Chicago timezone
+        start_date = now_chicago() - timedelta(weeks=weeks)
 
         # Query for weekly aggregates using PostgreSQL date_trunc
         query = text("""
