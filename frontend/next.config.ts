@@ -3,20 +3,20 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   output: "standalone",
 
-  // Proxy API requests to FastAPI backend in development
+  // Proxy API requests in development (nginx handles this in production)
   async rewrites() {
+    // In production, nginx handles routing. In dev, we proxy directly.
+    const backendUrl = process.env.BACKEND_URL || "http://localhost:8000";
+    const tilesUrl = process.env.TILES_URL || "http://localhost:3000";
+
     return [
       {
-        source: "/api/backend/:path*",
-        destination: process.env.BACKEND_URL
-          ? `${process.env.BACKEND_URL}/:path*`
-          : "http://localhost:8000/:path*",
+        source: "/api/:path*",
+        destination: `${backendUrl}/:path*`,
       },
       {
         source: "/tiles/:path*",
-        destination: process.env.TILES_URL
-          ? `${process.env.TILES_URL}/:path*`
-          : "http://localhost:3000/:path*",
+        destination: `${tilesUrl}/:path*`,
       },
     ];
   },
