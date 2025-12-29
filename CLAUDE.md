@@ -50,6 +50,59 @@ src/
 - **Database**: 4 main tables (crashes, crash_people, crash_vehicles, vision_zero_fatalities)
 - **API**: REST endpoints at http://localhost:8000, admin portal at /admin
 - **Data Sources**: Chicago Open Data Portal SODA APIs
+- **Frontend**: Next.js 15 dashboard at http://localhost:3001 (dev) or http://localhost (production)
+
+## Frontend Development
+
+The public dashboard is built with Next.js 15 (App Router) and lives in `frontend/`.
+
+### Frontend Quick Start
+```bash
+cd frontend
+npm install
+npm run dev  # Dashboard at http://localhost:3001/dashboard
+```
+
+### Frontend Structure
+```
+frontend/
+├── app/
+│   ├── dashboard/
+│   │   ├── page.tsx           # Server component (data fetching)
+│   │   └── components/        # MetricCards, TrendCharts, CrashMap, FilterPanel
+│   ├── layout.tsx             # Root layout with nav
+│   └── page.tsx               # Landing page
+├── lib/
+│   ├── api.ts                 # Backend API client
+│   └── mapStyles.ts           # Map configuration
+├── Dockerfile                 # Production build
+└── package.json
+```
+
+### Frontend Technologies
+- **Next.js 15**: App Router, Server Components, TypeScript
+- **react-map-gl + MapLibre**: Interactive maps (no Mapbox token needed)
+- **Recharts**: Trend charts and visualizations
+- **Tailwind CSS**: Styling
+
+### Key Frontend Files
+- `frontend/lib/api.ts` - API client with SSR-aware URL handling
+- `frontend/app/dashboard/page.tsx` - Main dashboard (server component)
+- `frontend/app/dashboard/components/CrashMap.tsx` - Interactive map
+
+### Full Stack Docker Deployment
+```bash
+# Download Chicago basemap (one-time)
+./docker/tiles/download-basemap.sh
+
+# Start everything
+docker-compose -f docker/docker-compose.fullstack.yml up -d
+
+# Services:
+# - http://localhost       - Dashboard (nginx -> frontend)
+# - http://localhost/api   - Backend API (nginx -> FastAPI)
+# - http://localhost/tiles - Vector tiles (nginx -> Martin)
+```
 
 ## Essential Patterns
 
