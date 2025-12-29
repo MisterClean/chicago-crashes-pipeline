@@ -10,7 +10,6 @@ import Map, {
   type MapRef,
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import * as turf from "@turf/turf";
 import {
   DEFAULT_VIEW_STATE,
   SEVERITY_LEGEND,
@@ -18,6 +17,32 @@ import {
   MAX_ZOOM,
 } from "@/lib/mapStyles";
 import type { LocationReportResponse } from "@/lib/api";
+
+// Helper to generate circle polygon from center and radius
+function generateCirclePolygon(
+  center: [number, number],
+  radiusKm: number,
+  steps: number = 64
+): GeoJSON.Feature<GeoJSON.Polygon> {
+  const coordinates: [number, number][] = [];
+  for (let i = 0; i < steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI;
+    // Approximate conversion: 1 degree latitude = 111km, 1 degree longitude varies by latitude
+    const latOffset = (radiusKm / 111) * Math.sin(angle);
+    const lngOffset = (radiusKm / (111 * Math.cos((center[1] * Math.PI) / 180))) * Math.cos(angle);
+    coordinates.push([center[0] + lngOffset, center[1] + latOffset]);
+  }
+  coordinates.push(coordinates[0]); // Close the ring
+
+  return {
+    type: "Feature",
+    geometry: {
+      type: "Polygon",
+      coordinates: [coordinates],
+    },
+    properties: {},
+  };
+}
 
 interface LocationReportMapProps {
   mode: "radius" | "polygon";
@@ -61,12 +86,7 @@ export function LocationReportMap({
     // Convert feet to kilometers (1 foot = 0.0003048 km)
     const radiusKm = selectedRadius * 0.0003048;
 
-    const circle = turf.circle(selectedCenter, radiusKm, {
-      steps: 64,
-      units: "kilometers",
-    });
-
-    return circle;
+    return generateCirclePolygon(selectedCenter, radiusKm);
   }, [selectedCenter, selectedRadius]);
 
   // Handle map click
