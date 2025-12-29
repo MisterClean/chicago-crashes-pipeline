@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.api.dependencies import sync_state
-from src.api.routers import health, jobs, spatial, spatial_layers, sync, validation
+from src.api.routers import dashboard, health, jobs, spatial, spatial_layers, sync, validation
 from src.services.job_scheduler import start_job_scheduler, stop_job_scheduler
 from src.utils.config import settings
 from src.utils.logging import get_logger, setup_logging
@@ -93,7 +93,8 @@ app = FastAPI(
 # WARNING: Never use "*" (wildcard) in production with
 # allow_credentials=True - this is a security vulnerability
 allowed_origins = os.getenv(
-    "CORS_ORIGINS", "http://localhost:3000,http://localhost:8000"
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://localhost:3001,http://localhost:8000,http://localhost",
 ).split(",")
 
 app.add_middleware(
@@ -132,6 +133,7 @@ app.include_router(validation.router)
 app.include_router(jobs.router)
 app.include_router(spatial.router)
 app.include_router(spatial_layers.router)
+app.include_router(dashboard.router)
 
 
 if __name__ == "__main__":
