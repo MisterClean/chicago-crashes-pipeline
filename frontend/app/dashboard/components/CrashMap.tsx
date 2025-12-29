@@ -12,8 +12,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import {
   CHICAGO_BOUNDS,
   DEFAULT_VIEW_STATE,
-  crashCircleLayer,
-  crashHeatmapLayer,
   SEVERITY_LEGEND,
 } from "@/lib/mapStyles";
 import { fetchCrashesGeoJSON, type CrashGeoJSON, type CrashFeature } from "@/lib/api";
@@ -23,98 +21,11 @@ interface CrashMapProps {
   endDate?: string;
 }
 
-// PMTiles style for Chicago basemap
-const mapStyle = {
-  version: 8 as const,
-  name: "Chicago Basemap",
-  sources: {
-    basemap: {
-      type: "vector" as const,
-      url: "pmtiles:///tiles/chicago-basemap.pmtiles",
-    },
-  },
-  layers: [
-    {
-      id: "background",
-      type: "background" as const,
-      paint: { "background-color": "#f0f0f0" },
-    },
-    {
-      id: "water",
-      type: "fill" as const,
-      source: "basemap",
-      "source-layer": "water",
-      paint: { "fill-color": "#b3ddf2" },
-    },
-    {
-      id: "landuse-park",
-      type: "fill" as const,
-      source: "basemap",
-      "source-layer": "landuse",
-      filter: ["==", ["get", "class"], "park"],
-      paint: { "fill-color": "#c8e6c9" },
-    },
-    {
-      id: "roads-minor",
-      type: "line" as const,
-      source: "basemap",
-      "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal", ["minor", "service"]]],
-      paint: {
-        "line-color": "#e0e0e0",
-        "line-width": 1,
-      },
-    },
-    {
-      id: "roads-major",
-      type: "line" as const,
-      source: "basemap",
-      "source-layer": "transportation",
-      filter: ["in", ["get", "class"], ["literal", ["primary", "secondary", "tertiary"]]],
-      paint: {
-        "line-color": "#ffffff",
-        "line-width": 2,
-      },
-    },
-    {
-      id: "roads-highway",
-      type: "line" as const,
-      source: "basemap",
-      "source-layer": "transportation",
-      filter: ["==", ["get", "class"], "motorway"],
-      paint: {
-        "line-color": "#ffd54f",
-        "line-width": 3,
-      },
-    },
-    {
-      id: "boundaries",
-      type: "line" as const,
-      source: "basemap",
-      "source-layer": "boundary",
-      paint: {
-        "line-color": "#999",
-        "line-width": 1,
-        "line-dasharray": [2, 2],
-      },
-    },
-    {
-      id: "labels",
-      type: "symbol" as const,
-      source: "basemap",
-      "source-layer": "place",
-      layout: {
-        "text-field": ["get", "name"],
-        "text-size": 12,
-      },
-      paint: {
-        "text-color": "#333",
-        "text-halo-color": "#fff",
-        "text-halo-width": 1,
-      },
-    },
-  ],
-};
+// Simple basemap style - uses Protomaps free tiles
+// In production, this would use self-hosted PMTiles
+const BASEMAP_STYLE_URL =
+  process.env.NEXT_PUBLIC_BASEMAP_URL ||
+  "https://api.protomaps.com/styles/v4/light/en.json?key=***REMOVED***";
 
 export function CrashMap({ startDate, endDate }: CrashMapProps) {
   const [crashes, setCrashes] = useState<CrashGeoJSON | null>(null);
@@ -166,7 +77,7 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
         initialViewState={DEFAULT_VIEW_STATE}
         maxBounds={CHICAGO_BOUNDS}
         style={{ width: "100%", height: "384px", borderRadius: "8px" }}
-        mapStyle={mapStyle}
+        mapStyle={BASEMAP_STYLE_URL}
         interactiveLayerIds={["crashes-circle"]}
         onClick={handleClick}
       >
@@ -174,8 +85,26 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
 
         {crashes && (
           <Source id="crashes" type="geojson" data={crashes}>
-            <Layer {...crashHeatmapLayer} />
-            <Layer {...crashCircleLayer} />
+            <Layer
+              id="crashes-circle"
+              type="circle"
+              paint={{
+                "circle-radius": 5,
+                "circle-color": [
+                  "case",
+                  [">", ["get", "injuries_fatal"], 0],
+                  "#dc2626",
+                  [">", ["get", "injuries_incapacitating"], 0],
+                  "#ea580c",
+                  [">", ["get", "injuries_total"], 0],
+                  "#eab308",
+                  "#22c55e",
+                ],
+                "circle-opacity": 0.7,
+                "circle-stroke-width": 1,
+                "circle-stroke-color": "#ffffff",
+              }}
+            />
           </Source>
         )}
 

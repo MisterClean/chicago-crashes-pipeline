@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  outputFileTracingRoot: __dirname,
 
   // Proxy API requests in development (nginx handles this in production)
   async rewrites() {
