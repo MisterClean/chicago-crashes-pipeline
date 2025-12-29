@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api/backend";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
 
 export interface DashboardStats {
   total_crashes: number;
