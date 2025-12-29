@@ -53,30 +53,27 @@ export default async function DashboardPage({
           )}
         </Suspense>
 
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
-          {/* Trend Charts */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-              Weekly Trends
-            </h2>
-            <Suspense fallback={<ChartSkeleton />}>
-              <TrendCharts data={trends} />
-            </Suspense>
-          </div>
+        {/* Trend Charts */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+            Weekly Trends
+          </h2>
+          <Suspense fallback={<ChartSkeleton />}>
+            <TrendCharts data={trends} />
+          </Suspense>
+        </div>
 
-          {/* Crash Map */}
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-              Crash Locations
-            </h2>
-            <Suspense fallback={<MapSkeleton />}>
-              <CrashMap
-                startDate={params.start_date}
-                endDate={params.end_date}
-              />
-            </Suspense>
-          </div>
+        {/* Crash Map - Full width on its own row */}
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mt-8">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+            Crash Locations
+          </h2>
+          <Suspense fallback={<MapSkeleton />}>
+            <CrashMap
+              startDate={params.start_date}
+              endDate={params.end_date}
+            />
+          </Suspense>
         </div>
 
         {/* Data Source Info */}
@@ -123,7 +120,7 @@ function ChartSkeleton() {
 
 function MapSkeleton() {
   return (
-    <div className="h-96 bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
+    <div className="h-[500px] bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
       <span className="text-gray-400">Loading map...</span>
     </div>
   );

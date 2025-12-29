@@ -13,6 +13,8 @@ import {
   CHICAGO_BOUNDS,
   DEFAULT_VIEW_STATE,
   SEVERITY_LEGEND,
+  MIN_ZOOM,
+  MAX_ZOOM,
 } from "@/lib/mapStyles";
 import { fetchCrashesGeoJSON, type CrashGeoJSON, type CrashFeature } from "@/lib/api";
 
@@ -57,7 +59,7 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
 
   if (loading) {
     return (
-      <div className="h-96 bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
+      <div className="h-[500px] bg-gray-100 dark:bg-gray-700 rounded animate-pulse flex items-center justify-center">
         <span className="text-gray-500">Loading crash data...</span>
       </div>
     );
@@ -65,7 +67,7 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
 
   if (error) {
     return (
-      <div className="h-96 bg-red-50 dark:bg-red-900/20 rounded flex items-center justify-center">
+      <div className="h-[500px] bg-red-50 dark:bg-red-900/20 rounded flex items-center justify-center">
         <span className="text-red-600 dark:text-red-400">Error: {error}</span>
       </div>
     );
@@ -76,7 +78,9 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
       <Map
         initialViewState={DEFAULT_VIEW_STATE}
         maxBounds={CHICAGO_BOUNDS}
-        style={{ width: "100%", height: "384px", borderRadius: "8px" }}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
+        style={{ width: "100%", height: "500px", borderRadius: "8px" }}
         mapStyle={BASEMAP_STYLE_URL}
         interactiveLayerIds={["crashes-circle"]}
         onClick={handleClick}

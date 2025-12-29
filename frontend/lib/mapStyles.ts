@@ -4,18 +4,23 @@ export const CHICAGO_CENTER = {
   latitude: 41.8781,
 };
 
+// Expanded bounds to allow users to see surrounding context
 export const CHICAGO_BOUNDS: [[number, number], [number, number]] = [
-  [-87.94, 41.64], // Southwest
-  [-87.52, 42.02], // Northeast
+  [-88.1, 41.5], // Southwest - expanded
+  [-87.3, 42.15], // Northeast - expanded
 ];
 
-// Default view state for the map
+// Default view state for the map - zoomed out to show all of Chicago
 export const DEFAULT_VIEW_STATE = {
   ...CHICAGO_CENTER,
-  zoom: 11,
+  zoom: 10, // Reduced from 11 to show more of the city
   pitch: 0,
   bearing: 0,
 };
+
+// Zoom constraints
+export const MIN_ZOOM = 9; // Allow zooming out to see greater Chicago area
+export const MAX_ZOOM = 18;
 
 // Severity legend for UI
 export const SEVERITY_LEGEND = [
