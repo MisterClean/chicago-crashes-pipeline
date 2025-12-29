@@ -1,0 +1,113 @@
+# =============================================================================
+# Martin Vector Tile Server Configuration
+# =============================================================================
+# Serves vector tiles from PostGIS for the Chicago Crash Dashboard
+# Documentation: https://martin.maplibre.org/
+# =============================================================================
+
+# Listen on all interfaces
+listen_addresses: '0.0.0.0:3000'
+
+# CORS configuration for frontend access
+cors:
+  allowed_origins:
+    - http://localhost:3001   # Next.js dev
+    - http://localhost:80     # Nginx proxy
+    - http://localhost        # Nginx proxy (default port)
+
+# PostgreSQL connection
+postgres:
+  connection_string: ${DATABASE_URL}
+
+  # Pool settings
+  pool_size: 10
+  max_feature_count: 100000
+
+  # Auto-discover tables with geometry columns
+  auto_publish:
+    tables:
+      from_schemas:
+        - public
+
+  # Explicit table configurations for performance
+  tables:
+    # Main crash points layer
+    crashes:
+      schema: public
+      table: crashes
+      geometry_column: geometry
+      geometry_type: POINT
+      srid: 4326
+      # Clip tiles to bounds (faster queries)
+      clip_geom: true
+      # Tile extent
+      extent: 4096
+      buffer: 64
+      # Properties to expose (reduces tile size significantly)
+      properties:
+        crash_record_id: crash_record_id
+        crash_date: crash_date
+        injuries_total: injuries_total
+        injuries_fatal: injuries_fatal
+        injuries_incapacitating: injuries_incapacitating
+        hit_and_run_i: hit_and_run_i
+        crash_type: crash_type
+        street_name: street_name
+        prim_contributory_cause: prim_contributory_cause
+        most_severe_injury: most_severe_injury
+        dooring_i: dooring_i
+
+    # Vision Zero fatalities layer
+    vision_zero_fatalities:
+      schema: public
+      table: vision_zero_fatalities
+      geometry_column: geometry
+      geometry_type: POINT
+      srid: 4326
+      clip_geom: true
+      extent: 4096
+      buffer: 64
+      properties:
+        person_id: person_id
+        crash_date: crash_date
+        victim: victim
+        crash_location: crash_location
+        crash_circumstances: crash_circumstances
+
+    # User-uploaded spatial layers
+    spatial_layer_features:
+      schema: public
+      table: spatial_layer_features
+      geometry_column: geometry
+      geometry_type: GEOMETRY
+      srid: 4326
+      clip_geom: true
+      extent: 4096
+      buffer: 64
+      properties:
+        layer_id: layer_id
+        properties: properties
+
+# Function-based sources for custom queries
+functions:
+  # Crashes filtered by date range
+  crashes_by_date:
+    schema: public
+    function: crashes_by_date_range
+
+  # Crash heatmap with aggregation
+  crash_heatmap:
+    schema: public
+    function: crash_density_grid
+
+# PMTiles basemap source
+pmtiles:
+  paths:
+    - /tiles/chicago-basemap.pmtiles
+
+# Sprite and font sources for styling
+sprites:
+  crash-icons: /tiles/sprites
+
+fonts:
+  - /tiles/fonts
