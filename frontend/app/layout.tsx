@@ -36,6 +36,12 @@ export default function RootLayout({
                 >
                   Dashboard
                 </Link>
+                <Link
+                  href="/dashboard/location-report"
+                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Location Report
+                </Link>
                 <a
                   href="https://lakeviewurbanists.org"
                   target="_blank"
