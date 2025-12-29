@@ -1,4 +1,8 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "/api";
+// Use absolute URL for server-side rendering, relative for client-side
+const API_BASE =
+  typeof window === "undefined"
+    ? process.env.BACKEND_URL || "http://localhost:8000"
+    : process.env.NEXT_PUBLIC_API_URL || "/api";
 
 export interface DashboardStats {
   total_crashes: number;
