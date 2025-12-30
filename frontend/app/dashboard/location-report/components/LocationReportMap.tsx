@@ -52,6 +52,21 @@ interface LocationReportMapProps {
   onCenterSelect: (center: [number, number]) => void;
   onPolygonComplete: (polygon: [number, number][]) => void;
   reportData: LocationReportResponse | null;
+  startDate: string;
+  endDate: string;
+}
+
+// Format date range for display
+function formatDateRange(startDate: string, endDate: string): string {
+  if (!startDate && !endDate) return "All time";
+  if (!startDate) return `Through ${formatDate(endDate)}`;
+  if (!endDate) return `From ${formatDate(startDate)}`;
+  return `${formatDate(startDate)} – ${formatDate(endDate)}`;
+}
+
+function formatDate(dateStr: string): string {
+  const date = new Date(dateStr + "T00:00:00");
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 const BASEMAP_STYLE_URL =
@@ -66,6 +81,8 @@ export function LocationReportMap({
   onCenterSelect,
   onPolygonComplete,
   reportData,
+  startDate,
+  endDate,
 }: LocationReportMapProps) {
   const mapRef = useRef<MapRef>(null);
 
@@ -279,34 +296,87 @@ export function LocationReportMap({
         )}
       </Map>
 
-      {/* Legend */}
+      {/* Stats Side Panel */}
       {reportData && (
-        <div className="absolute bottom-4 left-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-md">
-          <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
-            Severity
-          </p>
-          <div className="space-y-1">
-            {SEVERITY_LEGEND.map((item) => (
-              <div key={item.label} className="flex items-center gap-2">
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: item.color }}
-                />
-                <span className="text-xs text-gray-600 dark:text-gray-400">
-                  {item.label}
-                </span>
-              </div>
-            ))}
+        <div className="absolute top-4 left-4 bg-white/95 dark:bg-gray-800/95 backdrop-blur-sm rounded-lg shadow-lg p-4 max-w-[220px]">
+          {/* Date Range */}
+          <div className="text-xs text-gray-500 dark:text-gray-400 mb-3 pb-2 border-b border-gray-200 dark:border-gray-700">
+            {formatDateRange(startDate, endDate)}
           </div>
-        </div>
-      )}
 
-      {/* Crash count badge */}
-      {reportData && (
-        <div className="absolute top-4 left-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-md">
-          <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {reportData.crashes_geojson.features.length.toLocaleString()} crashes in area
-          </span>
+          {/* Total Crashes - Always show */}
+          <div className="mb-3">
+            <div className="text-3xl font-bold text-gray-900 dark:text-white">
+              {reportData.stats.total_crashes.toLocaleString()}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Total Crashes</div>
+          </div>
+
+          {/* Conditional metrics - only show if > 0 */}
+          <div className="space-y-2">
+            {reportData.stats.total_fatalities > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Fatalities</span>
+                <span className="text-lg font-bold text-red-600">{reportData.stats.total_fatalities.toLocaleString()}</span>
+              </div>
+            )}
+            {reportData.stats.incapacitating_injuries > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Incapacitating</span>
+                <span className="text-lg font-bold text-orange-600">{reportData.stats.incapacitating_injuries.toLocaleString()}</span>
+              </div>
+            )}
+            {reportData.stats.total_injuries > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Total Injuries</span>
+                <span className="text-lg font-bold text-yellow-600">{reportData.stats.total_injuries.toLocaleString()}</span>
+              </div>
+            )}
+            {reportData.stats.pedestrians_involved > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Pedestrians</span>
+                <span className="text-lg font-bold text-blue-600">{reportData.stats.pedestrians_involved.toLocaleString()}</span>
+              </div>
+            )}
+            {reportData.stats.cyclists_involved > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Cyclists</span>
+                <span className="text-lg font-bold text-green-600">{reportData.stats.cyclists_involved.toLocaleString()}</span>
+              </div>
+            )}
+            {reportData.stats.hit_and_run_count > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">Hit & Run</span>
+                <span className="text-lg font-bold text-purple-600">{reportData.stats.hit_and_run_count.toLocaleString()}</span>
+              </div>
+            )}
+            {reportData.stats.crashes_with_injuries > 0 && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400">With Injuries</span>
+                <span className="text-lg font-bold text-amber-600">{reportData.stats.crashes_with_injuries.toLocaleString()}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Severity Legend */}
+          <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+              Severity
+            </p>
+            <div className="space-y-1">
+              {SEVERITY_LEGEND.map((item) => (
+                <div key={item.label} className="flex items-center gap-2">
+                  <span
+                    className="w-2.5 h-2.5 rounded-full"
+                    style={{ backgroundColor: item.color }}
+                  />
+                  <span className="text-xs text-gray-600 dark:text-gray-400">
+                    {item.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
