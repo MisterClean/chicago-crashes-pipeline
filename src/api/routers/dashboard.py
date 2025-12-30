@@ -163,17 +163,33 @@ async def get_dashboard_stats(
 
 @router.get("/trends/weekly", response_model=list[WeeklyTrend])
 async def get_weekly_trends(
-    weeks: int = Query(default=52, le=104, ge=1),
+    weeks: Optional[int] = Query(default=None, le=104, ge=1),
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
 ) -> list[WeeklyTrend]:
     """
     Get weekly crash trends for charts.
 
     Returns crash, injury, and fatality counts grouped by week.
+    Supports either a weeks parameter (going back from today) or explicit date range.
+    If start_date/end_date are provided, they take precedence over weeks.
+    End date is inclusive (includes all of that day).
     """
     try:
-        # Calculate start date using Chicago timezone
-        start_date = now_chicago() - timedelta(weeks=weeks)
+        # Determine date range
+        if start_date is not None or end_date is not None:
+            # Use explicit date range
+            query_start_date = start_date
+            query_end_date = normalize_end_date(end_date)
+        elif weeks is not None:
+            # Calculate start date using Chicago timezone
+            query_start_date = now_chicago() - timedelta(weeks=weeks)
+            query_end_date = None
+        else:
+            # Default to 52 weeks
+            query_start_date = now_chicago() - timedelta(weeks=52)
+            query_end_date = None
 
         # Query for weekly aggregates using PostgreSQL date_trunc
         query = text("""
@@ -183,13 +199,14 @@ async def get_weekly_trends(
                 COALESCE(SUM(injuries_total), 0) AS injuries,
                 COALESCE(SUM(injuries_fatal), 0) AS fatalities
             FROM crashes
-            WHERE crash_date >= :start_date
-                AND crash_date IS NOT NULL
+            WHERE crash_date IS NOT NULL
+                AND (:start_date IS NULL OR crash_date >= :start_date)
+                AND (:end_date IS NULL OR crash_date <= :end_date)
             GROUP BY date_trunc('week', crash_date)
             ORDER BY week_start
         """)
 
-        result = db.execute(query, {"start_date": start_date})
+        result = db.execute(query, {"start_date": query_start_date, "end_date": query_end_date})
         rows = result.fetchall()
 
         trends = []
