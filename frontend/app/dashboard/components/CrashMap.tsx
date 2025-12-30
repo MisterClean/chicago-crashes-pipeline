@@ -11,9 +11,10 @@ import Map, {
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   DEFAULT_VIEW_STATE,
-  SEVERITY_LEGEND,
   MIN_ZOOM,
   MAX_ZOOM,
+  MAP_METRICS,
+  type MapMetric,
 } from "@/lib/mapStyles";
 import { fetchCrashesGeoJSON, type CrashGeoJSON, type CrashFeature } from "@/lib/api";
 
@@ -33,6 +34,27 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
   const [selectedCrash, setSelectedCrash] = useState<CrashFeature | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedMetric, setSelectedMetric] = useState<MapMetric>("severity");
+  const [visibleCategories, setVisibleCategories] = useState<Set<string>>(new Set());
+
+  const currentMetricConfig = MAP_METRICS.find((m) => m.id === selectedMetric) || MAP_METRICS[0];
+
+  // Reset visible categories when metric changes
+  useEffect(() => {
+    setVisibleCategories(new Set(currentMetricConfig.legend.map((item) => item.label)));
+  }, [currentMetricConfig]);
+
+  const toggleCategory = (label: string) => {
+    setVisibleCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) {
+        next.delete(label);
+      } else {
+        next.add(label);
+      }
+      return next;
+    });
+  };
 
   // Fetch crash data
   useEffect(() => {
@@ -90,18 +112,10 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
             <Layer
               id="crashes-circle"
               type="circle"
+              filter={currentMetricConfig.getFilterExpression(visibleCategories) as never}
               paint={{
                 "circle-radius": 5,
-                "circle-color": [
-                  "case",
-                  [">", ["get", "injuries_fatal"], 0],
-                  "#dc2626",
-                  [">", ["get", "injuries_incapacitating"], 0],
-                  "#ea580c",
-                  [">", ["get", "injuries_total"], 0],
-                  "#eab308",
-                  "#22c55e",
-                ],
+                "circle-color": currentMetricConfig.colorExpression as unknown as string,
                 "circle-opacity": 0.7,
                 "circle-stroke-width": 1,
                 "circle-stroke-color": "#ffffff",
@@ -123,23 +137,50 @@ export function CrashMap({ startDate, endDate }: CrashMapProps) {
         )}
       </Map>
 
+      {/* Metric Selector */}
+      <div className="absolute top-4 right-16 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg shadow-md">
+        <select
+          value={selectedMetric}
+          onChange={(e) => setSelectedMetric(e.target.value as MapMetric)}
+          className="px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-transparent border-0 focus:ring-2 focus:ring-blue-500 rounded-lg cursor-pointer"
+        >
+          {MAP_METRICS.map((metric) => (
+            <option key={metric.id} value={metric.id}>
+              {metric.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {/* Legend */}
       <div className="absolute bottom-4 left-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur-sm rounded-lg p-3 shadow-md">
         <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
-          Severity
+          {currentMetricConfig.label}
         </p>
         <div className="space-y-1">
-          {SEVERITY_LEGEND.map((item) => (
-            <div key={item.label} className="flex items-center gap-2">
-              <span
-                className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: item.color }}
-              />
-              <span className="text-xs text-gray-600 dark:text-gray-400">
-                {item.label}
-              </span>
-            </div>
-          ))}
+          {currentMetricConfig.legend.map((item) => {
+            const isVisible = visibleCategories.has(item.label);
+            return (
+              <button
+                key={item.label}
+                onClick={() => toggleCategory(item.label)}
+                className={`flex items-center gap-2 w-full text-left transition-opacity ${
+                  isVisible ? "opacity-100" : "opacity-40"
+                }`}
+              >
+                <span
+                  className="w-3 h-3 rounded-full border-2 transition-colors"
+                  style={{
+                    backgroundColor: isVisible ? item.color : "transparent",
+                    borderColor: item.color,
+                  }}
+                />
+                <span className="text-xs text-gray-600 dark:text-gray-400">
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
