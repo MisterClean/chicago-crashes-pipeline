@@ -74,8 +74,17 @@ export async function fetchDashboardStats(params?: {
   return res.json();
 }
 
-export async function fetchWeeklyTrends(weeks: number = 52): Promise<WeeklyTrend[]> {
-  const res = await fetch(`${API_BASE}/dashboard/trends/weekly?weeks=${weeks}`, {
+export async function fetchWeeklyTrends(params?: {
+  weeks?: number;
+  start_date?: string;
+  end_date?: string;
+}): Promise<WeeklyTrend[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.weeks) searchParams.set("weeks", params.weeks.toString());
+  if (params?.start_date) searchParams.set("start_date", params.start_date);
+  if (params?.end_date) searchParams.set("end_date", params.end_date);
+
+  const res = await fetch(`${API_BASE}/dashboard/trends/weekly?${searchParams}`, {
     next: { revalidate: 300 },
   });
 

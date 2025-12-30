@@ -3,14 +3,24 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState, useCallback } from "react";
 
-export function FilterPanel() {
+interface FilterPanelProps {
+  defaultStartDate: string;
+  defaultEndDate: string;
+}
+
+export function FilterPanel({
+  defaultStartDate,
+  defaultEndDate,
+}: FilterPanelProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   const [startDate, setStartDate] = useState(
-    searchParams.get("start_date") || ""
+    searchParams.get("start_date") || defaultStartDate
   );
-  const [endDate, setEndDate] = useState(searchParams.get("end_date") || "");
+  const [endDate, setEndDate] = useState(
+    searchParams.get("end_date") || defaultEndDate
+  );
 
   const applyFilters = useCallback(() => {
     const params = new URLSearchParams();
@@ -21,10 +31,10 @@ export function FilterPanel() {
   }, [router, startDate, endDate]);
 
   const clearFilters = useCallback(() => {
-    setStartDate("");
-    setEndDate("");
+    setStartDate(defaultStartDate);
+    setEndDate(defaultEndDate);
     router.push("/dashboard");
-  }, [router]);
+  }, [router, defaultStartDate, defaultEndDate]);
 
   // Quick date presets
   const setPreset = useCallback(
@@ -96,12 +106,12 @@ export function FilterPanel() {
         >
           Apply
         </button>
-        {(startDate || endDate) && (
+        {(startDate !== defaultStartDate || endDate !== defaultEndDate) && (
           <button
             onClick={clearFilters}
             className="px-4 py-1.5 text-sm bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200 rounded-md"
           >
-            Clear
+            Reset
           </button>
         )}
       </div>
