@@ -346,6 +346,36 @@ export default function LocationReportPage() {
                 <CausesTable causes={report.causes} />
               </div>
             </div>
+
+            {/* Cost Methodology Footnote */}
+            <div className="mt-8 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+              <div className="flex items-start gap-3">
+                <span className="inline-flex items-center justify-center w-5 h-5 text-xs font-bold bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-full flex-shrink-0 mt-0.5">i</span>
+                <div className="text-xs text-gray-600 dark:text-gray-400 space-y-2">
+                  <p className="font-medium text-gray-700 dark:text-gray-300">Cost Estimation Methodology</p>
+                  <p>
+                    Cost estimates are calculated using the Federal Highway Administration (FHWA) KABCO injury-based
+                    methodology. <strong>Economic costs</strong> include medical expenses, lost productivity, legal costs,
+                    and property damage. <strong>Societal costs</strong> add the value of lost quality of life (QALY -
+                    Quality-Adjusted Life Years) to capture the full impact on individuals and communities.
+                  </p>
+                  <p>
+                    Costs are calculated per-person based on injury severity classification (K=Fatal, A=Incapacitating,
+                    B=Non-incapacitating, C=Possible injury, O=No injury), plus per-vehicle costs. Values are in 2024 dollars.
+                  </p>
+                  <p>
+                    <a
+                      href="https://highways.dot.gov/sites/fhwa.dot.gov/files/2025-10/CrashCostFactSheet_508_OCT2025.pdf"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 dark:text-blue-400 hover:underline font-medium"
+                    >
+                      View FHWA Crash Cost Fact Sheet (PDF)
+                    </a>
+                  </p>
+                </div>
+              </div>
+            </div>
           </>
         )}
 

@@ -69,6 +69,15 @@ function formatDate(dateStr: string): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+// Format currency in abbreviated form ($1.2M, $45.3K, etc.)
+function formatCurrency(value: number | undefined | null): string {
+  if (value === undefined || value === null) return "$0";
+  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
 const BASEMAP_STYLE_URL =
   process.env.NEXT_PUBLIC_BASEMAP_URL ||
   "https://api.protomaps.com/styles/v4/light/en.json?key=***REMOVED***";
@@ -310,6 +319,28 @@ export function LocationReportMap({
               {reportData.stats.total_crashes.toLocaleString()}
             </div>
             <div className="text-xs text-gray-500 dark:text-gray-400">Total Crashes</div>
+          </div>
+
+          {/* Cost Estimates */}
+          <div className="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+            <div className="bg-emerald-50 dark:bg-emerald-900/30 rounded-md px-2 py-1.5">
+              <div className="text-lg font-bold text-emerald-700 dark:text-emerald-400">
+                {formatCurrency(reportData.stats.estimated_economic_damages)}
+              </div>
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-500 flex items-center gap-1">
+                Est. Economic Cost
+                <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-emerald-200 dark:bg-emerald-800 text-emerald-700 dark:text-emerald-300 rounded-full" title="See methodology footnote below">i</span>
+              </div>
+            </div>
+            <div className="bg-indigo-50 dark:bg-indigo-900/30 rounded-md px-2 py-1.5">
+              <div className="text-lg font-bold text-indigo-700 dark:text-indigo-400">
+                {formatCurrency(reportData.stats.estimated_societal_costs)}
+              </div>
+              <div className="text-[10px] text-indigo-600 dark:text-indigo-500 flex items-center gap-1">
+                Est. Total Societal Cost
+                <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-indigo-200 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-full" title="See methodology footnote below">i</span>
+              </div>
+            </div>
           </div>
 
           {/* Conditional metrics - only show if > 0 */}
