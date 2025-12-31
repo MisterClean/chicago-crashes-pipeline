@@ -337,7 +337,7 @@ export function LocationReportMap({
           </div>
 
           {/* Cost Estimates */}
-          <div className="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
+          <div className="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700 space-y-1">
             <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-1.5">
               <div className="text-lg font-bold text-gray-900 dark:text-white">
                 {formatCurrency(reportData.stats.estimated_economic_damages)}
@@ -359,7 +359,7 @@ export function LocationReportMap({
           </div>
 
           {/* Conditional metrics - only show if > 0 */}
-          <div className="space-y-2">
+          <div className="space-y-1">
             {reportData.stats.total_fatalities > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Fatalities</span>
@@ -405,8 +405,8 @@ export function LocationReportMap({
           </div>
 
           {/* Severity Legend */}
-          <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">
+          <div className="mt-2 pt-1.5 border-t border-gray-200 dark:border-gray-700">
+            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
               Severity
             </p>
             <div className="space-y-1">
