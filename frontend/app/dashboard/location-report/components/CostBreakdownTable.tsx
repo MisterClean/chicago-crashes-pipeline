@@ -218,9 +218,10 @@ export function CostBreakdownTable({ breakdown }: CostBreakdownTableProps) {
       </div>
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
         <strong>Methodology:</strong> Person costs are calculated for injuries/fatalities (K-A-B-C).
-        &quot;No Indication&quot; (O) persons = $0 since KABCO injury costs already include vehicle damage.
-        PDO (Property Damage Only) vehicles are from crashes with zero injuries/fatalities and use
-        FHWA O-classification rates ($6,269 + $3,927 = $10,196/vehicle). Source: FHWA KABCO (2024$).
+        &quot;No Indication&quot; (O) persons = $0 since no injury was reported for that person. Instead,
+        for (O) we substitute the count of vehicles involved in crashes with zero injuries, coded as
+        &quot;Property Damage Only (PDO)&quot; using FHWA O-classification rates ($6,269 + $3,927 = $10,196/vehicle).
+        Source: FHWA KABCO (2024$).
       </p>
     </div>
   );
