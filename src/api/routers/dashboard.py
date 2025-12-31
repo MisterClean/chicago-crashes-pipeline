@@ -44,6 +44,15 @@ INJURY_TO_KABCO = {
     "NO INDICATION OF INJURY": "NO INDICATION OF INJURY",
 }
 
+# Human-readable labels for KABCO classifications
+KABCO_LABELS = {
+    "FATAL": "Fatal (K)",
+    "INCAPACITATING INJURY": "Incapacitating (A)",
+    "NONINCAPACITATING INJURY": "Non-incapacitating (B)",
+    "REPORTED, NOT EVIDENT": "Possible Injury (C)",
+    "NO INDICATION OF INJURY": "No Indication (O)",
+}
+
 
 def now_chicago() -> datetime:
     """Get current time in Chicago timezone as a naive datetime.
@@ -504,6 +513,42 @@ class LocationReportStats(BaseModel):
         default=0,
         description="Count of people with unknown/blank injury classification (excluded from costs)"
     )
+    # Detailed cost breakdown
+    cost_breakdown: Optional["CostBreakdown"] = Field(
+        default=None,
+        description="Detailed breakdown of costs by injury classification and vehicles"
+    )
+
+
+class InjuryClassificationCost(BaseModel):
+    """Cost breakdown for a single injury classification."""
+
+    classification: str = Field(description="KABCO classification name")
+    classification_label: str = Field(description="Human-readable label (e.g., 'Fatal (K)')")
+    count: int = Field(description="Number of people in this classification")
+    unit_economic_cost: int = Field(description="Per-person economic cost in dollars")
+    unit_qaly_cost: int = Field(description="Per-person QALY cost in dollars")
+    subtotal_economic: int = Field(description="count * unit_economic_cost")
+    subtotal_societal: int = Field(description="count * (unit_economic + unit_qaly)")
+
+
+class VehicleCostBreakdown(BaseModel):
+    """Cost breakdown for vehicles."""
+
+    count: int = Field(description="Total vehicles involved")
+    unit_cost: int = Field(description="Per-vehicle economic cost")
+    subtotal_economic: int = Field(description="count * unit_cost")
+
+
+class CostBreakdown(BaseModel):
+    """Complete cost breakdown with per-classification details."""
+
+    injury_costs: List[InjuryClassificationCost] = Field(
+        description="Breakdown by injury classification"
+    )
+    vehicle_costs: VehicleCostBreakdown = Field(description="Vehicle cost breakdown")
+    total_economic: int = Field(description="Grand total economic cost")
+    total_societal: int = Field(description="Grand total societal cost")
 
 
 class CrashCauseSummary(BaseModel):
@@ -883,6 +928,35 @@ async def get_location_report(
         estimated_economic_damages = person_economic_cost + vehicle_economic_cost
         estimated_societal_costs = estimated_economic_damages + person_qaly_cost
 
+        # Build detailed cost breakdown for transparency
+        injury_cost_breakdowns = []
+        for classification, count in injury_counts.items():
+            economic, qaly, _ = KABCO_COSTS[classification]
+            injury_cost_breakdowns.append(
+                InjuryClassificationCost(
+                    classification=classification,
+                    classification_label=KABCO_LABELS.get(classification, classification),
+                    count=count,
+                    unit_economic_cost=economic,
+                    unit_qaly_cost=qaly,
+                    subtotal_economic=count * economic,
+                    subtotal_societal=count * (economic + qaly),
+                )
+            )
+
+        vehicle_breakdown = VehicleCostBreakdown(
+            count=total_vehicles,
+            unit_cost=VEHICLE_ECONOMIC_COST,
+            subtotal_economic=vehicle_economic_cost,
+        )
+
+        cost_breakdown = CostBreakdown(
+            injury_costs=injury_cost_breakdowns,
+            vehicle_costs=vehicle_breakdown,
+            total_economic=estimated_economic_damages,
+            total_societal=estimated_societal_costs,
+        )
+
         stats = LocationReportStats(
             total_crashes=stats_result.total_crashes or 0,
             total_injuries=int(stats_result.total_injuries or 0),
@@ -897,6 +971,7 @@ async def get_location_report(
             estimated_societal_costs=estimated_societal_costs,
             total_vehicles=total_vehicles,
             unknown_injury_count=people_result.unknown_count or 0,
+            cost_breakdown=cost_breakdown,
         )
 
         # 2. Get crash causes breakdown
