@@ -147,11 +147,14 @@ export function CostBreakdownTable({ breakdown }: CostBreakdownTableProps) {
               </td>
             </tr>
 
-            {/* Vehicle row */}
+            {/* Vehicle row - only PDO (Property Damage Only) vehicles */}
             <tr className="bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700/50">
               <td className="py-2 px-2">
                 <span className="text-sm text-gray-900 dark:text-gray-100">
-                  Vehicles
+                  PDO Vehicles
+                </span>
+                <span className="text-xs text-gray-500 dark:text-gray-400 block">
+                  (property damage only)
                 </span>
               </td>
               <td className="py-2 px-2 text-right">
@@ -214,10 +217,10 @@ export function CostBreakdownTable({ breakdown }: CostBreakdownTableProps) {
         </table>
       </div>
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-        <strong>Methodology:</strong> Person costs are calculated for injuries and fatalities only
-        (K-A-B-C classifications). &quot;No Indication of Injury&quot; (O) persons have $0 cost to avoid
-        double-counting with vehicle damage. Vehicle costs use FHWA O-classification rates
-        ($6,269 economic + $3,927 QALY = $10,196 per vehicle). Source: FHWA KABCO (2024$).
+        <strong>Methodology:</strong> Person costs are calculated for injuries/fatalities (K-A-B-C).
+        &quot;No Indication&quot; (O) persons = $0 since KABCO injury costs already include vehicle damage.
+        PDO (Property Damage Only) vehicles are from crashes with zero injuries/fatalities and use
+        FHWA O-classification rates ($6,269 + $3,927 = $10,196/vehicle). Source: FHWA KABCO (2024$).
       </p>
     </div>
   );
