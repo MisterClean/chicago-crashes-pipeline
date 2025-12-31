@@ -142,8 +142,10 @@ export interface InjuryClassificationCost {
 
 export interface VehicleCostBreakdown {
   count: number;
-  unit_cost: number;
+  unit_economic_cost: number;
+  unit_qaly_cost: number;
   subtotal_economic: number;
+  subtotal_societal: number;
 }
 
 export interface CostBreakdown {
