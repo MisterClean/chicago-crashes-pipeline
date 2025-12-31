@@ -338,8 +338,8 @@ export function LocationReportMap({
 
           {/* Cost Estimates */}
           <div className="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700 space-y-1">
-            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-1.5">
-              <div className="text-lg font-bold text-gray-900 dark:text-white">
+            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-0.5">
+              <div className="text-base font-bold text-gray-900 dark:text-white leading-tight">
                 {formatCurrency(reportData.stats.estimated_economic_damages)}
               </div>
               <div className="text-[10px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
@@ -347,8 +347,8 @@ export function LocationReportMap({
                 <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-full" title="See methodology footnote below">i</span>
               </div>
             </div>
-            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-1.5">
-              <div className="text-lg font-bold text-gray-900 dark:text-white">
+            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-0.5">
+              <div className="text-base font-bold text-gray-900 dark:text-white leading-tight">
                 {formatCurrency(reportData.stats.estimated_societal_costs)}
               </div>
               <div className="text-[10px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
