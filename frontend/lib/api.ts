@@ -139,6 +139,11 @@ export interface LocationReportStats {
   incapacitating_injuries: number;
   crashes_with_injuries: number;
   crashes_with_fatalities: number;
+  // Cost estimates (2024$) - FHWA methodology
+  estimated_economic_damages: number;
+  estimated_societal_costs: number;
+  total_vehicles: number;
+  unknown_injury_count: number;
 }
 
 export interface CrashCauseSummary {

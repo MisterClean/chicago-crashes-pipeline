@@ -19,6 +19,30 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 # Chicago timezone - all crash data from the Chicago Data Portal is in local Chicago time
 CHICAGO_TZ = ZoneInfo("America/Chicago")
 
+# FHWA Crash Cost Constants (2024$)
+# Source: https://highways.dot.gov/sites/fhwa.dot.gov/files/2025-10/CrashCostFactSheet_508_OCT2025.pdf
+# KABCO Person-Injury Unit Costs
+KABCO_COSTS = {
+    # injury_classification: (economic, qaly, comprehensive)
+    "FATAL": (1_606_644, 9_651_851, 11_258_495),  # K
+    "INCAPACITATING INJURY": (172_179, 917_345, 1_089_524),  # A
+    "NONINCAPACITATING INJURY": (44_490, 180_107, 224_597),  # B
+    "REPORTED, NOT EVIDENT": (25_933, 85_348, 111_281),  # C
+    "NO INDICATION OF INJURY": (6_269, 3_927, 10_196),  # O
+}
+
+# Vehicle unit cost (QALY = 0 for vehicles)
+VEHICLE_ECONOMIC_COST = 7_913
+
+# Mapping from injury_classification values to KABCO keys
+INJURY_TO_KABCO = {
+    "FATAL": "FATAL",
+    "INCAPACITATING INJURY": "INCAPACITATING INJURY",
+    "NONINCAPACITATING INJURY": "NONINCAPACITATING INJURY",
+    "REPORTED, NOT EVIDENT": "REPORTED, NOT EVIDENT",
+    "NO INDICATION OF INJURY": "NO INDICATION OF INJURY",
+}
+
 
 def now_chicago() -> datetime:
     """Get current time in Chicago timezone as a naive datetime.
@@ -455,6 +479,20 @@ class LocationReportStats(BaseModel):
     # Severity breakdown
     crashes_with_injuries: int
     crashes_with_fatalities: int
+    # Cost estimates (2024$) - FHWA methodology
+    estimated_economic_damages: float = Field(
+        description="Economic damages based on KABCO person-injury + vehicle costs"
+    )
+    estimated_societal_costs: float = Field(
+        description="Economic + QALY costs (comprehensive costs)"
+    )
+    # Vehicle count for transparency
+    total_vehicles: int = Field(description="Total vehicles involved in crashes")
+    # Data quality metric - unknown injury classifications excluded from costs
+    unknown_injury_count: int = Field(
+        default=0,
+        description="Count of people with unknown/blank injury classification (excluded from costs)"
+    )
 
 
 class CrashCauseSummary(BaseModel):
@@ -634,13 +672,22 @@ async def get_location_report(
 
         stats_result = db.execute(stats_query, spatial_params).fetchone()
 
-        # Get pedestrian and cyclist counts from people table
+        # Get pedestrian, cyclist counts AND injury classification counts for cost calculation
         # Need to join with crashes that match our spatial filter
         # Use aliased versions since this is a JOIN query
         people_query = text(f"""
             SELECT
                 COUNT(*) FILTER (WHERE person_type ILIKE '%PEDESTRIAN%') AS pedestrians,
-                COUNT(*) FILTER (WHERE person_type ILIKE '%BICYCLE%' OR person_type ILIKE '%CYCLIST%' OR person_type ILIKE '%PEDALCYCLIST%') AS cyclists
+                COUNT(*) FILTER (WHERE person_type ILIKE '%BICYCLE%' OR person_type ILIKE '%CYCLIST%' OR person_type ILIKE '%PEDALCYCLIST%') AS cyclists,
+                COUNT(*) FILTER (WHERE injury_classification = 'FATAL') AS fatal_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'INCAPACITATING INJURY') AS incapacitating_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'NONINCAPACITATING INJURY') AS nonincapacitating_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'REPORTED, NOT EVIDENT') AS reported_not_evident_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'NO INDICATION OF INJURY') AS no_indication_count,
+                COUNT(*) FILTER (WHERE injury_classification IS NULL OR injury_classification NOT IN (
+                    'FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY',
+                    'REPORTED, NOT EVIDENT', 'NO INDICATION OF INJURY'
+                )) AS unknown_count
             FROM crash_people cp
             INNER JOIN crashes c ON cp.crash_record_id = c.crash_record_id
             WHERE c.geometry IS NOT NULL
@@ -649,6 +696,47 @@ async def get_location_report(
         """)
 
         people_result = db.execute(people_query, spatial_params).fetchone()
+
+        # Get vehicle count for vehicle costs
+        vehicles_query = text(f"""
+            SELECT COUNT(*) AS vehicle_count
+            FROM crash_vehicles cv
+            INNER JOIN crashes c ON cv.crash_record_id = c.crash_record_id
+            WHERE c.geometry IS NOT NULL
+                AND {spatial_filter_aliased}
+                {date_filter_aliased}
+        """)
+
+        vehicles_result = db.execute(vehicles_query, spatial_params).fetchone()
+        total_vehicles = vehicles_result.vehicle_count or 0
+
+        # Calculate costs based on KABCO methodology
+        # Economic damages = sum of economic costs for all people + vehicle costs
+        # Societal costs = economic + QALY (comprehensive costs)
+        injury_counts = {
+            "FATAL": people_result.fatal_count or 0,
+            "INCAPACITATING INJURY": people_result.incapacitating_count or 0,
+            "NONINCAPACITATING INJURY": people_result.nonincapacitating_count or 0,
+            "REPORTED, NOT EVIDENT": people_result.reported_not_evident_count or 0,
+            "NO INDICATION OF INJURY": people_result.no_indication_count or 0,
+        }
+
+        # Calculate person-based costs
+        person_economic_cost = sum(
+            count * KABCO_COSTS[classification][0]  # economic component
+            for classification, count in injury_counts.items()
+        )
+        person_qaly_cost = sum(
+            count * KABCO_COSTS[classification][1]  # QALY component
+            for classification, count in injury_counts.items()
+        )
+
+        # Add vehicle costs (economic only, QALY = 0)
+        vehicle_economic_cost = total_vehicles * VEHICLE_ECONOMIC_COST
+
+        # Total costs
+        estimated_economic_damages = person_economic_cost + vehicle_economic_cost
+        estimated_societal_costs = estimated_economic_damages + person_qaly_cost
 
         stats = LocationReportStats(
             total_crashes=stats_result.total_crashes or 0,
@@ -660,6 +748,10 @@ async def get_location_report(
             hit_and_run_count=stats_result.hit_and_run_count or 0,
             pedestrians_involved=people_result.pedestrians or 0,
             cyclists_involved=people_result.cyclists or 0,
+            estimated_economic_damages=estimated_economic_damages,
+            estimated_societal_costs=estimated_societal_costs,
+            total_vehicles=total_vehicles,
+            unknown_injury_count=people_result.unknown_count or 0,
         )
 
         # 2. Get crash causes breakdown
