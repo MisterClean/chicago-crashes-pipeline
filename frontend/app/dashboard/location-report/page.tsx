@@ -1,17 +1,22 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { LocationReportMap } from "./components/LocationReportMap";
 import { ReportStats } from "./components/ReportStats";
 import { CausesTable } from "./components/CausesTable";
 import { TrendSparklines } from "./components/TrendSparklines";
 import {
   fetchLocationReport,
+  fetchPlaceTypes,
+  fetchPlaceItems,
+  fetchPlaceGeometry,
   type LocationReportResponse,
   type LocationReportRequest,
+  type PlaceType,
+  type PlaceItem,
 } from "@/lib/api";
 
-type SelectionMode = "radius" | "polygon";
+type SelectionMode = "radius" | "polygon" | "place";
 
 // Preset radius options
 const RADIUS_PRESETS = [
@@ -52,6 +57,77 @@ export default function LocationReportPage() {
   const [selectedRadius, setSelectedRadius] = useState<number>(1320); // Default 1/4 mile in feet
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
+
+  // Place selection state
+  const [placeTypes, setPlaceTypes] = useState<PlaceType[]>([]);
+  const [placeItems, setPlaceItems] = useState<PlaceItem[]>([]);
+  const [selectedPlaceType, setSelectedPlaceType] = useState<string | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedPlaceGeometry, setSelectedPlaceGeometry] = useState<GeoJSON.Geometry | null>(null);
+  const [loadingPlaceTypes, setLoadingPlaceTypes] = useState(false);
+  const [loadingPlaceItems, setLoadingPlaceItems] = useState(false);
+
+  // Load place types on mount
+  useEffect(() => {
+    const loadPlaceTypes = async () => {
+      setLoadingPlaceTypes(true);
+      try {
+        const types = await fetchPlaceTypes();
+        setPlaceTypes(types);
+      } catch (err) {
+        console.error("Failed to load place types:", err);
+      } finally {
+        setLoadingPlaceTypes(false);
+      }
+    };
+    loadPlaceTypes();
+  }, []);
+
+  // Load place items when place type changes
+  useEffect(() => {
+    if (!selectedPlaceType) {
+      setPlaceItems([]);
+      setSelectedPlaceId(null);
+      setSelectedPlaceGeometry(null);
+      return;
+    }
+
+    const loadPlaceItems = async () => {
+      setLoadingPlaceItems(true);
+      setPlaceItems([]);
+      setSelectedPlaceId(null);
+      setSelectedPlaceGeometry(null);
+      try {
+        const items = await fetchPlaceItems(selectedPlaceType);
+        setPlaceItems(items);
+      } catch (err) {
+        console.error("Failed to load place items:", err);
+      } finally {
+        setLoadingPlaceItems(false);
+      }
+    };
+    loadPlaceItems();
+  }, [selectedPlaceType]);
+
+  // Load place geometry when place is selected
+  useEffect(() => {
+    if (!selectedPlaceType || !selectedPlaceId) {
+      setSelectedPlaceGeometry(null);
+      return;
+    }
+
+    const loadPlaceGeometry = async () => {
+      try {
+        const result = await fetchPlaceGeometry(selectedPlaceType, selectedPlaceId);
+        setSelectedPlaceGeometry(result.geometry);
+        setReport(null); // Clear old report when new place selected
+      } catch (err) {
+        console.error("Failed to load place geometry:", err);
+        setSelectedPlaceGeometry(null);
+      }
+    };
+    loadPlaceGeometry();
+  }, [selectedPlaceType, selectedPlaceId]);
 
   // Date preset handler
   const setDatePreset = useCallback((days: number) => {
@@ -97,6 +173,9 @@ export default function LocationReportPage() {
         request.radius_feet = selectedRadius;
       } else if (selectionMode === "polygon" && selectedPolygon) {
         request.polygon = selectedPolygon;
+      } else if (selectionMode === "place" && selectedPlaceType && selectedPlaceId) {
+        request.place_type = selectedPlaceType;
+        request.place_id = selectedPlaceId;
       } else {
         setError("Please select an area on the map first");
         setLoading(false);
@@ -118,13 +197,17 @@ export default function LocationReportPage() {
   const handleClearSelection = () => {
     setSelectedCenter(null);
     setSelectedPolygon(null);
+    setSelectedPlaceType(null);
+    setSelectedPlaceId(null);
+    setSelectedPlaceGeometry(null);
     setReport(null);
     setError(null);
   };
 
   const hasSelection =
     (selectionMode === "radius" && selectedCenter !== null) ||
-    (selectionMode === "polygon" && selectedPolygon !== null);
+    (selectionMode === "polygon" && selectedPolygon !== null) ||
+    (selectionMode === "place" && selectedPlaceType !== null && selectedPlaceId !== null);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -152,6 +235,9 @@ export default function LocationReportPage() {
                   onClick={() => {
                     setSelectionMode("radius");
                     setSelectedPolygon(null);
+                    setSelectedPlaceType(null);
+                    setSelectedPlaceId(null);
+                    setSelectedPlaceGeometry(null);
                   }}
                   className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                     selectionMode === "radius"
@@ -165,6 +251,9 @@ export default function LocationReportPage() {
                   onClick={() => {
                     setSelectionMode("polygon");
                     setSelectedCenter(null);
+                    setSelectedPlaceType(null);
+                    setSelectedPlaceId(null);
+                    setSelectedPlaceGeometry(null);
                   }}
                   className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                     selectionMode === "polygon"
@@ -173,6 +262,20 @@ export default function LocationReportPage() {
                   }`}
                 >
                   Polygon
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectionMode("place");
+                    setSelectedCenter(null);
+                    setSelectedPolygon(null);
+                  }}
+                  className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                    selectionMode === "place"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600"
+                  }`}
+                >
+                  Place
                 </button>
               </div>
             </div>
@@ -220,7 +323,52 @@ export default function LocationReportPage() {
               </div>
             )}
 
-            {/* Date Range - spans 2 columns on larger screens when radius is hidden */}
+            {/* Place Selector (only show in place mode) */}
+            {selectionMode === "place" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Place
+                </label>
+                <div className="space-y-2">
+                  <select
+                    value={selectedPlaceType || ""}
+                    onChange={(e) => setSelectedPlaceType(e.target.value || null)}
+                    disabled={loadingPlaceTypes}
+                    className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                  >
+                    <option value="">
+                      {loadingPlaceTypes ? "Loading..." : "Select type..."}
+                    </option>
+                    {placeTypes.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.name} ({type.feature_count})
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={selectedPlaceId || ""}
+                    onChange={(e) => setSelectedPlaceId(e.target.value || null)}
+                    disabled={!selectedPlaceType || loadingPlaceItems}
+                    className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm disabled:opacity-50"
+                  >
+                    <option value="">
+                      {loadingPlaceItems
+                        ? "Loading..."
+                        : selectedPlaceType
+                        ? "Select place..."
+                        : "Select type first"}
+                    </option>
+                    {placeItems.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.display_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Date Range - spans 2 columns on larger screens when radius/place is hidden */}
             <div className={selectionMode === "polygon" ? "sm:col-span-2" : ""}>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Date Range
@@ -291,8 +439,10 @@ export default function LocationReportPage() {
           <div className="mt-3 text-xs text-gray-500 dark:text-gray-400">
             {selectionMode === "radius" ? (
               <p>Click on the map to place a center point.</p>
-            ) : (
+            ) : selectionMode === "polygon" ? (
               <p>Click to draw vertices. Double-click to finish.</p>
+            ) : (
+              <p>Select a place type and place from the dropdowns above.</p>
             )}
           </div>
         </div>
@@ -314,6 +464,7 @@ export default function LocationReportPage() {
             selectedCenter={selectedCenter}
             selectedRadius={selectedRadius}
             selectedPolygon={selectedPolygon}
+            selectedPlaceGeometry={selectedPlaceGeometry}
             onCenterSelect={handleCenterSelect}
             onPolygonComplete={setSelectedPolygon}
             reportData={report}
