@@ -264,3 +264,32 @@ class SpatialLayerUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=150)
     description: str | None = None
     is_active: bool | None = None
+
+
+# Places API Models
+
+
+class PlaceTypeResponse(BaseModel):
+    """Response model for a place type (native boundary or uploaded layer)."""
+
+    id: str
+    name: str
+    source: str  # "native" or "uploaded"
+    feature_count: int
+
+
+class PlaceItemResponse(BaseModel):
+    """Response model for a place within a type."""
+
+    id: str
+    name: str
+    display_name: str
+
+
+class PlaceGeometryResponse(BaseModel):
+    """Response model for a place's geometry."""
+
+    place_type: str
+    place_id: str
+    name: str
+    geometry: dict[str, Any]  # GeoJSON geometry
