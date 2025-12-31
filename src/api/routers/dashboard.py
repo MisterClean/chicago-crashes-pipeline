@@ -23,17 +23,20 @@ CHICAGO_TZ = ZoneInfo("America/Chicago")
 # FHWA Crash Cost Constants (2024$)
 # Source: https://highways.dot.gov/sites/fhwa.dot.gov/files/2025-10/CrashCostFactSheet_508_OCT2025.pdf
 # KABCO Person-Injury Unit Costs
+# Note: "No Indication of Injury" (O) has $0 person cost to avoid double-counting with vehicle damage
 KABCO_COSTS = {
     # injury_classification: (economic, qaly, comprehensive)
     "FATAL": (1_606_644, 9_651_851, 11_258_495),  # K
     "INCAPACITATING INJURY": (172_179, 917_345, 1_089_524),  # A
     "NONINCAPACITATING INJURY": (44_490, 180_107, 224_597),  # B
     "REPORTED, NOT EVIDENT": (25_933, 85_348, 111_281),  # C
-    "NO INDICATION OF INJURY": (6_269, 3_927, 10_196),  # O
+    "NO INDICATION OF INJURY": (0, 0, 0),  # O - vehicle damage captured separately
 }
 
-# Vehicle unit cost (QALY = 0 for vehicles)
-VEHICLE_ECONOMIC_COST = 7_913
+# Vehicle unit costs (FHWA "O" classification costs applied per vehicle)
+# These represent property damage and related costs for crashes without injuries
+VEHICLE_ECONOMIC_COST = 6_269
+VEHICLE_QALY_COST = 3_927
 
 # Mapping from injury_classification values to KABCO keys
 INJURY_TO_KABCO = {
@@ -536,8 +539,10 @@ class VehicleCostBreakdown(BaseModel):
     """Cost breakdown for vehicles."""
 
     count: int = Field(description="Total vehicles involved")
-    unit_cost: int = Field(description="Per-vehicle economic cost")
-    subtotal_economic: int = Field(description="count * unit_cost")
+    unit_economic_cost: int = Field(description="Per-vehicle economic cost")
+    unit_qaly_cost: int = Field(description="Per-vehicle QALY cost")
+    subtotal_economic: int = Field(description="count * unit_economic_cost")
+    subtotal_societal: int = Field(description="count * (unit_economic + unit_qaly)")
 
 
 class CostBreakdown(BaseModel):
@@ -921,12 +926,13 @@ async def get_location_report(
             for classification, count in injury_counts.items()
         )
 
-        # Add vehicle costs (economic only, QALY = 0)
+        # Add vehicle costs (economic + QALY per vehicle)
         vehicle_economic_cost = total_vehicles * VEHICLE_ECONOMIC_COST
+        vehicle_qaly_cost = total_vehicles * VEHICLE_QALY_COST
 
         # Total costs
         estimated_economic_damages = person_economic_cost + vehicle_economic_cost
-        estimated_societal_costs = estimated_economic_damages + person_qaly_cost
+        estimated_societal_costs = estimated_economic_damages + person_qaly_cost + vehicle_qaly_cost
 
         # Build detailed cost breakdown for transparency
         injury_cost_breakdowns = []
@@ -946,8 +952,10 @@ async def get_location_report(
 
         vehicle_breakdown = VehicleCostBreakdown(
             count=total_vehicles,
-            unit_cost=VEHICLE_ECONOMIC_COST,
+            unit_economic_cost=VEHICLE_ECONOMIC_COST,
+            unit_qaly_cost=VEHICLE_QALY_COST,
             subtotal_economic=vehicle_economic_cost,
+            subtotal_societal=vehicle_economic_cost + vehicle_qaly_cost,
         )
 
         cost_breakdown = CostBreakdown(
