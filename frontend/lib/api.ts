@@ -129,6 +129,30 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
 }
 
 // Location Report Types
+// Cost Breakdown Types
+export interface InjuryClassificationCost {
+  classification: string;
+  classification_label: string;
+  count: number;
+  unit_economic_cost: number;
+  unit_qaly_cost: number;
+  subtotal_economic: number;
+  subtotal_societal: number;
+}
+
+export interface VehicleCostBreakdown {
+  count: number;
+  unit_cost: number;
+  subtotal_economic: number;
+}
+
+export interface CostBreakdown {
+  injury_costs: InjuryClassificationCost[];
+  vehicle_costs: VehicleCostBreakdown;
+  total_economic: number;
+  total_societal: number;
+}
+
 export interface LocationReportStats {
   total_crashes: number;
   total_injuries: number;
@@ -144,6 +168,8 @@ export interface LocationReportStats {
   estimated_societal_costs: number;
   total_vehicles: number;
   unknown_injury_count: number;
+  // Detailed cost breakdown
+  cost_breakdown?: CostBreakdown;
 }
 
 export interface CrashCauseSummary {
