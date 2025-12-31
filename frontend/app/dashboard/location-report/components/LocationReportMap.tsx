@@ -323,22 +323,22 @@ export function LocationReportMap({
 
           {/* Cost Estimates */}
           <div className="mb-3 pb-3 border-b border-gray-200 dark:border-gray-700 space-y-2">
-            <div className="bg-emerald-50 dark:bg-emerald-900/30 rounded-md px-2 py-1.5">
-              <div className="text-lg font-bold text-emerald-700 dark:text-emerald-400">
+            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-1.5">
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
                 {formatCurrency(reportData.stats.estimated_economic_damages)}
               </div>
-              <div className="text-[10px] text-emerald-600 dark:text-emerald-500 flex items-center gap-1">
+              <div className="text-[10px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
                 Est. Economic Cost
-                <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-emerald-200 dark:bg-emerald-800 text-emerald-700 dark:text-emerald-300 rounded-full" title="See methodology footnote below">i</span>
+                <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-full" title="See methodology footnote below">i</span>
               </div>
             </div>
-            <div className="bg-indigo-50 dark:bg-indigo-900/30 rounded-md px-2 py-1.5">
-              <div className="text-lg font-bold text-indigo-700 dark:text-indigo-400">
+            <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-1.5">
+              <div className="text-lg font-bold text-gray-900 dark:text-white">
                 {formatCurrency(reportData.stats.estimated_societal_costs)}
               </div>
-              <div className="text-[10px] text-indigo-600 dark:text-indigo-500 flex items-center gap-1">
+              <div className="text-[10px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
                 Est. Total Societal Cost
-                <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-indigo-200 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 rounded-full" title="See methodology footnote below">i</span>
+                <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-full" title="See methodology footnote below">i</span>
               </div>
             </div>
           </div>
@@ -348,43 +348,43 @@ export function LocationReportMap({
             {reportData.stats.total_fatalities > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Fatalities</span>
-                <span className="text-lg font-bold text-red-600">{reportData.stats.total_fatalities.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.total_fatalities.toLocaleString()}</span>
               </div>
             )}
             {reportData.stats.incapacitating_injuries > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Incapacitating</span>
-                <span className="text-lg font-bold text-orange-600">{reportData.stats.incapacitating_injuries.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.incapacitating_injuries.toLocaleString()}</span>
               </div>
             )}
             {reportData.stats.total_injuries > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Total Injuries</span>
-                <span className="text-lg font-bold text-yellow-600">{reportData.stats.total_injuries.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.total_injuries.toLocaleString()}</span>
               </div>
             )}
             {reportData.stats.pedestrians_involved > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Pedestrians</span>
-                <span className="text-lg font-bold text-blue-600">{reportData.stats.pedestrians_involved.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.pedestrians_involved.toLocaleString()}</span>
               </div>
             )}
             {reportData.stats.cyclists_involved > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Cyclists</span>
-                <span className="text-lg font-bold text-green-600">{reportData.stats.cyclists_involved.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.cyclists_involved.toLocaleString()}</span>
               </div>
             )}
             {reportData.stats.hit_and_run_count > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">Hit & Run</span>
-                <span className="text-lg font-bold text-purple-600">{reportData.stats.hit_and_run_count.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.hit_and_run_count.toLocaleString()}</span>
               </div>
             )}
             {reportData.stats.crashes_with_injuries > 0 && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600 dark:text-gray-400">With Injuries</span>
-                <span className="text-lg font-bold text-amber-600">{reportData.stats.crashes_with_injuries.toLocaleString()}</span>
+                <span className="text-lg font-bold text-gray-900 dark:text-white">{reportData.stats.crashes_with_injuries.toLocaleString()}</span>
               </div>
             )}
           </div>
