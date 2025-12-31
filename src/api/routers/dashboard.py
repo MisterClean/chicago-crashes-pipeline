@@ -892,9 +892,17 @@ async def get_location_report(
 
         people_result = db.execute(people_query, spatial_params).fetchone()
 
-        # Get vehicle count for vehicle costs
+        # Get vehicle counts:
+        # - total_vehicles: all vehicles for display
+        # - pdo_vehicles: vehicles from Property Damage Only crashes (no injuries/fatalities)
+        #   Only PDO vehicles are costed separately since injury costs already include vehicle damage
         vehicles_query = text(f"""
-            SELECT COUNT(*) AS vehicle_count
+            SELECT
+                COUNT(*) AS total_vehicle_count,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(c.injuries_total, 0) = 0
+                    AND COALESCE(c.injuries_fatal, 0) = 0
+                ) AS pdo_vehicle_count
             FROM crash_vehicles cv
             INNER JOIN crashes c ON cv.crash_record_id = c.crash_record_id
             WHERE c.geometry IS NOT NULL
@@ -903,7 +911,8 @@ async def get_location_report(
         """)
 
         vehicles_result = db.execute(vehicles_query, spatial_params).fetchone()
-        total_vehicles = vehicles_result.vehicle_count or 0
+        total_vehicles = vehicles_result.total_vehicle_count or 0
+        pdo_vehicles = vehicles_result.pdo_vehicle_count or 0
 
         # Calculate costs based on KABCO methodology
         # Economic damages = sum of economic costs for all people + vehicle costs
@@ -926,9 +935,10 @@ async def get_location_report(
             for classification, count in injury_counts.items()
         )
 
-        # Add vehicle costs (economic + QALY per vehicle)
-        vehicle_economic_cost = total_vehicles * VEHICLE_ECONOMIC_COST
-        vehicle_qaly_cost = total_vehicles * VEHICLE_QALY_COST
+        # Add vehicle costs only for Property Damage Only crashes
+        # (injury costs already include vehicle damage for crashes with injuries)
+        vehicle_economic_cost = pdo_vehicles * VEHICLE_ECONOMIC_COST
+        vehicle_qaly_cost = pdo_vehicles * VEHICLE_QALY_COST
 
         # Total costs
         estimated_economic_damages = person_economic_cost + vehicle_economic_cost
@@ -951,7 +961,7 @@ async def get_location_report(
             )
 
         vehicle_breakdown = VehicleCostBreakdown(
-            count=total_vehicles,
+            count=pdo_vehicles,  # Only PDO vehicles are costed
             unit_economic_cost=VEHICLE_ECONOMIC_COST,
             unit_qaly_cost=VEHICLE_QALY_COST,
             subtotal_economic=vehicle_economic_cost,
