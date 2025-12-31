@@ -7,6 +7,17 @@ import { FilterPanel } from "./components/FilterPanel";
 
 export const dynamic = "force-dynamic";
 
+// Calculate default date range (last 30 days)
+function getDefaultDateRange() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 30);
+  return {
+    start_date: start.toISOString().split("T")[0],
+    end_date: end.toISOString().split("T")[0],
+  };
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -14,13 +25,21 @@ export default async function DashboardPage({
 }) {
   const params = await searchParams;
 
+  // Apply 30-day default if no dates provided
+  const defaults = getDefaultDateRange();
+  const effectiveStartDate = params.start_date ?? defaults.start_date;
+  const effectiveEndDate = params.end_date ?? defaults.end_date;
+
   // Fetch data in parallel on the server
   const [stats, trends] = await Promise.all([
     fetchDashboardStats({
-      start_date: params.start_date,
-      end_date: params.end_date,
+      start_date: effectiveStartDate,
+      end_date: effectiveEndDate,
     }).catch(() => null),
-    fetchWeeklyTrends(52).catch(() => []),
+    fetchWeeklyTrends({
+      start_date: effectiveStartDate,
+      end_date: effectiveEndDate,
+    }).catch(() => []),
   ]);
 
   return (
@@ -36,7 +55,10 @@ export default async function DashboardPage({
             </p>
           </div>
           <div className="mt-4 lg:mt-0">
-            <FilterPanel />
+            <FilterPanel
+              defaultStartDate={effectiveStartDate}
+              defaultEndDate={effectiveEndDate}
+            />
           </div>
         </div>
 
@@ -70,8 +92,8 @@ export default async function DashboardPage({
           </h2>
           <Suspense fallback={<MapSkeleton />}>
             <CrashMap
-              startDate={params.start_date}
-              endDate={params.end_date}
+              startDate={effectiveStartDate}
+              endDate={effectiveEndDate}
             />
           </Suspense>
         </div>

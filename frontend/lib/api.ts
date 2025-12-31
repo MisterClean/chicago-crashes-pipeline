@@ -74,8 +74,17 @@ export async function fetchDashboardStats(params?: {
   return res.json();
 }
 
-export async function fetchWeeklyTrends(weeks: number = 52): Promise<WeeklyTrend[]> {
-  const res = await fetch(`${API_BASE}/dashboard/trends/weekly?weeks=${weeks}`, {
+export async function fetchWeeklyTrends(params?: {
+  weeks?: number;
+  start_date?: string;
+  end_date?: string;
+}): Promise<WeeklyTrend[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.weeks) searchParams.set("weeks", params.weeks.toString());
+  if (params?.start_date) searchParams.set("start_date", params.start_date);
+  if (params?.end_date) searchParams.set("end_date", params.end_date);
+
+  const res = await fetch(`${API_BASE}/dashboard/trends/weekly?${searchParams}`, {
     next: { revalidate: 300 },
   });
 
@@ -114,6 +123,83 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
 
   if (!res.ok) {
     throw new Error(`Failed to fetch sync status: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+// Location Report Types
+export interface LocationReportStats {
+  total_crashes: number;
+  total_injuries: number;
+  total_fatalities: number;
+  pedestrians_involved: number;
+  cyclists_involved: number;
+  hit_and_run_count: number;
+  incapacitating_injuries: number;
+  crashes_with_injuries: number;
+  crashes_with_fatalities: number;
+  // Cost estimates (2024$) - FHWA methodology
+  estimated_economic_damages: number;
+  estimated_societal_costs: number;
+  total_vehicles: number;
+  unknown_injury_count: number;
+}
+
+export interface CrashCauseSummary {
+  cause: string;
+  crashes: number;
+  injuries: number;
+  fatalities: number;
+  percentage: number;
+}
+
+export interface MonthlyTrendPoint {
+  month: string;
+  crashes: number;
+  injuries: number;
+  fatalities: number;
+}
+
+export interface LocationReportResponse {
+  stats: LocationReportStats;
+  causes: CrashCauseSummary[];
+  monthly_trends: MonthlyTrendPoint[];
+  crashes_geojson: CrashGeoJSON;
+  query_area_geojson: {
+    type: "Feature";
+    geometry: {
+      type: "Polygon";
+      coordinates: number[][][];
+    };
+    properties: Record<string, unknown>;
+  };
+}
+
+export interface LocationReportRequest {
+  latitude?: number;
+  longitude?: number;
+  radius_feet?: number;
+  polygon?: [number, number][];
+  start_date?: string;
+  end_date?: string;
+}
+
+export async function fetchLocationReport(
+  request: LocationReportRequest
+): Promise<LocationReportResponse> {
+  const res = await fetch(`${API_BASE}/dashboard/location-report`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text();
+    throw new Error(`Failed to fetch location report: ${errorText}`);
   }
 
   return res.json();

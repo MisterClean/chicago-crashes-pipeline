@@ -1,11 +1,11 @@
 """Dashboard API endpoints for the Chicago Crash Dashboard frontend."""
 
 from datetime import datetime, time, timedelta
-from typing import Any, Optional
+from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -18,6 +18,30 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 # Chicago timezone - all crash data from the Chicago Data Portal is in local Chicago time
 CHICAGO_TZ = ZoneInfo("America/Chicago")
+
+# FHWA Crash Cost Constants (2024$)
+# Source: https://highways.dot.gov/sites/fhwa.dot.gov/files/2025-10/CrashCostFactSheet_508_OCT2025.pdf
+# KABCO Person-Injury Unit Costs
+KABCO_COSTS = {
+    # injury_classification: (economic, qaly, comprehensive)
+    "FATAL": (1_606_644, 9_651_851, 11_258_495),  # K
+    "INCAPACITATING INJURY": (172_179, 917_345, 1_089_524),  # A
+    "NONINCAPACITATING INJURY": (44_490, 180_107, 224_597),  # B
+    "REPORTED, NOT EVIDENT": (25_933, 85_348, 111_281),  # C
+    "NO INDICATION OF INJURY": (6_269, 3_927, 10_196),  # O
+}
+
+# Vehicle unit cost (QALY = 0 for vehicles)
+VEHICLE_ECONOMIC_COST = 7_913
+
+# Mapping from injury_classification values to KABCO keys
+INJURY_TO_KABCO = {
+    "FATAL": "FATAL",
+    "INCAPACITATING INJURY": "INCAPACITATING INJURY",
+    "NONINCAPACITATING INJURY": "NONINCAPACITATING INJURY",
+    "REPORTED, NOT EVIDENT": "REPORTED, NOT EVIDENT",
+    "NO INDICATION OF INJURY": "NO INDICATION OF INJURY",
+}
 
 
 def now_chicago() -> datetime:
@@ -163,17 +187,33 @@ async def get_dashboard_stats(
 
 @router.get("/trends/weekly", response_model=list[WeeklyTrend])
 async def get_weekly_trends(
-    weeks: int = Query(default=52, le=104, ge=1),
+    weeks: Optional[int] = Query(default=None, le=104, ge=1),
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
     db: Session = Depends(get_db),
 ) -> list[WeeklyTrend]:
     """
     Get weekly crash trends for charts.
 
     Returns crash, injury, and fatality counts grouped by week.
+    Supports either a weeks parameter (going back from today) or explicit date range.
+    If start_date/end_date are provided, they take precedence over weeks.
+    End date is inclusive (includes all of that day).
     """
     try:
-        # Calculate start date using Chicago timezone
-        start_date = now_chicago() - timedelta(weeks=weeks)
+        # Determine date range
+        if start_date is not None or end_date is not None:
+            # Use explicit date range
+            query_start_date = start_date
+            query_end_date = normalize_end_date(end_date)
+        elif weeks is not None:
+            # Calculate start date using Chicago timezone
+            query_start_date = now_chicago() - timedelta(weeks=weeks)
+            query_end_date = None
+        else:
+            # Default to 52 weeks
+            query_start_date = now_chicago() - timedelta(weeks=52)
+            query_end_date = None
 
         # Query for weekly aggregates using PostgreSQL date_trunc
         query = text("""
@@ -183,13 +223,14 @@ async def get_weekly_trends(
                 COALESCE(SUM(injuries_total), 0) AS injuries,
                 COALESCE(SUM(injuries_fatal), 0) AS fatalities
             FROM crashes
-            WHERE crash_date >= :start_date
-                AND crash_date IS NOT NULL
+            WHERE crash_date IS NOT NULL
+                AND (:start_date IS NULL OR crash_date >= :start_date)
+                AND (:end_date IS NULL OR crash_date <= :end_date)
             GROUP BY date_trunc('week', crash_date)
             ORDER BY week_start
         """)
 
-        result = db.execute(query, {"start_date": start_date})
+        result = db.execute(query, {"start_date": query_start_date, "end_date": query_end_date})
         rows = result.fetchall()
 
         trends = []
@@ -398,4 +439,438 @@ async def get_crashes_by_cause(
 
     except Exception as e:
         logger.error("Failed to get crashes by cause", error=str(e))
+        raise
+
+
+# ==========================================
+# Location Report Endpoints
+# ==========================================
+
+
+class LocationReportRequest(BaseModel):
+    """Request body for location-based crash report."""
+
+    # Either radius query or polygon query
+    latitude: Optional[float] = Field(None, ge=-90, le=90, description="Center latitude for radius query")
+    longitude: Optional[float] = Field(None, ge=-180, le=180, description="Center longitude for radius query")
+    radius_feet: Optional[float] = Field(None, gt=0, le=26400, description="Radius in feet (max 5 miles)")
+
+    # Or provide a polygon as GeoJSON coordinates
+    polygon: Optional[List[List[float]]] = Field(
+        None,
+        description="Polygon coordinates as [[lng, lat], [lng, lat], ...]. Must have at least 3 points.",
+    )
+
+    # Date filters
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+
+class LocationReportStats(BaseModel):
+    """Aggregate statistics for a location."""
+
+    total_crashes: int
+    total_injuries: int
+    total_fatalities: int
+    pedestrians_involved: int
+    cyclists_involved: int
+    hit_and_run_count: int
+    incapacitating_injuries: int
+    # Severity breakdown
+    crashes_with_injuries: int
+    crashes_with_fatalities: int
+    # Cost estimates (2024$) - FHWA methodology
+    estimated_economic_damages: float = Field(
+        description="Economic damages based on KABCO person-injury + vehicle costs"
+    )
+    estimated_societal_costs: float = Field(
+        description="Economic + QALY costs (comprehensive costs)"
+    )
+    # Vehicle count for transparency
+    total_vehicles: int = Field(description="Total vehicles involved in crashes")
+    # Data quality metric - unknown injury classifications excluded from costs
+    unknown_injury_count: int = Field(
+        default=0,
+        description="Count of people with unknown/blank injury classification (excluded from costs)"
+    )
+
+
+class CrashCauseSummary(BaseModel):
+    """Summary of crashes by cause."""
+
+    cause: str
+    crashes: int
+    injuries: int
+    fatalities: int
+    percentage: float
+
+
+class MonthlyTrendPoint(BaseModel):
+    """Monthly trend data point for sparklines."""
+
+    month: str
+    crashes: int
+    injuries: int
+    fatalities: int
+
+
+class LocationReportResponse(BaseModel):
+    """Full location report response."""
+
+    stats: LocationReportStats
+    causes: List[CrashCauseSummary]
+    monthly_trends: List[MonthlyTrendPoint]
+    crashes_geojson: dict
+    query_area_geojson: dict
+
+
+@router.post("/location-report", response_model=LocationReportResponse)
+async def get_location_report(
+    request: LocationReportRequest,
+    db: Session = Depends(get_db),
+) -> LocationReportResponse:
+    """
+    Generate a crash report for a specific location.
+
+    Provide either:
+    - latitude, longitude, and radius_feet for a circular area
+    - polygon coordinates for a custom shape
+
+    Returns comprehensive crash statistics, cause breakdown, trends, and GeoJSON data.
+    """
+    try:
+        # Validate request - must have either radius query or polygon
+        has_radius_query = all([
+            request.latitude is not None,
+            request.longitude is not None,
+            request.radius_feet is not None,
+        ])
+        has_polygon_query = request.polygon is not None and len(request.polygon) >= 3
+
+        if not has_radius_query and not has_polygon_query:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=400,
+                detail="Must provide either (latitude, longitude, radius_feet) or polygon coordinates",
+            )
+
+        # Normalize end_date
+        end_date_normalized = normalize_end_date(request.end_date)
+
+        # Build the spatial filter SQL
+        if has_radius_query:
+            # Convert feet to meters (1 foot = 0.3048 meters)
+            radius_meters = request.radius_feet * 0.3048
+
+            # Create a point and buffer for the query area
+            # Note: For single-table queries, we use unqualified column names.
+            # For JOIN queries (like people_query), we use c.geometry
+            spatial_filter = """
+                ST_DWithin(
+                    geometry::geography,
+                    ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
+                    :radius_meters
+                )
+            """
+            # Spatial filter with table alias for JOIN queries
+            spatial_filter_aliased = """
+                ST_DWithin(
+                    c.geometry::geography,
+                    ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
+                    :radius_meters
+                )
+            """
+            spatial_params = {
+                "center_lat": request.latitude,
+                "center_lng": request.longitude,
+                "radius_meters": radius_meters,
+            }
+
+            # Generate query area GeoJSON (circle approximation)
+            query_area_sql = text("""
+                SELECT ST_AsGeoJSON(
+                    ST_Buffer(
+                        ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
+                        :radius_meters
+                    )::geometry
+                ) AS geojson
+            """)
+            area_result = db.execute(query_area_sql, spatial_params).fetchone()
+            import json
+            query_area_geojson = {
+                "type": "Feature",
+                "geometry": json.loads(area_result.geojson) if area_result else None,
+                "properties": {
+                    "type": "radius",
+                    "center": [request.longitude, request.latitude],
+                    "radius_feet": request.radius_feet,
+                },
+            }
+        else:
+            # Polygon query - close the ring if needed
+            coords = request.polygon.copy()
+            if coords[0] != coords[-1]:
+                coords.append(coords[0])
+
+            # Build WKT polygon string
+            coord_str = ", ".join([f"{c[0]} {c[1]}" for c in coords])
+            polygon_wkt = f"POLYGON(({coord_str}))"
+
+            spatial_filter = """
+                ST_Contains(
+                    ST_SetSRID(ST_GeomFromText(:polygon_wkt), 4326),
+                    geometry
+                )
+            """
+            # Spatial filter with table alias for JOIN queries
+            spatial_filter_aliased = """
+                ST_Contains(
+                    ST_SetSRID(ST_GeomFromText(:polygon_wkt), 4326),
+                    c.geometry
+                )
+            """
+            spatial_params = {"polygon_wkt": polygon_wkt}
+
+            # Query area is the polygon itself
+            query_area_geojson = {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [coords],
+                },
+                "properties": {"type": "polygon"},
+            }
+
+        # Build date filter (unqualified for single-table queries)
+        date_filter = ""
+        # Build date filter with table alias for JOIN queries
+        date_filter_aliased = ""
+        if request.start_date:
+            date_filter += " AND crash_date >= :start_date"
+            date_filter_aliased += " AND c.crash_date >= :start_date"
+            spatial_params["start_date"] = request.start_date
+        if end_date_normalized:
+            date_filter += " AND crash_date <= :end_date"
+            date_filter_aliased += " AND c.crash_date <= :end_date"
+            spatial_params["end_date"] = end_date_normalized
+
+        # 1. Get aggregate statistics
+        stats_query = text(f"""
+            SELECT
+                COUNT(*) AS total_crashes,
+                COALESCE(SUM(injuries_total), 0) AS total_injuries,
+                COALESCE(SUM(injuries_fatal), 0) AS total_fatalities,
+                COALESCE(SUM(injuries_incapacitating), 0) AS incapacitating_injuries,
+                COUNT(*) FILTER (WHERE injuries_total > 0) AS crashes_with_injuries,
+                COUNT(*) FILTER (WHERE injuries_fatal > 0) AS crashes_with_fatalities,
+                COUNT(*) FILTER (WHERE hit_and_run_i = 'Y') AS hit_and_run_count
+            FROM crashes
+            WHERE geometry IS NOT NULL
+                AND {spatial_filter}
+                {date_filter}
+        """)
+
+        stats_result = db.execute(stats_query, spatial_params).fetchone()
+
+        # Get pedestrian, cyclist counts AND injury classification counts for cost calculation
+        # Need to join with crashes that match our spatial filter
+        # Use aliased versions since this is a JOIN query
+        people_query = text(f"""
+            SELECT
+                COUNT(*) FILTER (WHERE person_type ILIKE '%PEDESTRIAN%') AS pedestrians,
+                COUNT(*) FILTER (WHERE person_type ILIKE '%BICYCLE%' OR person_type ILIKE '%CYCLIST%' OR person_type ILIKE '%PEDALCYCLIST%') AS cyclists,
+                COUNT(*) FILTER (WHERE injury_classification = 'FATAL') AS fatal_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'INCAPACITATING INJURY') AS incapacitating_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'NONINCAPACITATING INJURY') AS nonincapacitating_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'REPORTED, NOT EVIDENT') AS reported_not_evident_count,
+                COUNT(*) FILTER (WHERE injury_classification = 'NO INDICATION OF INJURY') AS no_indication_count,
+                COUNT(*) FILTER (WHERE injury_classification IS NULL OR injury_classification NOT IN (
+                    'FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY',
+                    'REPORTED, NOT EVIDENT', 'NO INDICATION OF INJURY'
+                )) AS unknown_count
+            FROM crash_people cp
+            INNER JOIN crashes c ON cp.crash_record_id = c.crash_record_id
+            WHERE c.geometry IS NOT NULL
+                AND {spatial_filter_aliased}
+                {date_filter_aliased}
+        """)
+
+        people_result = db.execute(people_query, spatial_params).fetchone()
+
+        # Get vehicle count for vehicle costs
+        vehicles_query = text(f"""
+            SELECT COUNT(*) AS vehicle_count
+            FROM crash_vehicles cv
+            INNER JOIN crashes c ON cv.crash_record_id = c.crash_record_id
+            WHERE c.geometry IS NOT NULL
+                AND {spatial_filter_aliased}
+                {date_filter_aliased}
+        """)
+
+        vehicles_result = db.execute(vehicles_query, spatial_params).fetchone()
+        total_vehicles = vehicles_result.vehicle_count or 0
+
+        # Calculate costs based on KABCO methodology
+        # Economic damages = sum of economic costs for all people + vehicle costs
+        # Societal costs = economic + QALY (comprehensive costs)
+        injury_counts = {
+            "FATAL": people_result.fatal_count or 0,
+            "INCAPACITATING INJURY": people_result.incapacitating_count or 0,
+            "NONINCAPACITATING INJURY": people_result.nonincapacitating_count or 0,
+            "REPORTED, NOT EVIDENT": people_result.reported_not_evident_count or 0,
+            "NO INDICATION OF INJURY": people_result.no_indication_count or 0,
+        }
+
+        # Calculate person-based costs
+        person_economic_cost = sum(
+            count * KABCO_COSTS[classification][0]  # economic component
+            for classification, count in injury_counts.items()
+        )
+        person_qaly_cost = sum(
+            count * KABCO_COSTS[classification][1]  # QALY component
+            for classification, count in injury_counts.items()
+        )
+
+        # Add vehicle costs (economic only, QALY = 0)
+        vehicle_economic_cost = total_vehicles * VEHICLE_ECONOMIC_COST
+
+        # Total costs
+        estimated_economic_damages = person_economic_cost + vehicle_economic_cost
+        estimated_societal_costs = estimated_economic_damages + person_qaly_cost
+
+        stats = LocationReportStats(
+            total_crashes=stats_result.total_crashes or 0,
+            total_injuries=int(stats_result.total_injuries or 0),
+            total_fatalities=int(stats_result.total_fatalities or 0),
+            incapacitating_injuries=int(stats_result.incapacitating_injuries or 0),
+            crashes_with_injuries=stats_result.crashes_with_injuries or 0,
+            crashes_with_fatalities=stats_result.crashes_with_fatalities or 0,
+            hit_and_run_count=stats_result.hit_and_run_count or 0,
+            pedestrians_involved=people_result.pedestrians or 0,
+            cyclists_involved=people_result.cyclists or 0,
+            estimated_economic_damages=estimated_economic_damages,
+            estimated_societal_costs=estimated_societal_costs,
+            total_vehicles=total_vehicles,
+            unknown_injury_count=people_result.unknown_count or 0,
+        )
+
+        # 2. Get crash causes breakdown
+        causes_query = text(f"""
+            SELECT
+                COALESCE(prim_contributory_cause, 'UNKNOWN') AS cause,
+                COUNT(*) AS crashes,
+                COALESCE(SUM(injuries_total), 0) AS injuries,
+                COALESCE(SUM(injuries_fatal), 0) AS fatalities
+            FROM crashes
+            WHERE geometry IS NOT NULL
+                AND {spatial_filter}
+                {date_filter}
+            GROUP BY prim_contributory_cause
+            ORDER BY crashes DESC
+            LIMIT 15
+        """)
+
+        causes_result = db.execute(causes_query, spatial_params).fetchall()
+        total_for_percentage = stats.total_crashes or 1
+
+        causes = [
+            CrashCauseSummary(
+                cause=row.cause or "UNKNOWN",
+                crashes=row.crashes,
+                injuries=int(row.injuries),
+                fatalities=int(row.fatalities),
+                percentage=round((row.crashes / total_for_percentage) * 100, 1),
+            )
+            for row in causes_result
+        ]
+
+        # 3. Get monthly trends for sparklines
+        trends_query = text(f"""
+            SELECT
+                TO_CHAR(DATE_TRUNC('month', crash_date), 'YYYY-MM') AS month,
+                COUNT(*) AS crashes,
+                COALESCE(SUM(injuries_total), 0) AS injuries,
+                COALESCE(SUM(injuries_fatal), 0) AS fatalities
+            FROM crashes
+            WHERE geometry IS NOT NULL
+                AND crash_date >= NOW() - INTERVAL '12 months'
+                AND {spatial_filter}
+                {date_filter}
+            GROUP BY DATE_TRUNC('month', crash_date)
+            ORDER BY month
+        """)
+
+        trends_result = db.execute(trends_query, spatial_params).fetchall()
+
+        monthly_trends = [
+            MonthlyTrendPoint(
+                month=row.month,
+                crashes=row.crashes,
+                injuries=int(row.injuries),
+                fatalities=int(row.fatalities),
+            )
+            for row in trends_result
+        ]
+
+        # 4. Get crashes as GeoJSON for map display
+        crashes_query = text(f"""
+            SELECT
+                crash_record_id,
+                crash_date,
+                injuries_total,
+                injuries_fatal,
+                injuries_incapacitating,
+                hit_and_run_i,
+                crash_type,
+                street_name,
+                prim_contributory_cause,
+                ST_X(geometry) AS longitude,
+                ST_Y(geometry) AS latitude
+            FROM crashes
+            WHERE geometry IS NOT NULL
+                AND {spatial_filter}
+                {date_filter}
+            ORDER BY crash_date DESC
+            LIMIT 5000
+        """)
+
+        crashes_result = db.execute(crashes_query, spatial_params).fetchall()
+
+        features = []
+        for row in crashes_result:
+            if row.longitude is not None and row.latitude is not None:
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [row.longitude, row.latitude],
+                    },
+                    "properties": {
+                        "crash_record_id": row.crash_record_id,
+                        "crash_date": row.crash_date.isoformat() if row.crash_date else None,
+                        "injuries_total": row.injuries_total or 0,
+                        "injuries_fatal": row.injuries_fatal or 0,
+                        "injuries_incapacitating": row.injuries_incapacitating or 0,
+                        "hit_and_run_i": row.hit_and_run_i == "Y",
+                        "crash_type": row.crash_type,
+                        "street_name": row.street_name,
+                        "primary_contributory_cause": row.prim_contributory_cause,
+                    },
+                })
+
+        crashes_geojson = {
+            "type": "FeatureCollection",
+            "features": features,
+        }
+
+        return LocationReportResponse(
+            stats=stats,
+            causes=causes,
+            monthly_trends=monthly_trends,
+            crashes_geojson=crashes_geojson,
+            query_area_geojson=query_area_geojson,
+        )
+
+    except Exception as e:
+        logger.error("Failed to generate location report", error=str(e))
         raise
