@@ -166,7 +166,7 @@ export function CostBreakdownTable({ breakdown }: CostBreakdownTableProps) {
                 </span>
               </td>
               <td className="py-2 px-2 text-right text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
-                {formatCurrencyFull(vehicle_costs.unit_cost)}
+                {formatCurrencyFull(vehicle_costs.unit_economic_cost)}
               </td>
               <td className="py-2 px-2 text-right">
                 <span
@@ -179,12 +179,18 @@ export function CostBreakdownTable({ breakdown }: CostBreakdownTableProps) {
                   {formatCurrencyAbbrev(vehicle_costs.subtotal_economic)}
                 </span>
               </td>
-              <td className="py-2 px-2 text-right text-sm text-gray-400 hidden sm:table-cell">
-                N/A
+              <td className="py-2 px-2 text-right text-sm text-gray-500 dark:text-gray-400 hidden sm:table-cell">
+                {formatCurrencyFull(vehicle_costs.unit_economic_cost + vehicle_costs.unit_qaly_cost)}
               </td>
               <td className="py-2 px-2 text-right">
-                <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
-                  {formatCurrencyAbbrev(vehicle_costs.subtotal_economic)}
+                <span
+                  className={`text-sm font-medium ${
+                    vehicle_costs.subtotal_societal > 0
+                      ? "text-indigo-600 dark:text-indigo-400"
+                      : "text-gray-400"
+                  }`}
+                >
+                  {formatCurrencyAbbrev(vehicle_costs.subtotal_societal)}
                 </span>
               </td>
             </tr>
@@ -208,9 +214,10 @@ export function CostBreakdownTable({ breakdown }: CostBreakdownTableProps) {
         </table>
       </div>
       <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-        Economic costs include medical, emergency services, property damage, and
-        productivity losses. Societal costs add Quality-Adjusted Life Year
-        (QALY) valuations. Source: FHWA KABCO methodology (2024$).
+        <strong>Methodology:</strong> Person costs are calculated for injuries and fatalities only
+        (K-A-B-C classifications). &quot;No Indication of Injury&quot; (O) persons have $0 cost to avoid
+        double-counting with vehicle damage. Vehicle costs use FHWA O-classification rates
+        ($6,269 economic + $3,927 QALY = $10,196 per vehicle). Source: FHWA KABCO (2024$).
       </p>
     </div>
   );
