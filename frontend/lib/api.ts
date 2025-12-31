@@ -181,8 +181,31 @@ export interface LocationReportRequest {
   longitude?: number;
   radius_feet?: number;
   polygon?: [number, number][];
+  place_type?: string;
+  place_id?: string;
   start_date?: string;
   end_date?: string;
+}
+
+// Places API Types
+export interface PlaceType {
+  id: string;
+  name: string;
+  source: "native" | "uploaded";
+  feature_count: number;
+}
+
+export interface PlaceItem {
+  id: string;
+  name: string;
+  display_name: string;
+}
+
+export interface PlaceGeometry {
+  place_type: string;
+  place_id: string;
+  name: string;
+  geometry: GeoJSON.Geometry;
 }
 
 export async function fetchLocationReport(
@@ -200,6 +223,49 @@ export async function fetchLocationReport(
   if (!res.ok) {
     const errorText = await res.text();
     throw new Error(`Failed to fetch location report: ${errorText}`);
+  }
+
+  return res.json();
+}
+
+// Places API Functions
+export async function fetchPlaceTypes(): Promise<PlaceType[]> {
+  const res = await fetch(`${API_BASE}/places/types`, {
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch place types: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchPlaceItems(placeType: string): Promise<PlaceItem[]> {
+  const res = await fetch(`${API_BASE}/places/types/${encodeURIComponent(placeType)}/items`, {
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch place items: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchPlaceGeometry(
+  placeType: string,
+  placeId: string
+): Promise<PlaceGeometry> {
+  const res = await fetch(
+    `${API_BASE}/places/types/${encodeURIComponent(placeType)}/items/${encodeURIComponent(placeId)}/geometry`,
+    {
+      cache: "no-store",
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch place geometry: ${res.statusText}`);
   }
 
   return res.json();

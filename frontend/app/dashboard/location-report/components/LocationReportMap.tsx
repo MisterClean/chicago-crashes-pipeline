@@ -45,10 +45,11 @@ function generateCirclePolygon(
 }
 
 interface LocationReportMapProps {
-  mode: "radius" | "polygon";
+  mode: "radius" | "polygon" | "place";
   selectedCenter: [number, number] | null;
   selectedRadius: number; // in feet
   selectedPolygon: [number, number][] | null;
+  selectedPlaceGeometry: GeoJSON.Geometry | null;
   onCenterSelect: (center: [number, number]) => void;
   onPolygonComplete: (polygon: [number, number][]) => void;
   reportData: LocationReportResponse | null;
@@ -87,6 +88,7 @@ export function LocationReportMap({
   selectedCenter,
   selectedRadius,
   selectedPolygon,
+  selectedPlaceGeometry,
   onCenterSelect,
   onPolygonComplete,
   reportData,
@@ -186,9 +188,22 @@ export function LocationReportMap({
     };
   }, [selectedPolygon]);
 
+  // Create place geometry as a GeoJSON feature
+  const placeGeoJSON = useCallback(() => {
+    if (!selectedPlaceGeometry) return null;
+
+    return {
+      type: "Feature" as const,
+      geometry: selectedPlaceGeometry,
+      properties: {},
+    };
+  }, [selectedPlaceGeometry]);
+
   // Get the selection area to display (from report data or current selection)
   const selectionAreaGeoJSON = reportData?.query_area_geojson ||
-    (mode === "radius" ? circleGeoJSON() : completedPolygonGeoJSON());
+    (mode === "radius" ? circleGeoJSON() :
+     mode === "polygon" ? completedPolygonGeoJSON() :
+     placeGeoJSON());
 
   return (
     <div className="relative">

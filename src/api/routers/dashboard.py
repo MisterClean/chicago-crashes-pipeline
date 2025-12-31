@@ -1,10 +1,11 @@
 """Dashboard API endpoints for the Chicago Crash Dashboard frontend."""
 
+import json
 from datetime import datetime, time, timedelta
 from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -461,6 +462,16 @@ class LocationReportRequest(BaseModel):
         description="Polygon coordinates as [[lng, lat], [lng, lat], ...]. Must have at least 3 points.",
     )
 
+    # Or provide a place type and ID for predefined boundaries
+    place_type: Optional[str] = Field(
+        None,
+        description="Place type (e.g., 'wards', 'community_areas', 'layer:123')",
+    )
+    place_id: Optional[str] = Field(
+        None,
+        description="Place ID within the type",
+    )
+
     # Date filters
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -524,6 +535,100 @@ class LocationReportResponse(BaseModel):
     query_area_geojson: dict
 
 
+# Native place type configuration for location report queries
+# Maps type ID to (table name, pk column name)
+_NATIVE_PLACE_TABLES = {
+    "wards": ("wards", "ward"),
+    "community_areas": ("community_areas", "area_numbe"),
+    "house_districts": ("house_districts", "district"),
+    "senate_districts": ("senate_districts", "district"),
+    "police_beats": ("police_beats", "beat_num"),
+}
+
+
+def _get_place_geometry(
+    db: Session, place_type: str, place_id: str
+) -> tuple[str, dict] | None:
+    """
+    Look up the geometry for a place.
+
+    Returns (name, geometry_dict) tuple or None if not found.
+    """
+    # Handle user-uploaded layers
+    if place_type.startswith("layer:"):
+        layer_id = int(place_type.split(":")[1])
+        feature_id = int(place_id)
+
+        result = db.execute(
+            text(
+                """
+                SELECT
+                    slf.properties,
+                    ST_AsGeoJSON(slf.geometry)::json as geometry
+                FROM spatial_layer_features slf
+                WHERE slf.layer_id = :layer_id AND slf.id = :feature_id
+                """
+            ),
+            {"layer_id": layer_id, "feature_id": feature_id},
+        ).fetchone()
+
+        if not result:
+            return None
+
+        props = result.properties or {}
+        name = (
+            props.get("name")
+            or props.get("NAME")
+            or props.get("title")
+            or props.get("TITLE")
+            or f"Feature {feature_id}"
+        )
+
+        return (name, result.geometry)
+
+    # Handle native place types
+    if place_type not in _NATIVE_PLACE_TABLES:
+        return None
+
+    table_name, pk_column = _NATIVE_PLACE_TABLES[place_type]
+
+    result = db.execute(
+        text(
+            f"""
+            SELECT
+                ST_AsGeoJSON(geometry)::json as geometry
+            FROM {table_name}
+            WHERE {pk_column}::text = :place_id
+            """
+        ),
+        {"place_id": place_id},
+    ).fetchone()
+
+    if not result:
+        return None
+
+    # Generate a display name based on place type
+    if place_type == "wards":
+        name = f"Ward {place_id}"
+    elif place_type == "community_areas":
+        # Query for the community name
+        name_result = db.execute(
+            text("SELECT community FROM community_areas WHERE area_numbe::text = :place_id"),
+            {"place_id": place_id},
+        ).fetchone()
+        name = name_result.community if name_result else f"Community Area {place_id}"
+    elif place_type == "house_districts":
+        name = f"House District {place_id}"
+    elif place_type == "senate_districts":
+        name = f"Senate District {place_id}"
+    elif place_type == "police_beats":
+        name = f"Police Beat {place_id}"
+    else:
+        name = f"{place_type} {place_id}"
+
+    return (name, result.geometry)
+
+
 @router.post("/location-report", response_model=LocationReportResponse)
 async def get_location_report(
     request: LocationReportRequest,
@@ -535,30 +640,71 @@ async def get_location_report(
     Provide either:
     - latitude, longitude, and radius_feet for a circular area
     - polygon coordinates for a custom shape
+    - place_type and place_id for a predefined boundary
 
     Returns comprehensive crash statistics, cause breakdown, trends, and GeoJSON data.
     """
     try:
-        # Validate request - must have either radius query or polygon
+        # Validate request - must have either radius query, polygon, or place
         has_radius_query = all([
             request.latitude is not None,
             request.longitude is not None,
             request.radius_feet is not None,
         ])
         has_polygon_query = request.polygon is not None and len(request.polygon) >= 3
+        has_place_query = request.place_type is not None and request.place_id is not None
 
-        if not has_radius_query and not has_polygon_query:
-            from fastapi import HTTPException
+        if not has_radius_query and not has_polygon_query and not has_place_query:
             raise HTTPException(
                 status_code=400,
-                detail="Must provide either (latitude, longitude, radius_feet) or polygon coordinates",
+                detail="Must provide either (latitude, longitude, radius_feet), polygon coordinates, or (place_type, place_id)",
             )
 
         # Normalize end_date
         end_date_normalized = normalize_end_date(request.end_date)
 
-        # Build the spatial filter SQL
-        if has_radius_query:
+        # Build the spatial filter SQL based on query type
+        if has_place_query:
+            # Look up the place geometry
+            place_geometry_result = _get_place_geometry(
+                db, request.place_type, request.place_id
+            )
+            if not place_geometry_result:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Place not found: {request.place_type}/{request.place_id}",
+                )
+
+            place_name, place_geometry = place_geometry_result
+
+            # Use ST_Contains with the place geometry
+            spatial_filter = """
+                ST_Contains(
+                    ST_SetSRID(ST_GeomFromGeoJSON(:place_geojson), 4326),
+                    geometry
+                )
+            """
+            spatial_filter_aliased = """
+                ST_Contains(
+                    ST_SetSRID(ST_GeomFromGeoJSON(:place_geojson), 4326),
+                    c.geometry
+                )
+            """
+            spatial_params = {"place_geojson": json.dumps(place_geometry)}
+
+            # Query area is the place geometry
+            query_area_geojson = {
+                "type": "Feature",
+                "geometry": place_geometry,
+                "properties": {
+                    "type": "place",
+                    "place_type": request.place_type,
+                    "place_id": request.place_id,
+                    "name": place_name,
+                },
+            }
+
+        elif has_radius_query:
             # Convert feet to meters (1 foot = 0.3048 meters)
             radius_meters = request.radius_feet * 0.3048
 
@@ -596,7 +742,6 @@ async def get_location_report(
                 ) AS geojson
             """)
             area_result = db.execute(query_area_sql, spatial_params).fetchone()
-            import json
             query_area_geojson = {
                 "type": "Feature",
                 "geometry": json.loads(area_result.geojson) if area_result else None,
