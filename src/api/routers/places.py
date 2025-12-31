@@ -169,6 +169,19 @@ async def list_place_items(
     # Check if it's a user-uploaded layer
     if place_type.startswith("layer:"):
         layer_id = int(place_type.split(":")[1])
+
+        # Verify layer exists and is active before exposing features
+        layer = (
+            db.query(SpatialLayer)
+            .filter(SpatialLayer.id == layer_id, SpatialLayer.is_active == True)
+            .first()
+        )
+        if not layer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Layer not found or inactive: {layer_id}",
+            )
+
         features = (
             db.query(SpatialLayerFeature)
             .filter(SpatialLayerFeature.layer_id == layer_id)
@@ -233,6 +246,18 @@ async def get_place_geometry(
     if place_type.startswith("layer:"):
         layer_id = int(place_type.split(":")[1])
         feature_id = int(place_id)
+
+        # Verify layer exists and is active before exposing geometry
+        layer = (
+            db.query(SpatialLayer)
+            .filter(SpatialLayer.id == layer_id, SpatialLayer.is_active == True)
+            .first()
+        )
+        if not layer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Layer not found or inactive: {layer_id}",
+            )
 
         result = db.execute(
             text(
