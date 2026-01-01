@@ -1,14 +1,16 @@
 # =============================================================================
 # Railway Configuration - Chicago Crash Dashboard (Frontend)
 # =============================================================================
-# Next.js frontend service
+# Next.js frontend service - using Nixpacks for simpler builds
 # =============================================================================
 
 [build]
-# Use the existing Dockerfile
-dockerfilePath = "Dockerfile"
+# Let Nixpacks auto-detect Next.js
+builder = "NIXPACKS"
 
 [deploy]
+# Start command
+startCommand = "npm run start"
 # Health check
 healthcheckPath = "/"
 healthcheckTimeout = 100
