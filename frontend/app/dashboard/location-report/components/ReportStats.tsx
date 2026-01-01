@@ -1,6 +1,7 @@
 "use client";
 
 import type { LocationReportStats } from "@/lib/api";
+import { CostBreakdownTable } from "./CostBreakdownTable";
 
 interface ReportStatsProps {
   stats: LocationReportStats;
@@ -223,6 +224,12 @@ export function ReportStats({ stats }: ReportStatsProps) {
         )}
       </div>
 
+      {/* Cost Breakdown Table */}
+      {stats.cost_breakdown && (
+        <div className="mt-6">
+          <CostBreakdownTable breakdown={stats.cost_breakdown} />
+        </div>
+      )}
     </div>
   );
 }
