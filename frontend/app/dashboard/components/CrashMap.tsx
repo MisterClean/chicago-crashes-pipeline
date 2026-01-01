@@ -23,11 +23,14 @@ interface CrashMapProps {
   endDate?: string;
 }
 
-// Simple basemap style - uses Protomaps free tiles
-// In production, this would use self-hosted PMTiles
+// Basemap style URL - requires NEXT_PUBLIC_PROTOMAPS_KEY env var
+// Get a free key at: https://protomaps.com/
+const PROTOMAPS_KEY = process.env.NEXT_PUBLIC_PROTOMAPS_KEY;
 const BASEMAP_STYLE_URL =
   process.env.NEXT_PUBLIC_BASEMAP_URL ||
-  "https://api.protomaps.com/styles/v4/light/en.json?key=***REMOVED***";
+  (PROTOMAPS_KEY
+    ? `https://api.protomaps.com/styles/v4/light/en.json?key=${PROTOMAPS_KEY}`
+    : "");
 
 export function CrashMap({ startDate, endDate }: CrashMapProps) {
   const [crashes, setCrashes] = useState<CrashGeoJSON | null>(null);

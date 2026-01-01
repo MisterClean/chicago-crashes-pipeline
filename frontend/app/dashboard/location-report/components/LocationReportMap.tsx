@@ -79,9 +79,13 @@ function formatCurrency(value: number | undefined | null): string {
   return `$${value.toFixed(0)}`;
 }
 
+// Basemap style URL - requires NEXT_PUBLIC_PROTOMAPS_KEY env var
+const PROTOMAPS_KEY = process.env.NEXT_PUBLIC_PROTOMAPS_KEY;
 const BASEMAP_STYLE_URL =
   process.env.NEXT_PUBLIC_BASEMAP_URL ||
-  "https://api.protomaps.com/styles/v4/light/en.json?key=***REMOVED***";
+  (PROTOMAPS_KEY
+    ? `https://api.protomaps.com/styles/v4/light/en.json?key=${PROTOMAPS_KEY}`
+    : "");
 
 export function LocationReportMap({
   mode,
