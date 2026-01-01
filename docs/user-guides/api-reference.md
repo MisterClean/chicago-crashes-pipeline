@@ -152,6 +152,152 @@ Replace the stored geometry with new GeoJSON content.
 ### `DELETE /spatial/layers/{layer_id}`
 Remove a layer entirely.
 
+## Dashboard APIs (`/dashboard`)
+
+Frontend-facing endpoints for the public crash dashboard and location reports.
+
+### `GET /dashboard/stats`
+Get aggregate statistics for dashboard metric cards.
+
+**Query Parameters:**
+- `start_date` (optional): ISO 8601 date to filter from
+- `end_date` (optional): ISO 8601 date to filter to (inclusive, end of day)
+
+**Response:**
+```json
+{
+  "total_crashes": 45000,
+  "total_injuries": 12000,
+  "total_fatalities": 150,
+  "pedestrians_involved": 2500,
+  "cyclists_involved": 1200,
+  "hit_and_run_count": 8000
+}
+```
+
+### `GET /dashboard/trends/weekly`
+Get weekly crash trends for charts.
+
+**Query Parameters:**
+- `weeks` (optional, 1-104): Number of weeks to look back (default: 52)
+- `start_date` / `end_date` (optional): Explicit date range (takes precedence over weeks)
+
+**Response:**
+```json
+[
+  {"week": "2024-01-01", "crashes": 850, "injuries": 220, "fatalities": 3},
+  {"week": "2024-01-08", "crashes": 920, "injuries": 245, "fatalities": 2}
+]
+```
+
+### `GET /dashboard/crashes/geojson`
+Get crashes as GeoJSON FeatureCollection for map display.
+
+**Query Parameters:**
+- `start_date` / `end_date` (optional): Date range filter
+- `limit` (optional, 1-50000): Maximum records (default: 10000)
+
+**Response:** GeoJSON FeatureCollection with crash points and properties (crash_record_id, crash_date, injuries, severity, etc.)
+
+### `GET /dashboard/crashes/by-hour`
+Get crash counts grouped by hour of day for time-of-day analysis.
+
+### `GET /dashboard/crashes/by-cause`
+Get top crash causes by count.
+
+**Query Parameters:**
+- `limit` (optional, 1-50): Number of causes to return (default: 10)
+
+### `POST /dashboard/location-report`
+Generate a comprehensive crash report for a specific geographic area.
+
+**Request Body (choose one spatial query method):**
+```json
+{
+  "latitude": 41.9032,
+  "longitude": -87.6315,
+  "radius_feet": 1320,
+  "start_date": "2023-01-01",
+  "end_date": "2024-01-01"
+}
+```
+
+Or polygon query:
+```json
+{
+  "polygon": [[-87.63, 41.90], [-87.62, 41.90], [-87.62, 41.91], [-87.63, 41.91]],
+  "start_date": "2023-01-01"
+}
+```
+
+Or predefined place:
+```json
+{
+  "place_type": "wards",
+  "place_id": "44",
+  "start_date": "2023-01-01"
+}
+```
+
+**Response:**
+- `stats`: Aggregate statistics including crash counts, injuries, fatalities, pedestrians, cyclists, hit-and-runs, and **cost estimates** (economic damages and societal costs based on FHWA KABCO methodology)
+- `cost_breakdown`: Detailed per-injury-classification costs showing unit costs and subtotals
+- `causes`: Top contributory causes with percentages
+- `monthly_trends`: 12-month trend data for sparklines
+- `crashes_geojson`: GeoJSON of crash points in the area
+- `query_area_geojson`: GeoJSON of the queried boundary
+
+**Cost Estimation Methodology:**
+Costs are calculated using FHWA 2024 crash cost factors:
+- Fatal (K): $1.6M economic / $11.3M societal
+- Incapacitating (A): $172K / $1.1M
+- Non-incapacitating (B): $44K / $225K
+- Possible Injury (C): $26K / $111K
+- Property Damage Only vehicles: $6,269 / $10,196
+
+## Places APIs (`/places`)
+
+Endpoints for accessing predefined geographic boundaries (wards, community areas, districts) and user-uploaded spatial layers.
+
+### `GET /places/types`
+List all available place types.
+
+**Response:**
+```json
+[
+  {"id": "wards", "name": "Wards", "source": "native", "feature_count": 50},
+  {"id": "community_areas", "name": "Community Areas", "source": "native", "feature_count": 77},
+  {"id": "house_districts", "name": "IL House Districts", "source": "native", "feature_count": 23},
+  {"id": "senate_districts", "name": "IL Senate Districts", "source": "native", "feature_count": 12},
+  {"id": "police_beats", "name": "Police Beats", "source": "native", "feature_count": 277},
+  {"id": "layer:5", "name": "My Custom Zones", "source": "uploaded", "feature_count": 15}
+]
+```
+
+### `GET /places/types/{place_type}/items`
+List all places within a place type.
+
+**Response:**
+```json
+[
+  {"id": "1", "name": "Ward 1", "display_name": "Ward 1 - Ald. Daniel La Spata"},
+  {"id": "2", "name": "Ward 2", "display_name": "Ward 2 - Ald. Brian Hopkins"}
+]
+```
+
+### `GET /places/types/{place_type}/items/{place_id}/geometry`
+Get the GeoJSON geometry for a specific place.
+
+**Response:**
+```json
+{
+  "place_type": "wards",
+  "place_id": "44",
+  "name": "Ward 44",
+  "geometry": {"type": "MultiPolygon", "coordinates": [...]}
+}
+```
+
 ## OpenAPI & Docs
 
 - **Swagger UI**: `GET /docs`

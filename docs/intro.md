@@ -7,7 +7,14 @@ description: Orientation guide for the Chicago Crash Data Pipeline documentation
 
 # Chicago Crash Data Pipeline
 
-Welcome to the documentation hub for the Chicago Crash Data Pipeline. This site explains how to install, operate, and extend the system that ingests crash records from the City of Chicago SODA APIs, applies quality controls, and exposes the data through a managed PostGIS database, REST API, and admin portal.
+Welcome to the documentation hub for the Chicago Crash Data Pipeline. This site explains how to install, operate, and extend the system that ingests crash records from the City of Chicago SODA APIs, applies quality controls, and exposes the data through a managed PostGIS database, REST API, admin portal, and **public dashboard**.
+
+**Key Features:**
+- **Public Dashboard**: Interactive Next.js dashboard with crash maps, trend charts, and location-based reports with cost estimates
+- **Location Reports**: Generate crash statistics for any area using radius, polygon, or predefined boundaries (wards, community areas, districts)
+- **Cost Estimation**: FHWA KABCO methodology for estimating economic and societal costs of crashes
+- **ETL Pipeline**: Automated data ingestion from Chicago Open Data Portal with validation and sanitization
+- **Spatial Analysis**: PostGIS-powered spatial queries and boundary lookups
 
 Use the navigation to explore targeted guides:
 
