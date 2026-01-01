@@ -1,0 +1,17 @@
+# =============================================================================
+# Railway Configuration - Chicago Crash Dashboard (Frontend)
+# =============================================================================
+# Next.js frontend service
+# =============================================================================
+
+[build]
+# Use the existing Dockerfile
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Health check
+healthcheckPath = "/"
+healthcheckTimeout = 100
+# Restart policy
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

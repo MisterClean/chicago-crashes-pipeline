@@ -62,10 +62,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Switch to non-root user
 USER nextjs
 
-# Expose port
+# Expose port (Railway assigns dynamically via $PORT)
 EXPOSE 3000
 
-ENV PORT=3000
+# Let Railway override PORT, default to 3000 for local
 ENV HOSTNAME="0.0.0.0"
 
 # Start the application
