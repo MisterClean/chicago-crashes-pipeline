@@ -1,6 +1,6 @@
 # Chicago Crash Dashboard
 
-Public dashboard for visualizing Chicago traffic crash data. Built by [Lakeview Urbanists](https://lakeviewurbanists.org).
+Public dashboard for visualizing Chicago traffic crash data from the Chicago Open Data Portal.
 
 ## Features
 
@@ -103,4 +103,3 @@ MIT License - see LICENSE file in the main repository.
 ## Credits
 
 - Data: [Chicago Open Data Portal](https://data.cityofchicago.org)
-- Organization: [Lakeview Urbanists](https://lakeviewurbanists.org)

@@ -2,7 +2,7 @@
   "name": "chicago-crash-dashboard",
   "version": "0.1.0",
   "private": true,
-  "description": "Public dashboard for Chicago traffic crash data - by Lakeview Urbanists",
+  "description": "Public dashboard for Chicago traffic crash data",
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
@@ -36,7 +36,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lakeview-urbanists/chicago-crash-dashboard"
+    "url": "https://github.com/MisterClean/chicago-crashes-pipeline"
   },
   "license": "MIT"
 }

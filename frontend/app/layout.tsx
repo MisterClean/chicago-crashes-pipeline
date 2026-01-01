@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Chicago Crash Dashboard | Lakeview Urbanists",
+  title: "Main Dashboard",
   description:
     "Public dashboard visualizing Chicago traffic crash data. Explore patterns, trends, and safety insights across Chicago neighborhoods.",
   openGraph: {
@@ -42,14 +42,6 @@ export default function RootLayout({
                 >
                   Location Report
                 </Link>
-                <a
-                  href="https://lakeviewurbanists.org"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  Lakeview Urbanists
-                </a>
               </div>
             </div>
           </nav>
@@ -58,7 +50,7 @@ export default function RootLayout({
         <footer className="bg-gray-100 dark:bg-gray-900 py-8 mt-auto">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center text-sm text-gray-600 dark:text-gray-400">
             <p>
-              Data from{" "}
+Data from{" "}
               <a
                 href="https://data.cityofchicago.org"
                 target="_blank"
@@ -67,20 +59,11 @@ export default function RootLayout({
               >
                 Chicago Open Data Portal
               </a>
-              . Built by{" "}
-              <a
-                href="https://lakeviewurbanists.org"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-gray-900 dark:hover:text-gray-200"
-              >
-                Lakeview Urbanists
-              </a>
               .
             </p>
             <p className="mt-2">
               <a
-                href="https://github.com/lakeview-urbanists/chicago-crash-dashboard"
+                href="https://github.com/MisterClean/chicago-crashes-pipeline"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline hover:text-gray-900 dark:hover:text-gray-200"

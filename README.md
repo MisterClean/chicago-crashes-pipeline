@@ -13,7 +13,7 @@ A Python-based data pipeline that ingests, validates, and serves Chicago traffic
 
 The service orchestrates end-to-end ETL for four interconnected datasets from the Chicago Open Data Portal, keeps them synchronized in PostgreSQL/PostGIS, and exposes a FastAPI layer with an admin UI and documentation.
 
-**Now includes a full-stack public dashboard** built with Next.js, featuring interactive maps, trend charts, and real-time statistics - perfect for advocacy organizations like [Lakeview Urbanists](https://lakeviewurbanists.org).
+**Now includes a full-stack public dashboard** built with Next.js, featuring interactive maps, trend charts, and real-time statistics.
 
 ## Quick Start
 
