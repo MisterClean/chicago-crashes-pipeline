@@ -10,8 +10,8 @@
 dockerfilePath = "docker/Dockerfile"
 
 [deploy]
-# Start command
-startCommand = "uvicorn src.api.main:app --host 0.0.0.0 --port $PORT"
+# Start command - use shell to expand $PORT
+startCommand = "sh -c 'uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT:-8000}'"
 # Health check endpoint
 healthcheckPath = "/health"
 healthcheckTimeout = 100
