@@ -23,17 +23,20 @@ CHICAGO_TZ = ZoneInfo("America/Chicago")
 # FHWA Crash Cost Constants (2024$)
 # Source: https://highways.dot.gov/sites/fhwa.dot.gov/files/2025-10/CrashCostFactSheet_508_OCT2025.pdf
 # KABCO Person-Injury Unit Costs
+# Note: "No Indication of Injury" (O) has $0 person cost to avoid double-counting with vehicle damage
 KABCO_COSTS = {
     # injury_classification: (economic, qaly, comprehensive)
     "FATAL": (1_606_644, 9_651_851, 11_258_495),  # K
     "INCAPACITATING INJURY": (172_179, 917_345, 1_089_524),  # A
     "NONINCAPACITATING INJURY": (44_490, 180_107, 224_597),  # B
     "REPORTED, NOT EVIDENT": (25_933, 85_348, 111_281),  # C
-    "NO INDICATION OF INJURY": (6_269, 3_927, 10_196),  # O
+    "NO INDICATION OF INJURY": (0, 0, 0),  # O - vehicle damage captured separately
 }
 
-# Vehicle unit cost (QALY = 0 for vehicles)
-VEHICLE_ECONOMIC_COST = 7_913
+# Vehicle unit costs (FHWA "O" classification costs applied per vehicle)
+# These represent property damage and related costs for crashes without injuries
+VEHICLE_ECONOMIC_COST = 6_269
+VEHICLE_QALY_COST = 3_927
 
 # Mapping from injury_classification values to KABCO keys
 INJURY_TO_KABCO = {
@@ -42,6 +45,15 @@ INJURY_TO_KABCO = {
     "NONINCAPACITATING INJURY": "NONINCAPACITATING INJURY",
     "REPORTED, NOT EVIDENT": "REPORTED, NOT EVIDENT",
     "NO INDICATION OF INJURY": "NO INDICATION OF INJURY",
+}
+
+# Human-readable labels for KABCO classifications
+KABCO_LABELS = {
+    "FATAL": "Fatal (K)",
+    "INCAPACITATING INJURY": "Incapacitating (A)",
+    "NONINCAPACITATING INJURY": "Non-incapacitating (B)",
+    "REPORTED, NOT EVIDENT": "Possible Injury (C)",
+    "NO INDICATION OF INJURY": "No Indication (O)",
 }
 
 
@@ -504,6 +516,44 @@ class LocationReportStats(BaseModel):
         default=0,
         description="Count of people with unknown/blank injury classification (excluded from costs)"
     )
+    # Detailed cost breakdown
+    cost_breakdown: Optional["CostBreakdown"] = Field(
+        default=None,
+        description="Detailed breakdown of costs by injury classification and vehicles"
+    )
+
+
+class InjuryClassificationCost(BaseModel):
+    """Cost breakdown for a single injury classification."""
+
+    classification: str = Field(description="KABCO classification name")
+    classification_label: str = Field(description="Human-readable label (e.g., 'Fatal (K)')")
+    count: int = Field(description="Number of people in this classification")
+    unit_economic_cost: int = Field(description="Per-person economic cost in dollars")
+    unit_qaly_cost: int = Field(description="Per-person QALY cost in dollars")
+    subtotal_economic: int = Field(description="count * unit_economic_cost")
+    subtotal_societal: int = Field(description="count * (unit_economic + unit_qaly)")
+
+
+class VehicleCostBreakdown(BaseModel):
+    """Cost breakdown for vehicles."""
+
+    count: int = Field(description="Total vehicles involved")
+    unit_economic_cost: int = Field(description="Per-vehicle economic cost")
+    unit_qaly_cost: int = Field(description="Per-vehicle QALY cost")
+    subtotal_economic: int = Field(description="count * unit_economic_cost")
+    subtotal_societal: int = Field(description="count * (unit_economic + unit_qaly)")
+
+
+class CostBreakdown(BaseModel):
+    """Complete cost breakdown with per-classification details."""
+
+    injury_costs: List[InjuryClassificationCost] = Field(
+        description="Breakdown by injury classification"
+    )
+    vehicle_costs: VehicleCostBreakdown = Field(description="Vehicle cost breakdown")
+    total_economic: int = Field(description="Grand total economic cost")
+    total_societal: int = Field(description="Grand total societal cost")
 
 
 class CrashCauseSummary(BaseModel):
@@ -842,9 +892,17 @@ async def get_location_report(
 
         people_result = db.execute(people_query, spatial_params).fetchone()
 
-        # Get vehicle count for vehicle costs
+        # Get vehicle counts:
+        # - total_vehicles: all vehicles for display
+        # - pdo_vehicles: vehicles from Property Damage Only crashes (no injuries/fatalities)
+        #   Only PDO vehicles are costed separately since injury costs already include vehicle damage
         vehicles_query = text(f"""
-            SELECT COUNT(*) AS vehicle_count
+            SELECT
+                COUNT(*) AS total_vehicle_count,
+                COUNT(*) FILTER (
+                    WHERE COALESCE(c.injuries_total, 0) = 0
+                    AND COALESCE(c.injuries_fatal, 0) = 0
+                ) AS pdo_vehicle_count
             FROM crash_vehicles cv
             INNER JOIN crashes c ON cv.crash_record_id = c.crash_record_id
             WHERE c.geometry IS NOT NULL
@@ -853,7 +911,8 @@ async def get_location_report(
         """)
 
         vehicles_result = db.execute(vehicles_query, spatial_params).fetchone()
-        total_vehicles = vehicles_result.vehicle_count or 0
+        total_vehicles = vehicles_result.total_vehicle_count or 0
+        pdo_vehicles = vehicles_result.pdo_vehicle_count or 0
 
         # Calculate costs based on KABCO methodology
         # Economic damages = sum of economic costs for all people + vehicle costs
@@ -876,12 +935,45 @@ async def get_location_report(
             for classification, count in injury_counts.items()
         )
 
-        # Add vehicle costs (economic only, QALY = 0)
-        vehicle_economic_cost = total_vehicles * VEHICLE_ECONOMIC_COST
+        # Add vehicle costs only for Property Damage Only crashes
+        # (injury costs already include vehicle damage for crashes with injuries)
+        vehicle_economic_cost = pdo_vehicles * VEHICLE_ECONOMIC_COST
+        vehicle_qaly_cost = pdo_vehicles * VEHICLE_QALY_COST
 
         # Total costs
         estimated_economic_damages = person_economic_cost + vehicle_economic_cost
-        estimated_societal_costs = estimated_economic_damages + person_qaly_cost
+        estimated_societal_costs = estimated_economic_damages + person_qaly_cost + vehicle_qaly_cost
+
+        # Build detailed cost breakdown for transparency
+        injury_cost_breakdowns = []
+        for classification, count in injury_counts.items():
+            economic, qaly, _ = KABCO_COSTS[classification]
+            injury_cost_breakdowns.append(
+                InjuryClassificationCost(
+                    classification=classification,
+                    classification_label=KABCO_LABELS.get(classification, classification),
+                    count=count,
+                    unit_economic_cost=economic,
+                    unit_qaly_cost=qaly,
+                    subtotal_economic=count * economic,
+                    subtotal_societal=count * (economic + qaly),
+                )
+            )
+
+        vehicle_breakdown = VehicleCostBreakdown(
+            count=pdo_vehicles,  # Only PDO vehicles are costed
+            unit_economic_cost=VEHICLE_ECONOMIC_COST,
+            unit_qaly_cost=VEHICLE_QALY_COST,
+            subtotal_economic=vehicle_economic_cost,
+            subtotal_societal=vehicle_economic_cost + vehicle_qaly_cost,
+        )
+
+        cost_breakdown = CostBreakdown(
+            injury_costs=injury_cost_breakdowns,
+            vehicle_costs=vehicle_breakdown,
+            total_economic=estimated_economic_damages,
+            total_societal=estimated_societal_costs,
+        )
 
         stats = LocationReportStats(
             total_crashes=stats_result.total_crashes or 0,
@@ -897,6 +989,7 @@ async def get_location_report(
             estimated_societal_costs=estimated_societal_costs,
             total_vehicles=total_vehicles,
             unknown_injury_count=people_result.unknown_count or 0,
+            cost_breakdown=cost_breakdown,
         )
 
         # 2. Get crash causes breakdown
