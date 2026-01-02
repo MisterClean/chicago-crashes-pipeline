@@ -18,17 +18,30 @@ import {
 
 type SelectionMode = "radius" | "polygon" | "place";
 
-// Preset radius options
-const RADIUS_PRESETS = [
-  { label: "50 ft", value: 50 },
-  { label: "75 ft", value: 75 },
-  { label: "100 ft", value: 100 },
-  { label: "250 ft", value: 250 },
-  { label: "1/8 mi", value: 660 },
-  { label: "1/2 mi", value: 2640 },
-  { label: "1 mi", value: 5280 },
-  { label: "2 mi", value: 10560 },
-];
+// Slider range constants (logarithmic scale for better UX)
+const MIN_RADIUS = 25; // 25 feet minimum
+const MAX_RADIUS = 10560; // 2 miles maximum
+
+// Convert slider position (0-100) to radius using logarithmic scale
+function sliderToRadius(sliderValue: number): number {
+  const minLog = Math.log(MIN_RADIUS);
+  const maxLog = Math.log(MAX_RADIUS);
+  const scale = (maxLog - minLog) / 100;
+  return Math.round(Math.exp(minLog + scale * sliderValue));
+}
+
+// Convert radius to slider position (0-100)
+function radiusToSlider(radius: number): number {
+  const minLog = Math.log(MIN_RADIUS);
+  const maxLog = Math.log(MAX_RADIUS);
+  const scale = (maxLog - minLog) / 100;
+  return (Math.log(radius) - minLog) / scale;
+}
+
+// Format radius for display (always in feet for consistency)
+function formatRadius(feet: number): string {
+  return `${feet.toLocaleString()} ft`;
+}
 
 // Calculate default dates (last 30 days)
 function getDefaultDates() {
@@ -54,7 +67,7 @@ export default function LocationReportPage() {
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);
-  const [selectedRadius, setSelectedRadius] = useState<number>(1320); // Default 1/4 mile in feet
+  const [selectedRadius, setSelectedRadius] = useState<number>(200); // Default 200 feet
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
 
@@ -152,12 +165,6 @@ export default function LocationReportPage() {
     if (!isNaN(numValue) && numValue > 0 && numValue <= 26400) {
       setSelectedRadius(numValue);
     }
-  };
-
-  // Handle preset radius selection
-  const handleRadiusPresetChange = (value: number) => {
-    setSelectedRadius(value);
-    setCustomRadiusInput(""); // Clear custom input when preset is selected
   };
 
   const handleGenerateReport = async () => {
@@ -284,42 +291,47 @@ export default function LocationReportPage() {
             {selectionMode === "radius" && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Radius
+                  Radius: <span className="font-bold text-blue-600 dark:text-blue-400">{formatRadius(selectedRadius)}</span>
                 </label>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={customRadiusInput ? "custom" : selectedRadius}
+                <div className="flex items-center gap-3">
+                  {/* Continuous slider with logarithmic scale */}
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    value={radiusToSlider(selectedRadius)}
                     onChange={(e) => {
-                      if (e.target.value !== "custom") {
-                        handleRadiusPresetChange(Number(e.target.value));
-                      }
+                      const newRadius = sliderToRadius(Number(e.target.value));
+                      setSelectedRadius(newRadius);
+                      setCustomRadiusInput(""); // Clear custom input when using slider
                     }}
-                    className="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
-                  >
-                    {customRadiusInput && (
-                      <option value="custom">Custom</option>
-                    )}
-                    {RADIUS_PRESETS.map((preset) => (
-                      <option key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
+                    className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                  {/* Custom input - shows slider value in grey, user input in normal color */}
                   <input
                     type="number"
-                    min="1"
+                    min="25"
                     max="26400"
-                    placeholder="Custom"
-                    value={customRadiusInput}
+                    placeholder="ft"
+                    value={customRadiusInput || selectedRadius}
                     onChange={(e) => handleCustomRadiusChange(e.target.value)}
-                    className="w-20 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                    onFocus={(e) => {
+                      // Select all text on focus for easy replacement
+                      e.target.select();
+                    }}
+                    className={`w-16 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-xs text-center ${
+                      customRadiusInput
+                        ? "text-gray-900 dark:text-gray-100"
+                        : "text-gray-400 dark:text-gray-500"
+                    }`}
                   />
                 </div>
-                {customRadiusInput && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {selectedRadius.toLocaleString()} ft
-                  </p>
-                )}
+                {/* Tick marks */}
+                <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 mt-1 px-0.5">
+                  <span>25 ft</span>
+                  <span>10,560 ft</span>
+                </div>
               </div>
             )}
 
