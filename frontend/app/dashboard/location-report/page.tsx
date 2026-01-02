@@ -295,10 +295,20 @@ export default function LocationReportPage() {
       return;
     }
 
+    if (!reportDateRange) {
+      setExportError("Generate a report first before exporting.");
+      return;
+    }
+
     const request = buildLocationRequest();
     if (!request) {
       return;
     }
+
+    // Use the frozen report date range, not live input values
+    // This ensures the export matches the displayed report
+    request.start_date = reportDateRange.start || undefined;
+    request.end_date = reportDateRange.end || undefined;
 
     setExporting(true);
     setExportError(null);
