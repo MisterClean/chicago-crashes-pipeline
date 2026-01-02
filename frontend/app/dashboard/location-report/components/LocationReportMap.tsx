@@ -143,8 +143,10 @@ export function LocationReportMap({
     (event: MapLayerMouseEvent) => {
       if (mode === "polygon" && drawingPolygon.length >= 3) {
         event.preventDefault();
-        // Complete the polygon
-        onPolygonComplete(drawingPolygon);
+        // Complete the polygon - save a copy before clearing
+        const completedPolygon = [...drawingPolygon];
+        onPolygonComplete(completedPolygon);
+        setDrawingPolygon([]); // Clear drawing state
         setIsDrawing(false);
       }
     },
@@ -225,28 +227,30 @@ export function LocationReportMap({
       >
         <NavigationControl position="top-right" />
 
-        {/* Selection Area (circle or polygon) */}
-        {selectionAreaGeoJSON && (
-          <Source id="selection-area" type="geojson" data={selectionAreaGeoJSON}>
-            <Layer
-              id="selection-area-fill"
-              type="fill"
-              paint={{
-                "fill-color": "#3b82f6",
-                "fill-opacity": 0.15,
-              }}
-            />
-            <Layer
-              id="selection-area-outline"
-              type="line"
-              paint={{
-                "line-color": "#3b82f6",
-                "line-width": 2,
-                "line-dasharray": [2, 2],
-              }}
-            />
-          </Source>
-        )}
+        {/* Selection Area (circle or polygon) - use empty FeatureCollection when no selection */}
+        <Source
+          id="selection-area"
+          type="geojson"
+          data={selectionAreaGeoJSON || { type: "FeatureCollection", features: [] }}
+        >
+          <Layer
+            id="selection-area-fill"
+            type="fill"
+            paint={{
+              "fill-color": "#3b82f6",
+              "fill-opacity": 0.15,
+            }}
+          />
+          <Layer
+            id="selection-area-outline"
+            type="line"
+            paint={{
+              "line-color": "#3b82f6",
+              "line-width": 2,
+              "line-dasharray": [2, 2],
+            }}
+          />
+        </Source>
 
         {/* Drawing preview for polygon */}
         {mode === "polygon" && isDrawing && drawingPolygon.length >= 2 && (

@@ -119,15 +119,16 @@ export default function LocationReportPage() {
       return;
     }
 
+    // Capture whether we should preserve the default before async operation
+    const shouldPreserveDefault =
+      isInitialPlaceLoadRef.current &&
+      selectedPlaceType === DEFAULT_PLACE_TYPE;
+
     const loadPlaceItems = async () => {
       setLoadingPlaceItems(true);
       setPlaceItems([]);
-      // Only clear the place ID if this isn't the initial load with defaults
-      const shouldPreserveDefault =
-        isInitialPlaceLoadRef.current &&
-        selectedPlaceType === DEFAULT_PLACE_TYPE &&
-        selectedPlaceId === DEFAULT_PLACE_ID;
 
+      // Only clear the place ID if this isn't the initial load with default place type
       if (!shouldPreserveDefault) {
         setSelectedPlaceId(null);
         setSelectedPlaceGeometry(null);
@@ -144,7 +145,7 @@ export default function LocationReportPage() {
       }
     };
     loadPlaceItems();
-  }, [selectedPlaceType, selectedPlaceId]);
+  }, [selectedPlaceType]);
 
   // Load place geometry when place is selected
   useEffect(() => {
