@@ -308,15 +308,23 @@ export default function LocationReportPage() {
                     }}
                     className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-600"
                   />
-                  {/* Custom input */}
+                  {/* Custom input - shows slider value in grey, user input in normal color */}
                   <input
                     type="number"
                     min="25"
                     max="26400"
                     placeholder="ft"
-                    value={customRadiusInput}
+                    value={customRadiusInput || selectedRadius}
                     onChange={(e) => handleCustomRadiusChange(e.target.value)}
-                    className="w-16 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs text-center"
+                    onFocus={(e) => {
+                      // Select all text on focus for easy replacement
+                      e.target.select();
+                    }}
+                    className={`w-16 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-xs text-center ${
+                      customRadiusInput
+                        ? "text-gray-900 dark:text-gray-100"
+                        : "text-gray-400 dark:text-gray-500"
+                    }`}
                   />
                 </div>
                 {/* Tick marks */}
