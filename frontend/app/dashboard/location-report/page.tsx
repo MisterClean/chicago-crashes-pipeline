@@ -681,7 +681,7 @@ export default function LocationReportPage() {
                   </span>
                 </button>
                 {showExportOptions && (
-                  <div className="absolute right-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                  <div className="absolute right-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900 z-50">
                     <p className="font-medium text-gray-800 dark:text-gray-100">
                       Export Data
                     </p>
