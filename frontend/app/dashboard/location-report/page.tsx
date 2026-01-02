@@ -61,6 +61,9 @@ export default function LocationReportPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Store the date range used for the current report (so panel doesn't update in real-time)
+  const [reportDateRange, setReportDateRange] = useState<{ start: string; end: string } | null>(null);
+
   // Date filter state - default to last 30 days
   const [startDate, setStartDate] = useState(defaultDates.startDate);
   const [endDate, setEndDate] = useState(defaultDates.endDate);
@@ -201,6 +204,7 @@ export default function LocationReportPage() {
 
       const result = await fetchLocationReport(request);
       setReport(result);
+      setReportDateRange({ start: startDate, end: endDate });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to generate report");
     } finally {
@@ -215,6 +219,7 @@ export default function LocationReportPage() {
     setSelectedPlaceId(null);
     setSelectedPlaceGeometry(null);
     setReport(null);
+    setReportDateRange(null);
     setError(null);
   };
 
@@ -554,8 +559,8 @@ export default function LocationReportPage() {
             onCenterSelect={handleCenterSelect}
             onPolygonComplete={setSelectedPolygon}
             reportData={report}
-            startDate={startDate}
-            endDate={endDate}
+            startDate={reportDateRange?.start ?? ""}
+            endDate={reportDateRange?.end ?? ""}
           />
         </div>
 
