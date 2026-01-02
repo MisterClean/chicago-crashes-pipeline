@@ -64,6 +64,7 @@ export default function LocationReportPage() {
   // Date filter state - default to last 30 days
   const [startDate, setStartDate] = useState(defaultDates.startDate);
   const [endDate, setEndDate] = useState(defaultDates.endDate);
+  const [activeDatePreset, setActiveDatePreset] = useState<string | null>("30d"); // Track active preset
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);
@@ -143,12 +144,18 @@ export default function LocationReportPage() {
   }, [selectedPlaceType, selectedPlaceId]);
 
   // Date preset handler
-  const setDatePreset = useCallback((days: number) => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - days);
-    setStartDate(start.toISOString().split("T")[0]);
-    setEndDate(end.toISOString().split("T")[0]);
+  const setDatePreset = useCallback((days: number, label: string) => {
+    setActiveDatePreset(label);
+    if (days === 0) {
+      setStartDate("");
+      setEndDate("");
+    } else {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(start.getDate() - days);
+      setStartDate(start.toISOString().split("T")[0]);
+      setEndDate(end.toISOString().split("T")[0]);
+    }
   }, []);
 
   // Handle center selection - clear report when user clicks new location
@@ -396,8 +403,12 @@ export default function LocationReportPage() {
                 ].map((preset) => (
                   <button
                     key={preset.label}
-                    onClick={() => preset.days > 0 ? setDatePreset(preset.days) : (setStartDate(""), setEndDate(""))}
-                    className="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-700 dark:text-gray-300"
+                    onClick={() => setDatePreset(preset.days, preset.label)}
+                    className={`px-2 py-1 text-xs rounded transition-colors ${
+                      activeDatePreset === preset.label
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300"
+                    }`}
                   >
                     {preset.label}
                   </button>
@@ -408,14 +419,20 @@ export default function LocationReportPage() {
                 <input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    setActiveDatePreset(null);
+                  }}
                   className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs"
                 />
                 <span className="text-gray-400 text-xs">–</span>
                 <input
                   type="date"
                   value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
+                  onChange={(e) => {
+                    setEndDate(e.target.value);
+                    setActiveDatePreset(null);
+                  }}
                   className="flex-1 min-w-0 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs"
                 />
               </div>
