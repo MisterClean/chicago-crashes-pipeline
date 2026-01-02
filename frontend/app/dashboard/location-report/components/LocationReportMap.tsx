@@ -11,7 +11,7 @@ import Map, {
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
-  DEFAULT_VIEW_STATE,
+  LOOP_VIEW_STATE,
   SEVERITY_LEGEND,
   MIN_ZOOM,
   MAX_ZOOM,
@@ -213,7 +213,7 @@ export function LocationReportMap({
     <div className="relative">
       <Map
         ref={mapRef}
-        initialViewState={DEFAULT_VIEW_STATE}
+        initialViewState={LOOP_VIEW_STATE}
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
         style={{ width: "100%", height: "600px", borderRadius: "8px" }}

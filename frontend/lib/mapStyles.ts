@@ -18,6 +18,20 @@ export const DEFAULT_VIEW_STATE = {
   bearing: 0,
 };
 
+// Loop community area center coordinates
+export const LOOP_CENTER = {
+  longitude: -87.6298,
+  latitude: 41.8823,
+};
+
+// Default view state for location report - focused on Loop
+export const LOOP_VIEW_STATE = {
+  ...LOOP_CENTER,
+  zoom: 14, // Zoomed in to show Loop neighborhood
+  pitch: 0,
+  bearing: 0,
+};
+
 // Zoom constraints
 export const MIN_ZOOM = 7; // Allow zooming out to see full Chicago metro area
 export const MAX_ZOOM = 18;

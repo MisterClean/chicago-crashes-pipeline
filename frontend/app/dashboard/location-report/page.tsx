@@ -43,20 +43,24 @@ function formatRadius(feet: number): string {
   return `${feet.toLocaleString()} ft`;
 }
 
-// Calculate default dates (last 30 days)
+// Calculate default dates (last 1 year)
 function getDefaultDates() {
   const end = new Date();
   const start = new Date();
-  start.setDate(start.getDate() - 30);
+  start.setFullYear(start.getFullYear() - 1);
   return {
     startDate: start.toISOString().split("T")[0],
     endDate: end.toISOString().split("T")[0],
   };
 }
 
+// Default place configuration (LOOP community area)
+const DEFAULT_PLACE_TYPE = "community_areas";
+const DEFAULT_PLACE_ID = "32"; // LOOP community area number
+
 export default function LocationReportPage() {
   const defaultDates = getDefaultDates();
-  const [selectionMode, setSelectionMode] = useState<SelectionMode>("radius");
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("place");
   const [report, setReport] = useState<LocationReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,10 +68,10 @@ export default function LocationReportPage() {
   // Store the date range used for the current report (so panel doesn't update in real-time)
   const [reportDateRange, setReportDateRange] = useState<{ start: string; end: string } | null>(null);
 
-  // Date filter state - default to last 30 days
+  // Date filter state - default to last 1 year
   const [startDate, setStartDate] = useState(defaultDates.startDate);
   const [endDate, setEndDate] = useState(defaultDates.endDate);
-  const [activeDatePreset, setActiveDatePreset] = useState<string | null>("30d"); // Track active preset
+  const [activeDatePreset, setActiveDatePreset] = useState<string | null>("1yr"); // Track active preset
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);
@@ -75,11 +79,11 @@ export default function LocationReportPage() {
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
 
-  // Place selection state
+  // Place selection state - default to LOOP community area
   const [placeTypes, setPlaceTypes] = useState<PlaceType[]>([]);
   const [placeItems, setPlaceItems] = useState<PlaceItem[]>([]);
-  const [selectedPlaceType, setSelectedPlaceType] = useState<string | null>(null);
-  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedPlaceType, setSelectedPlaceType] = useState<string | null>(DEFAULT_PLACE_TYPE);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(DEFAULT_PLACE_ID);
   const [selectedPlaceGeometry, setSelectedPlaceGeometry] = useState<GeoJSON.Geometry | null>(null);
   const [loadingPlaceTypes, setLoadingPlaceTypes] = useState(false);
   const [loadingPlaceItems, setLoadingPlaceItems] = useState(false);
