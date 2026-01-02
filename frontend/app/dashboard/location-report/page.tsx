@@ -18,22 +18,31 @@ import {
 
 type SelectionMode = "radius" | "polygon" | "place";
 
-// Preset radius options (values for slider stops)
-const RADIUS_PRESETS = [
-  { label: "50 ft", value: 50 },
-  { label: "100 ft", value: 100 },
-  { label: "200 ft", value: 200 },
-  { label: "500 ft", value: 500 },
-  { label: "1/8 mi", value: 660 },
-  { label: "1/4 mi", value: 1320 },
-  { label: "1/2 mi", value: 2640 },
-  { label: "1 mi", value: 5280 },
-];
+// Slider range constants (logarithmic scale for better UX)
+const MIN_RADIUS = 25; // 25 feet minimum
+const MAX_RADIUS = 10560; // 2 miles maximum
+
+// Convert slider position (0-100) to radius using logarithmic scale
+function sliderToRadius(sliderValue: number): number {
+  const minLog = Math.log(MIN_RADIUS);
+  const maxLog = Math.log(MAX_RADIUS);
+  const scale = (maxLog - minLog) / 100;
+  return Math.round(Math.exp(minLog + scale * sliderValue));
+}
+
+// Convert radius to slider position (0-100)
+function radiusToSlider(radius: number): number {
+  const minLog = Math.log(MIN_RADIUS);
+  const maxLog = Math.log(MAX_RADIUS);
+  const scale = (maxLog - minLog) / 100;
+  return (Math.log(radius) - minLog) / scale;
+}
 
 // Format radius for display
 function formatRadius(feet: number): string {
-  if (feet >= 5280) return `${(feet / 5280).toFixed(feet % 5280 === 0 ? 0 : 1)} mi`;
-  if (feet >= 660) return `${(feet / 5280).toFixed(2)} mi`;
+  if (feet >= 5280) return `${(feet / 5280).toFixed(1)} mi`;
+  if (feet >= 2640) return `${(feet / 5280).toFixed(2)} mi`;
+  if (feet >= 660) return `${Math.round(feet / 5.28) / 100} mi`;
   return `${feet} ft`;
 }
 
@@ -159,12 +168,6 @@ export default function LocationReportPage() {
     if (!isNaN(numValue) && numValue > 0 && numValue <= 26400) {
       setSelectedRadius(numValue);
     }
-  };
-
-  // Handle preset radius selection
-  const handleRadiusPresetChange = (value: number) => {
-    setSelectedRadius(value);
-    setCustomRadiusInput(""); // Clear custom input when preset is selected
   };
 
   const handleGenerateReport = async () => {
@@ -294,27 +297,24 @@ export default function LocationReportPage() {
                   Radius: <span className="font-bold text-blue-600 dark:text-blue-400">{formatRadius(selectedRadius)}</span>
                 </label>
                 <div className="flex items-center gap-3">
-                  {/* Slider */}
+                  {/* Continuous slider with logarithmic scale */}
                   <input
                     type="range"
                     min={0}
-                    max={RADIUS_PRESETS.length - 1}
-                    step={1}
-                    value={RADIUS_PRESETS.findIndex(p => p.value === selectedRadius) >= 0
-                      ? RADIUS_PRESETS.findIndex(p => p.value === selectedRadius)
-                      : RADIUS_PRESETS.findIndex(p => p.value >= selectedRadius) || 0}
+                    max={100}
+                    step={0.5}
+                    value={radiusToSlider(selectedRadius)}
                     onChange={(e) => {
-                      const preset = RADIUS_PRESETS[Number(e.target.value)];
-                      if (preset) {
-                        handleRadiusPresetChange(preset.value);
-                      }
+                      const newRadius = sliderToRadius(Number(e.target.value));
+                      setSelectedRadius(newRadius);
+                      setCustomRadiusInput(""); // Clear custom input when using slider
                     }}
                     className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-600"
                   />
                   {/* Custom input */}
                   <input
                     type="number"
-                    min="1"
+                    min="25"
                     max="26400"
                     placeholder="ft"
                     value={customRadiusInput}
@@ -324,8 +324,8 @@ export default function LocationReportPage() {
                 </div>
                 {/* Tick marks */}
                 <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 mt-1 px-0.5">
-                  <span>50ft</span>
-                  <span>1mi</span>
+                  <span>25ft</span>
+                  <span>2mi</span>
                 </div>
               </div>
             )}
