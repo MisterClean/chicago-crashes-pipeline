@@ -23,6 +23,7 @@ const RADIUS_PRESETS = [
   { label: "50 ft", value: 50 },
   { label: "75 ft", value: 75 },
   { label: "100 ft", value: 100 },
+  { label: "150 ft", value: 150 },
   { label: "250 ft", value: 250 },
   { label: "1/8 mi", value: 660 },
   { label: "1/2 mi", value: 2640 },
@@ -54,7 +55,7 @@ export default function LocationReportPage() {
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);
-  const [selectedRadius, setSelectedRadius] = useState<number>(1320); // Default 1/4 mile in feet
+  const [selectedRadius, setSelectedRadius] = useState<number>(150); // Default 150 feet
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
 
