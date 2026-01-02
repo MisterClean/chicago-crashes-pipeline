@@ -18,18 +18,24 @@ import {
 
 type SelectionMode = "radius" | "polygon" | "place";
 
-// Preset radius options
+// Preset radius options (values for slider stops)
 const RADIUS_PRESETS = [
   { label: "50 ft", value: 50 },
-  { label: "75 ft", value: 75 },
   { label: "100 ft", value: 100 },
-  { label: "150 ft", value: 150 },
-  { label: "250 ft", value: 250 },
+  { label: "200 ft", value: 200 },
+  { label: "500 ft", value: 500 },
   { label: "1/8 mi", value: 660 },
+  { label: "1/4 mi", value: 1320 },
   { label: "1/2 mi", value: 2640 },
   { label: "1 mi", value: 5280 },
-  { label: "2 mi", value: 10560 },
 ];
+
+// Format radius for display
+function formatRadius(feet: number): string {
+  if (feet >= 5280) return `${(feet / 5280).toFixed(feet % 5280 === 0 ? 0 : 1)} mi`;
+  if (feet >= 660) return `${(feet / 5280).toFixed(2)} mi`;
+  return `${feet} ft`;
+}
 
 // Calculate default dates (last 30 days)
 function getDefaultDates() {
@@ -55,7 +61,7 @@ export default function LocationReportPage() {
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);
-  const [selectedRadius, setSelectedRadius] = useState<number>(150); // Default 150 feet
+  const [selectedRadius, setSelectedRadius] = useState<number>(200); // Default 200 feet
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
 
@@ -285,42 +291,42 @@ export default function LocationReportPage() {
             {selectionMode === "radius" && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Radius
+                  Radius: <span className="font-bold text-blue-600 dark:text-blue-400">{formatRadius(selectedRadius)}</span>
                 </label>
-                <div className="flex items-center gap-2">
-                  <select
-                    value={customRadiusInput ? "custom" : selectedRadius}
+                <div className="flex items-center gap-3">
+                  {/* Slider */}
+                  <input
+                    type="range"
+                    min={0}
+                    max={RADIUS_PRESETS.length - 1}
+                    step={1}
+                    value={RADIUS_PRESETS.findIndex(p => p.value === selectedRadius) >= 0
+                      ? RADIUS_PRESETS.findIndex(p => p.value === selectedRadius)
+                      : RADIUS_PRESETS.findIndex(p => p.value >= selectedRadius) || 0}
                     onChange={(e) => {
-                      if (e.target.value !== "custom") {
-                        handleRadiusPresetChange(Number(e.target.value));
+                      const preset = RADIUS_PRESETS[Number(e.target.value)];
+                      if (preset) {
+                        handleRadiusPresetChange(preset.value);
                       }
                     }}
-                    className="flex-1 min-w-0 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
-                  >
-                    {customRadiusInput && (
-                      <option value="custom">Custom</option>
-                    )}
-                    {RADIUS_PRESETS.map((preset) => (
-                      <option key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
+                    className="flex-1 h-2 bg-gray-200 dark:bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                  />
+                  {/* Custom input */}
                   <input
                     type="number"
                     min="1"
                     max="26400"
-                    placeholder="Custom"
+                    placeholder="ft"
                     value={customRadiusInput}
                     onChange={(e) => handleCustomRadiusChange(e.target.value)}
-                    className="w-20 px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
+                    className="w-16 px-2 py-1.5 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-xs text-center"
                   />
                 </div>
-                {customRadiusInput && (
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                    {selectedRadius.toLocaleString()} ft
-                  </p>
-                )}
+                {/* Tick marks */}
+                <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 mt-1 px-0.5">
+                  <span>50ft</span>
+                  <span>1mi</span>
+                </div>
               </div>
             )}
 
