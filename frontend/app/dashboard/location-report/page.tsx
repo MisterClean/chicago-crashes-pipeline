@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { LocationReportMap } from "./components/LocationReportMap";
 import { ReportStats } from "./components/ReportStats";
 import { CausesTable } from "./components/CausesTable";
@@ -43,20 +43,24 @@ function formatRadius(feet: number): string {
   return `${feet.toLocaleString()} ft`;
 }
 
-// Calculate default dates (last 30 days)
+// Calculate default dates (last 1 year)
 function getDefaultDates() {
   const end = new Date();
   const start = new Date();
-  start.setDate(start.getDate() - 30);
+  start.setFullYear(start.getFullYear() - 1);
   return {
     startDate: start.toISOString().split("T")[0],
     endDate: end.toISOString().split("T")[0],
   };
 }
 
+// Default place configuration (LOOP community area)
+const DEFAULT_PLACE_TYPE = "layer:4"; // Community Areas uploaded layer
+const DEFAULT_PLACE_ID = "259"; // LOOP community area feature ID
+
 export default function LocationReportPage() {
   const defaultDates = getDefaultDates();
-  const [selectionMode, setSelectionMode] = useState<SelectionMode>("radius");
+  const [selectionMode, setSelectionMode] = useState<SelectionMode>("place");
   const [report, setReport] = useState<LocationReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,10 +68,10 @@ export default function LocationReportPage() {
   // Store the date range used for the current report (so panel doesn't update in real-time)
   const [reportDateRange, setReportDateRange] = useState<{ start: string; end: string } | null>(null);
 
-  // Date filter state - default to last 30 days
+  // Date filter state - default to last 1 year
   const [startDate, setStartDate] = useState(defaultDates.startDate);
   const [endDate, setEndDate] = useState(defaultDates.endDate);
-  const [activeDatePreset, setActiveDatePreset] = useState<string | null>("30d"); // Track active preset
+  const [activeDatePreset, setActiveDatePreset] = useState<string | null>("1yr"); // Track active preset
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);
@@ -75,14 +79,17 @@ export default function LocationReportPage() {
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
 
-  // Place selection state
+  // Place selection state - default to LOOP community area
   const [placeTypes, setPlaceTypes] = useState<PlaceType[]>([]);
   const [placeItems, setPlaceItems] = useState<PlaceItem[]>([]);
-  const [selectedPlaceType, setSelectedPlaceType] = useState<string | null>(null);
-  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedPlaceType, setSelectedPlaceType] = useState<string | null>(DEFAULT_PLACE_TYPE);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(DEFAULT_PLACE_ID);
   const [selectedPlaceGeometry, setSelectedPlaceGeometry] = useState<GeoJSON.Geometry | null>(null);
   const [loadingPlaceTypes, setLoadingPlaceTypes] = useState(false);
   const [loadingPlaceItems, setLoadingPlaceItems] = useState(false);
+
+  // Track if we've done the initial auto-load
+  const hasAutoLoadedRef = useRef(false);
 
   // Load place types on mount
   useEffect(() => {
@@ -100,6 +107,9 @@ export default function LocationReportPage() {
     loadPlaceTypes();
   }, []);
 
+  // Track if this is the initial load (for preserving default place ID)
+  const isInitialPlaceLoadRef = useRef(true);
+
   // Load place items when place type changes
   useEffect(() => {
     if (!selectedPlaceType) {
@@ -109,11 +119,22 @@ export default function LocationReportPage() {
       return;
     }
 
+    // Capture whether we should preserve the default before async operation
+    const shouldPreserveDefault =
+      isInitialPlaceLoadRef.current &&
+      selectedPlaceType === DEFAULT_PLACE_TYPE;
+
     const loadPlaceItems = async () => {
       setLoadingPlaceItems(true);
       setPlaceItems([]);
-      setSelectedPlaceId(null);
-      setSelectedPlaceGeometry(null);
+
+      // Only clear the place ID if this isn't the initial load with default place type
+      if (!shouldPreserveDefault) {
+        setSelectedPlaceId(null);
+        setSelectedPlaceGeometry(null);
+      }
+      isInitialPlaceLoadRef.current = false;
+
       try {
         const items = await fetchPlaceItems(selectedPlaceType);
         setPlaceItems(items);
@@ -137,7 +158,10 @@ export default function LocationReportPage() {
       try {
         const result = await fetchPlaceGeometry(selectedPlaceType, selectedPlaceId);
         setSelectedPlaceGeometry(result.geometry);
-        setReport(null); // Clear old report when new place selected
+        // Only clear report on user-initiated changes, not initial load
+        if (hasAutoLoadedRef.current) {
+          setReport(null);
+        }
       } catch (err) {
         console.error("Failed to load place geometry:", err);
         setSelectedPlaceGeometry(null);
@@ -145,6 +169,39 @@ export default function LocationReportPage() {
     };
     loadPlaceGeometry();
   }, [selectedPlaceType, selectedPlaceId]);
+
+  // Auto-generate report on initial page load when geometry is ready
+  useEffect(() => {
+    if (
+      !hasAutoLoadedRef.current &&
+      selectedPlaceGeometry &&
+      selectedPlaceType === DEFAULT_PLACE_TYPE &&
+      selectedPlaceId === DEFAULT_PLACE_ID
+    ) {
+      hasAutoLoadedRef.current = true;
+      // Trigger report generation
+      const autoGenerateReport = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const request: LocationReportRequest = {
+            place_type: selectedPlaceType,
+            place_id: selectedPlaceId,
+            start_date: startDate,
+            end_date: endDate,
+          };
+          const result = await fetchLocationReport(request);
+          setReport(result);
+          setReportDateRange({ start: startDate, end: endDate });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to generate report");
+        } finally {
+          setLoading(false);
+        }
+      };
+      autoGenerateReport();
+    }
+  }, [selectedPlaceGeometry, selectedPlaceType, selectedPlaceId, startDate, endDate]);
 
   // Date preset handler
   const setDatePreset = useCallback((days: number, label: string) => {
