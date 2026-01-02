@@ -3,7 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Chicago Crash Dashboard | Lakeview Urbanists",
+  title: "Chicago Crash Dashboard",
   description:
     "Public dashboard visualizing Chicago traffic crash data. Explore patterns, trends, and safety insights across Chicago neighborhoods.",
   openGraph: {
@@ -42,14 +42,6 @@ export default function RootLayout({
                 >
                   Location Report
                 </Link>
-                <a
-                  href="https://lakeviewurbanists.org"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  Lakeview Urbanists
-                </a>
               </div>
             </div>
           </nav>
@@ -67,20 +59,9 @@ export default function RootLayout({
               >
                 Chicago Open Data Portal
               </a>
-              . Built by{" "}
+              .{" "}
               <a
-                href="https://lakeviewurbanists.org"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-gray-900 dark:hover:text-gray-200"
-              >
-                Lakeview Urbanists
-              </a>
-              .
-            </p>
-            <p className="mt-2">
-              <a
-                href="https://github.com/lakeview-urbanists/chicago-crash-dashboard"
+                href="https://github.com/MisterClean/chicago-crashes-pipeline"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="underline hover:text-gray-900 dark:hover:text-gray-200"

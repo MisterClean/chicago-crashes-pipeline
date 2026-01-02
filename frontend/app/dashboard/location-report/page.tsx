@@ -55,8 +55,8 @@ function getDefaultDates() {
 }
 
 // Default place configuration (LOOP community area)
-const DEFAULT_PLACE_TYPE = "community_areas";
-const DEFAULT_PLACE_ID = "32"; // LOOP community area number
+const DEFAULT_PLACE_TYPE = "layer:4"; // Community Areas uploaded layer
+const DEFAULT_PLACE_ID = "259"; // LOOP community area feature ID
 
 export default function LocationReportPage() {
   const defaultDates = getDefaultDates();
@@ -107,6 +107,9 @@ export default function LocationReportPage() {
     loadPlaceTypes();
   }, []);
 
+  // Track if this is the initial load (for preserving default place ID)
+  const isInitialPlaceLoadRef = useRef(true);
+
   // Load place items when place type changes
   useEffect(() => {
     if (!selectedPlaceType) {
@@ -119,8 +122,18 @@ export default function LocationReportPage() {
     const loadPlaceItems = async () => {
       setLoadingPlaceItems(true);
       setPlaceItems([]);
-      setSelectedPlaceId(null);
-      setSelectedPlaceGeometry(null);
+      // Only clear the place ID if this isn't the initial load with defaults
+      const shouldPreserveDefault =
+        isInitialPlaceLoadRef.current &&
+        selectedPlaceType === DEFAULT_PLACE_TYPE &&
+        selectedPlaceId === DEFAULT_PLACE_ID;
+
+      if (!shouldPreserveDefault) {
+        setSelectedPlaceId(null);
+        setSelectedPlaceGeometry(null);
+      }
+      isInitialPlaceLoadRef.current = false;
+
       try {
         const items = await fetchPlaceItems(selectedPlaceType);
         setPlaceItems(items);
@@ -131,7 +144,7 @@ export default function LocationReportPage() {
       }
     };
     loadPlaceItems();
-  }, [selectedPlaceType]);
+  }, [selectedPlaceType, selectedPlaceId]);
 
   // Load place geometry when place is selected
   useEffect(() => {
