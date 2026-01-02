@@ -38,12 +38,9 @@ function radiusToSlider(radius: number): number {
   return (Math.log(radius) - minLog) / scale;
 }
 
-// Format radius for display
+// Format radius for display (always in feet for consistency)
 function formatRadius(feet: number): string {
-  if (feet >= 5280) return `${(feet / 5280).toFixed(1)} mi`;
-  if (feet >= 2640) return `${(feet / 5280).toFixed(2)} mi`;
-  if (feet >= 660) return `${Math.round(feet / 5.28) / 100} mi`;
-  return `${feet} ft`;
+  return `${feet.toLocaleString()} ft`;
 }
 
 // Calculate default dates (last 30 days)
@@ -324,8 +321,8 @@ export default function LocationReportPage() {
                 </div>
                 {/* Tick marks */}
                 <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 mt-1 px-0.5">
-                  <span>25ft</span>
-                  <span>2mi</span>
+                  <span>25 ft</span>
+                  <span>10,560 ft</span>
                 </div>
               </div>
             )}
