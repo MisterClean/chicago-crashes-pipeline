@@ -7,11 +7,13 @@ import { CausesTable } from "./components/CausesTable";
 import { TrendSparklines } from "./components/TrendSparklines";
 import {
   fetchLocationReport,
+  exportLocationReport,
   fetchPlaceTypes,
   fetchPlaceItems,
   fetchPlaceGeometry,
   type LocationReportResponse,
   type LocationReportRequest,
+  type LocationReportDataset,
   type PlaceType,
   type PlaceItem,
 } from "@/lib/api";
@@ -64,6 +66,9 @@ export default function LocationReportPage() {
   const [report, setReport] = useState<LocationReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [showExportOptions, setShowExportOptions] = useState(false);
 
   // Store the date range used for the current report (so panel doesn't update in real-time)
   const [reportDateRange, setReportDateRange] = useState<{ start: string; end: string } | null>(null);
@@ -78,6 +83,12 @@ export default function LocationReportPage() {
   const [selectedRadius, setSelectedRadius] = useState<number>(200); // Default 200 feet
   const [customRadiusInput, setCustomRadiusInput] = useState<string>(""); // For freeform input
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
+  const [exportDatasets, setExportDatasets] = useState<LocationReportDataset[]>([
+    "crashes",
+    "people",
+    "vehicles",
+    "vision_zero",
+  ]);
 
   // Place selection state - default to LOOP community area
   const [placeTypes, setPlaceTypes] = useState<PlaceType[]>([]);
@@ -234,30 +245,39 @@ export default function LocationReportPage() {
     }
   };
 
+  const buildLocationRequest = (): LocationReportRequest | null => {
+    const request: LocationReportRequest = {};
+
+    if (selectionMode === "radius" && selectedCenter) {
+      request.latitude = selectedCenter[1];
+      request.longitude = selectedCenter[0];
+      request.radius_feet = selectedRadius;
+    } else if (selectionMode === "polygon" && selectedPolygon) {
+      request.polygon = selectedPolygon;
+    } else if (selectionMode === "place" && selectedPlaceType && selectedPlaceId) {
+      request.place_type = selectedPlaceType;
+      request.place_id = selectedPlaceId;
+    } else {
+      setError("Please select an area on the map first");
+      return null;
+    }
+
+    if (startDate) request.start_date = startDate;
+    if (endDate) request.end_date = endDate;
+
+    return request;
+  };
+
   const handleGenerateReport = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const request: LocationReportRequest = {};
-
-      if (selectionMode === "radius" && selectedCenter) {
-        request.latitude = selectedCenter[1];
-        request.longitude = selectedCenter[0];
-        request.radius_feet = selectedRadius;
-      } else if (selectionMode === "polygon" && selectedPolygon) {
-        request.polygon = selectedPolygon;
-      } else if (selectionMode === "place" && selectedPlaceType && selectedPlaceId) {
-        request.place_type = selectedPlaceType;
-        request.place_id = selectedPlaceId;
-      } else {
-        setError("Please select an area on the map first");
+      const request = buildLocationRequest();
+      if (!request) {
         setLoading(false);
         return;
       }
-
-      if (startDate) request.start_date = startDate;
-      if (endDate) request.end_date = endDate;
 
       const result = await fetchLocationReport(request);
       setReport(result);
@@ -266,6 +286,41 @@ export default function LocationReportPage() {
       setError(err instanceof Error ? err.message : "Failed to generate report");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!exportDatasets.length) {
+      setExportError("Select at least one dataset to export.");
+      return;
+    }
+
+    const request = buildLocationRequest();
+    if (!request) {
+      return;
+    }
+
+    setExporting(true);
+    setExportError(null);
+
+    try {
+      const { blob, filename } = await exportLocationReport({
+        ...request,
+        datasets: exportDatasets,
+      });
+
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : "Failed to export data");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -278,6 +333,8 @@ export default function LocationReportPage() {
     setReport(null);
     setReportDateRange(null);
     setError(null);
+    setExportError(null);
+    setShowExportOptions(false);
   };
 
   const hasSelection =
@@ -604,9 +661,87 @@ export default function LocationReportPage() {
 
         {/* Map */}
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-            Select Area
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+              Select Area
+            </h2>
+            {report && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowExportOptions((prev) => !prev)}
+                  className="inline-flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  Export
+                  <span
+                    className={`text-xs transition-transform ${
+                      showExportOptions ? "rotate-180" : ""
+                    }`}
+                  >
+                    ▼
+                  </span>
+                </button>
+                {showExportOptions && (
+                  <div className="absolute right-0 mt-2 w-64 rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                    <p className="font-medium text-gray-800 dark:text-gray-100">
+                      Export Data
+                    </p>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Download raw records for this report.
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {[
+                        { id: "crashes", label: "Crashes" },
+                        { id: "people", label: "People" },
+                        { id: "vehicles", label: "Vehicles" },
+                        { id: "vision_zero", label: "Vision Zero" },
+                      ].map((dataset) => (
+                        <label
+                          key={dataset.id}
+                          className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300"
+                        >
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600"
+                            checked={exportDatasets.includes(
+                              dataset.id as LocationReportDataset
+                            )}
+                            onChange={(event) => {
+                              setExportDatasets((prev) => {
+                                if (event.target.checked) {
+                                  return [
+                                    ...prev,
+                                    dataset.id as LocationReportDataset,
+                                  ];
+                                }
+                                return prev.filter((item) => item !== dataset.id);
+                              });
+                            }}
+                          />
+                          {dataset.label}
+                        </label>
+                      ))}
+                    </div>
+                    {exportError && (
+                      <p className="mt-2 text-xs text-red-600 dark:text-red-400">
+                        {exportError}
+                      </p>
+                    )}
+                    <button
+                      onClick={handleExport}
+                      disabled={exporting}
+                      className={`mt-3 w-full rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                        !exporting
+                          ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                          : "bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
+                      }`}
+                    >
+                      {exporting ? "Exporting..." : "Download Export"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
           <LocationReportMap
             mode={selectionMode}
             selectedCenter={selectedCenter}
