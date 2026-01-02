@@ -88,26 +88,6 @@ export default function RootLayout({
                 Open Source on GitHub
               </a>
             </p>
-            <p className="mt-2">
-              Made by{" "}
-              <a
-                href="https://bsky.app/profile/mclean.bsky.social"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-gray-900 dark:hover:text-gray-200"
-              >
-                Michael McLean
-              </a>
-              {" "}with inspiration from{" "}
-              <a
-                href="https://bsky.app/profile/ronythebikeczar.bsky.social/post/3liz34uzh7k2b"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="underline hover:text-gray-900 dark:hover:text-gray-200"
-              >
-                Rony Islam
-              </a>
-            </p>
           </div>
         </footer>
       </body>
