@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { LocationReportMap } from "./components/LocationReportMap";
 import { ReportStats } from "./components/ReportStats";
 import { CausesTable } from "./components/CausesTable";
@@ -88,6 +88,9 @@ export default function LocationReportPage() {
   const [loadingPlaceTypes, setLoadingPlaceTypes] = useState(false);
   const [loadingPlaceItems, setLoadingPlaceItems] = useState(false);
 
+  // Track if we've done the initial auto-load
+  const hasAutoLoadedRef = useRef(false);
+
   // Load place types on mount
   useEffect(() => {
     const loadPlaceTypes = async () => {
@@ -141,7 +144,10 @@ export default function LocationReportPage() {
       try {
         const result = await fetchPlaceGeometry(selectedPlaceType, selectedPlaceId);
         setSelectedPlaceGeometry(result.geometry);
-        setReport(null); // Clear old report when new place selected
+        // Only clear report on user-initiated changes, not initial load
+        if (hasAutoLoadedRef.current) {
+          setReport(null);
+        }
       } catch (err) {
         console.error("Failed to load place geometry:", err);
         setSelectedPlaceGeometry(null);
@@ -149,6 +155,39 @@ export default function LocationReportPage() {
     };
     loadPlaceGeometry();
   }, [selectedPlaceType, selectedPlaceId]);
+
+  // Auto-generate report on initial page load when geometry is ready
+  useEffect(() => {
+    if (
+      !hasAutoLoadedRef.current &&
+      selectedPlaceGeometry &&
+      selectedPlaceType === DEFAULT_PLACE_TYPE &&
+      selectedPlaceId === DEFAULT_PLACE_ID
+    ) {
+      hasAutoLoadedRef.current = true;
+      // Trigger report generation
+      const autoGenerateReport = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const request: LocationReportRequest = {
+            place_type: selectedPlaceType,
+            place_id: selectedPlaceId,
+            start_date: startDate,
+            end_date: endDate,
+          };
+          const result = await fetchLocationReport(request);
+          setReport(result);
+          setReportDateRange({ start: startDate, end: endDate });
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to generate report");
+        } finally {
+          setLoading(false);
+        }
+      };
+      autoGenerateReport();
+    }
+  }, [selectedPlaceGeometry, selectedPlaceType, selectedPlaceId, startDate, endDate]);
 
   // Date preset handler
   const setDatePreset = useCallback((days: number, label: string) => {
