@@ -1,17 +1,23 @@
 """Dashboard API endpoints for the Chicago Crash Dashboard frontend."""
 
+import csv
+import io
 import json
+import os
+import tempfile
+import zipfile
 from datetime import datetime, time, timedelta
-from typing import Any, List, Optional
+from typing import Any, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from src.models.base import get_db
-from src.models.crashes import Crash, CrashPerson
+from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -80,6 +86,159 @@ def normalize_end_date(end_date: Optional[datetime]) -> Optional[datetime]:
     if end_date.time() == time(0, 0, 0):
         return datetime.combine(end_date.date(), time(23, 59, 59, 999999))
     return end_date
+
+
+def _build_location_report_filters(
+    request: "LocationReportRequest",
+    db: Session,
+) -> tuple[str, dict, dict]:
+    has_radius_query = all([
+        request.latitude is not None,
+        request.longitude is not None,
+        request.radius_feet is not None,
+    ])
+    has_polygon_query = request.polygon is not None and len(request.polygon) >= 3
+    has_place_query = request.place_type is not None and request.place_id is not None
+
+    if not has_radius_query and not has_polygon_query and not has_place_query:
+        raise HTTPException(
+            status_code=400,
+            detail="Must provide either (latitude, longitude, radius_feet), polygon coordinates, or (place_type, place_id)",
+        )
+
+    if has_place_query:
+        place_geometry_result = _get_place_geometry(
+            db, request.place_type, request.place_id
+        )
+        if not place_geometry_result:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Place not found: {request.place_type}/{request.place_id}",
+            )
+
+        place_name, place_geometry = place_geometry_result
+
+        spatial_filter_template = """
+            ST_Contains(
+                ST_SetSRID(ST_GeomFromGeoJSON(:place_geojson), 4326),
+                {geometry_column}
+            )
+        """
+        spatial_params = {"place_geojson": json.dumps(place_geometry)}
+
+        query_area_geojson = {
+            "type": "Feature",
+            "geometry": place_geometry,
+            "properties": {
+                "type": "place",
+                "place_type": request.place_type,
+                "place_id": request.place_id,
+                "name": place_name,
+            },
+        }
+    elif has_radius_query:
+        radius_meters = request.radius_feet * 0.3048
+
+        spatial_filter_template = """
+            ST_DWithin(
+                {geometry_column}::geography,
+                ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
+                :radius_meters
+            )
+        """
+        spatial_params = {
+            "center_lat": request.latitude,
+            "center_lng": request.longitude,
+            "radius_meters": radius_meters,
+        }
+
+        query_area_sql = text("""
+            SELECT ST_AsGeoJSON(
+                ST_Buffer(
+                    ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
+                    :radius_meters
+                )::geometry
+            ) AS geojson
+        """)
+        area_result = db.execute(query_area_sql, spatial_params).fetchone()
+        query_area_geojson = {
+            "type": "Feature",
+            "geometry": json.loads(area_result.geojson) if area_result else None,
+            "properties": {
+                "type": "radius",
+                "center": [request.longitude, request.latitude],
+                "radius_feet": request.radius_feet,
+            },
+        }
+    else:
+        coords = request.polygon.copy()
+        if coords[0] != coords[-1]:
+            coords.append(coords[0])
+
+        coord_str = ", ".join([f"{c[0]} {c[1]}" for c in coords])
+        polygon_wkt = f"POLYGON(({coord_str}))"
+
+        spatial_filter_template = """
+            ST_Contains(
+                ST_SetSRID(ST_GeomFromText(:polygon_wkt), 4326),
+                {geometry_column}
+            )
+        """
+        spatial_params = {"polygon_wkt": polygon_wkt}
+
+        query_area_geojson = {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [coords],
+            },
+            "properties": {"type": "polygon"},
+        }
+
+    return spatial_filter_template, spatial_params, query_area_geojson
+
+
+def _build_date_filter(
+    request: "LocationReportRequest",
+    spatial_params: dict,
+    date_column: str,
+) -> str:
+    date_filters = []
+    if request.start_date:
+        date_filters.append(f"{date_column} >= :start_date")
+        spatial_params["start_date"] = request.start_date
+    end_date_normalized = normalize_end_date(request.end_date)
+    if end_date_normalized:
+        date_filters.append(f"{date_column} <= :end_date")
+        spatial_params["end_date"] = end_date_normalized
+    if not date_filters:
+        return ""
+    return " AND " + " AND ".join(date_filters)
+
+
+def _stream_csv(result) -> Iterable[str]:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(result.keys())
+    yield buffer.getvalue()
+    buffer.seek(0)
+    buffer.truncate(0)
+    for row in result:
+        writer.writerow(row)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+
+def _build_select_list(model, alias: str, geometry_column: str | None = None) -> str:
+    columns = []
+    for column in model.__table__.columns:
+        if geometry_column and column.name == geometry_column:
+            continue
+        columns.append(f"{alias}.{column.name}")
+    if geometry_column:
+        columns.append(f"ST_AsText({alias}.{geometry_column}) AS {geometry_column}")
+    return ", ".join(columns)
 
 
 class DashboardStats(BaseModel):
@@ -489,6 +648,10 @@ class LocationReportRequest(BaseModel):
     end_date: Optional[datetime] = None
 
 
+class LocationReportExportRequest(LocationReportRequest):
+    datasets: List[str] = Field(min_items=1)
+
+
 class LocationReportStats(BaseModel):
     """Aggregate statistics for a location."""
 
@@ -695,159 +858,14 @@ async def get_location_report(
     Returns comprehensive crash statistics, cause breakdown, trends, and GeoJSON data.
     """
     try:
-        # Validate request - must have either radius query, polygon, or place
-        has_radius_query = all([
-            request.latitude is not None,
-            request.longitude is not None,
-            request.radius_feet is not None,
-        ])
-        has_polygon_query = request.polygon is not None and len(request.polygon) >= 3
-        has_place_query = request.place_type is not None and request.place_id is not None
+        spatial_filter_template, spatial_params, query_area_geojson = _build_location_report_filters(
+            request, db
+        )
+        spatial_filter = spatial_filter_template.format(geometry_column="geometry")
+        spatial_filter_aliased = spatial_filter_template.format(geometry_column="c.geometry")
 
-        if not has_radius_query and not has_polygon_query and not has_place_query:
-            raise HTTPException(
-                status_code=400,
-                detail="Must provide either (latitude, longitude, radius_feet), polygon coordinates, or (place_type, place_id)",
-            )
-
-        # Normalize end_date
-        end_date_normalized = normalize_end_date(request.end_date)
-
-        # Build the spatial filter SQL based on query type
-        if has_place_query:
-            # Look up the place geometry
-            place_geometry_result = _get_place_geometry(
-                db, request.place_type, request.place_id
-            )
-            if not place_geometry_result:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Place not found: {request.place_type}/{request.place_id}",
-                )
-
-            place_name, place_geometry = place_geometry_result
-
-            # Use ST_Contains with the place geometry
-            spatial_filter = """
-                ST_Contains(
-                    ST_SetSRID(ST_GeomFromGeoJSON(:place_geojson), 4326),
-                    geometry
-                )
-            """
-            spatial_filter_aliased = """
-                ST_Contains(
-                    ST_SetSRID(ST_GeomFromGeoJSON(:place_geojson), 4326),
-                    c.geometry
-                )
-            """
-            spatial_params = {"place_geojson": json.dumps(place_geometry)}
-
-            # Query area is the place geometry
-            query_area_geojson = {
-                "type": "Feature",
-                "geometry": place_geometry,
-                "properties": {
-                    "type": "place",
-                    "place_type": request.place_type,
-                    "place_id": request.place_id,
-                    "name": place_name,
-                },
-            }
-
-        elif has_radius_query:
-            # Convert feet to meters (1 foot = 0.3048 meters)
-            radius_meters = request.radius_feet * 0.3048
-
-            # Create a point and buffer for the query area
-            # Note: For single-table queries, we use unqualified column names.
-            # For JOIN queries (like people_query), we use c.geometry
-            spatial_filter = """
-                ST_DWithin(
-                    geometry::geography,
-                    ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
-                    :radius_meters
-                )
-            """
-            # Spatial filter with table alias for JOIN queries
-            spatial_filter_aliased = """
-                ST_DWithin(
-                    c.geometry::geography,
-                    ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
-                    :radius_meters
-                )
-            """
-            spatial_params = {
-                "center_lat": request.latitude,
-                "center_lng": request.longitude,
-                "radius_meters": radius_meters,
-            }
-
-            # Generate query area GeoJSON (circle approximation)
-            query_area_sql = text("""
-                SELECT ST_AsGeoJSON(
-                    ST_Buffer(
-                        ST_SetSRID(ST_MakePoint(:center_lng, :center_lat), 4326)::geography,
-                        :radius_meters
-                    )::geometry
-                ) AS geojson
-            """)
-            area_result = db.execute(query_area_sql, spatial_params).fetchone()
-            query_area_geojson = {
-                "type": "Feature",
-                "geometry": json.loads(area_result.geojson) if area_result else None,
-                "properties": {
-                    "type": "radius",
-                    "center": [request.longitude, request.latitude],
-                    "radius_feet": request.radius_feet,
-                },
-            }
-        else:
-            # Polygon query - close the ring if needed
-            coords = request.polygon.copy()
-            if coords[0] != coords[-1]:
-                coords.append(coords[0])
-
-            # Build WKT polygon string
-            coord_str = ", ".join([f"{c[0]} {c[1]}" for c in coords])
-            polygon_wkt = f"POLYGON(({coord_str}))"
-
-            spatial_filter = """
-                ST_Contains(
-                    ST_SetSRID(ST_GeomFromText(:polygon_wkt), 4326),
-                    geometry
-                )
-            """
-            # Spatial filter with table alias for JOIN queries
-            spatial_filter_aliased = """
-                ST_Contains(
-                    ST_SetSRID(ST_GeomFromText(:polygon_wkt), 4326),
-                    c.geometry
-                )
-            """
-            spatial_params = {"polygon_wkt": polygon_wkt}
-
-            # Query area is the polygon itself
-            query_area_geojson = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [coords],
-                },
-                "properties": {"type": "polygon"},
-            }
-
-        # Build date filter (unqualified for single-table queries)
-        date_filter = ""
-        # Build date filter with table alias for JOIN queries
-        date_filter_aliased = ""
-        if request.start_date:
-            date_filter += " AND crash_date >= :start_date"
-            date_filter_aliased += " AND c.crash_date >= :start_date"
-            spatial_params["start_date"] = request.start_date
-        if end_date_normalized:
-            date_filter += " AND crash_date <= :end_date"
-            date_filter_aliased += " AND c.crash_date <= :end_date"
-            spatial_params["end_date"] = end_date_normalized
+        date_filter = _build_date_filter(request, spatial_params, "crash_date")
+        date_filter_aliased = _build_date_filter(request, spatial_params, "c.crash_date")
 
         # 1. Get aggregate statistics
         stats_query = text(f"""
@@ -1111,4 +1129,104 @@ async def get_location_report(
 
     except Exception as e:
         logger.error("Failed to generate location report", error=str(e))
+        raise
+
+
+@router.post("/location-report/export")
+async def export_location_report(
+    request: LocationReportExportRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Export location report data as CSV or ZIP using the same spatial filters."""
+    try:
+        allowed_datasets = {"crashes", "people", "vehicles", "vision_zero"}
+        invalid_datasets = [dataset for dataset in request.datasets if dataset not in allowed_datasets]
+        if invalid_datasets:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid datasets: {', '.join(invalid_datasets)}",
+            )
+
+        spatial_filter_template, spatial_params, _ = _build_location_report_filters(
+            request, db
+        )
+
+        def spatial_filter_for(geometry_column: str) -> str:
+            return spatial_filter_template.format(geometry_column=geometry_column)
+
+        crashes_select = _build_select_list(Crash, "c", geometry_column="geometry")
+        people_select = _build_select_list(CrashPerson, "cp")
+        vehicles_select = _build_select_list(CrashVehicle, "cv")
+        vision_zero_select = _build_select_list(
+            VisionZeroFatality, "vz", geometry_column="geometry"
+        )
+
+        dataset_queries = {
+            "crashes": text(f"""
+                SELECT {crashes_select}
+                FROM crashes c
+                WHERE c.geometry IS NOT NULL
+                    AND {spatial_filter_for("c.geometry")}
+                    {_build_date_filter(request, spatial_params, "c.crash_date")}
+            """),
+            "people": text(f"""
+                SELECT {people_select}
+                FROM crash_people cp
+                INNER JOIN crashes c ON cp.crash_record_id = c.crash_record_id
+                WHERE c.geometry IS NOT NULL
+                    AND {spatial_filter_for("c.geometry")}
+                    {_build_date_filter(request, spatial_params, "c.crash_date")}
+            """),
+            "vehicles": text(f"""
+                SELECT {vehicles_select}
+                FROM crash_vehicles cv
+                INNER JOIN crashes c ON cv.crash_record_id = c.crash_record_id
+                WHERE c.geometry IS NOT NULL
+                    AND {spatial_filter_for("c.geometry")}
+                    {_build_date_filter(request, spatial_params, "c.crash_date")}
+            """),
+            "vision_zero": text(f"""
+                SELECT {vision_zero_select}
+                FROM vision_zero_fatalities vz
+                WHERE vz.geometry IS NOT NULL
+                    AND {spatial_filter_for("vz.geometry")}
+                    {_build_date_filter(request, spatial_params, "vz.crash_date")}
+            """),
+        }
+
+        if len(request.datasets) == 1:
+            dataset = request.datasets[0]
+            result = db.execute(dataset_queries[dataset], spatial_params)
+            filename = f"location-report-{dataset}.csv"
+            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+            return StreamingResponse(
+                _stream_csv(result),
+                media_type="text/csv",
+                headers=headers,
+            )
+
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        temp_file.close()
+        with zipfile.ZipFile(temp_file.name, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for dataset in request.datasets:
+                result = db.execute(dataset_queries[dataset], spatial_params)
+                csv_name = f"location-report-{dataset}.csv"
+                with zipf.open(csv_name, "w") as buffer:
+                    text_buffer = io.TextIOWrapper(buffer, encoding="utf-8", newline="")
+                    writer = csv.writer(text_buffer)
+                    writer.writerow(result.keys())
+                    for row in result:
+                        writer.writerow(row)
+                    text_buffer.flush()
+
+        background_tasks.add_task(os.unlink, temp_file.name)
+        headers = {"Content-Disposition": 'attachment; filename="location-report-export.zip"'}
+        return StreamingResponse(
+            open(temp_file.name, "rb"),
+            media_type="application/zip",
+            headers=headers,
+        )
+    except Exception as e:
+        logger.error("Failed to export location report", error=str(e))
         raise

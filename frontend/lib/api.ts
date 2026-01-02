@@ -215,6 +215,45 @@ export interface LocationReportRequest {
   end_date?: string;
 }
 
+export type LocationReportDataset =
+  | "crashes"
+  | "people"
+  | "vehicles"
+  | "vision_zero";
+
+export interface LocationReportExportRequest extends LocationReportRequest {
+  datasets: LocationReportDataset[];
+}
+
+function parseFilenameFromDisposition(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const match = disposition.match(/filename="?([^"]+)"?/i);
+  return match ? match[1] : null;
+}
+
+export async function exportLocationReport(
+  request: LocationReportExportRequest
+): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${API_BASE}/dashboard/location-report/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to export location report: ${res.statusText}`);
+  }
+
+  const blob = await res.blob();
+  const filename =
+    parseFilenameFromDisposition(res.headers.get("Content-Disposition")) ||
+    (request.datasets.length > 1
+      ? "location-report-export.zip"
+      : `location-report-${request.datasets[0]}.csv`);
+
+  return { blob, filename };
+}
+
 // Places API Types
 export interface PlaceType {
   id: string;
