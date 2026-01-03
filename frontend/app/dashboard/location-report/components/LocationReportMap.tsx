@@ -10,6 +10,7 @@ import Map, {
   type MapRef,
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { bbox } from "@turf/turf";
 import {
   LOOP_VIEW_STATE,
   SEVERITY_LEGEND,
@@ -110,6 +111,43 @@ export function LocationReportMap({
     setDrawingPolygon([]);
     setIsDrawing(false);
   }, [mode]);
+
+  // Fit map bounds to selected place geometry
+  useEffect(() => {
+    if (!selectedPlaceGeometry || !mapRef.current) return;
+
+    try {
+      // Create a GeoJSON Feature from the geometry
+      const feature = {
+        type: "Feature" as const,
+        geometry: selectedPlaceGeometry,
+        properties: {},
+      };
+
+      // Calculate bounding box: [minLng, minLat, maxLng, maxLat]
+      const bounds = bbox(feature);
+
+      // Validate bounds are finite numbers
+      if (bounds.some((coord) => !Number.isFinite(coord))) {
+        console.warn("Invalid bounding box calculated from geometry");
+        return;
+      }
+
+      // fitBounds expects [[minLng, minLat], [maxLng, maxLat]]
+      mapRef.current.fitBounds(
+        [
+          [bounds[0], bounds[1]], // Southwest corner
+          [bounds[2], bounds[3]], // Northeast corner
+        ],
+        {
+          padding: 50, // Add padding around the bounds (pixels)
+          duration: 1000, // Animate over 1 second
+        }
+      );
+    } catch (error) {
+      console.error("Error fitting bounds to geometry:", error);
+    }
+  }, [selectedPlaceGeometry]);
 
   // Generate circle GeoJSON from center and radius
   const circleGeoJSON = useCallback(() => {
