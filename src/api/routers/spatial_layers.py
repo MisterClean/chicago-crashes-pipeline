@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from src.api.models import (
+    FieldPreviewResponse,
     SpatialLayerDetailResponse,
     SpatialLayerResponse,
     SpatialLayerUpdateRequest,
@@ -31,6 +32,34 @@ async def get_layer(layer_id: int, service: SpatialLayerService = Depends(get_se
     return layer
 
 
+@router.post("/layers/preview-fields", response_model=FieldPreviewResponse)
+async def preview_layer_fields(
+    file: UploadFile = File(...),
+    srid: int = Form(4326),
+    service: SpatialLayerService = Depends(get_service),
+):
+    """Preview available property fields from an uploaded spatial file.
+
+    Returns field names with sample values to help admin choose the label field.
+    """
+    try:
+        payload = await file.read()
+        result = service.preview_fields(
+            upload_payload=payload,
+            filename=file.filename,
+            srid=srid,
+        )
+        return result
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+
 @router.post(
     "/layers", response_model=SpatialLayerResponse, status_code=status.HTTP_201_CREATED
 )
@@ -39,6 +68,7 @@ async def upload_layer(
     file: UploadFile = File(...),
     description: str | None = Form(None),
     srid: int = Form(4326),
+    label_field: str | None = Form(None),
     service: SpatialLayerService = Depends(get_service),
 ):
     try:
@@ -49,6 +79,7 @@ async def upload_layer(
             filename=file.filename,
             description=description,
             srid=srid,
+            label_field=label_field,
         )
         return layer
     except ValueError as exc:
@@ -72,6 +103,7 @@ async def update_layer(
         name=payload.name,
         description=payload.description,
         is_active=payload.is_active,
+        label_field=payload.label_field,
     )
     if not layer:
         raise HTTPException(

@@ -117,6 +117,7 @@ class SpatialLayer(Base, TimestampMixin):
     feature_count = Column(Integer, default=0, nullable=False)
     original_filename = Column(String(255))
     is_active = Column(Boolean, default=True, nullable=False)
+    label_field = Column(String(100), nullable=True)  # Field name to use for display labels
 
     features = relationship(
         "SpatialLayerFeature",

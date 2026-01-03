@@ -189,9 +189,14 @@ async def list_place_items(
         )
 
         for feature in features:
-            # Try to get a name from properties using common patterns
             props = feature.properties or {}
-            name = _extract_feature_name(props, feature.id)
+
+            # Use configured label_field if available, otherwise fall back to heuristics
+            if layer.label_field and layer.label_field in props:
+                name = str(props[layer.label_field])
+            else:
+                name = _extract_feature_name(props, feature.id)
+
             items.append(
                 PlaceItemResponse(
                     id=str(feature.id),
@@ -280,7 +285,12 @@ async def get_place_geometry(
             )
 
         props = result.properties or {}
-        name = _extract_feature_name(props, result.id)
+
+        # Use configured label_field if available, otherwise fall back to heuristics
+        if layer.label_field and layer.label_field in props:
+            name = str(props[layer.label_field])
+        else:
+            name = _extract_feature_name(props, result.id)
 
         return PlaceGeometryResponse(
             place_type=place_type,

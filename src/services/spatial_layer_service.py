@@ -68,8 +68,16 @@ class SpatialLayerService:
                 }
                 for feature in samples
             ]
+
+            # Extract all unique field names from sampled features
+            available_fields: set[str] = set()
+            for sample in samples:
+                if sample.properties:
+                    available_fields.update(sample.properties.keys())
+
             data = self._serialize_layer(layer)
             data["feature_samples"] = feature_samples
+            data["available_fields"] = sorted(available_fields)
             return data
         finally:
             session.close()
@@ -81,6 +89,7 @@ class SpatialLayerService:
         description: str | None = None,
         srid: int = 4326,
         original_filename: str | None = None,
+        label_field: str | None = None,
     ) -> dict[str, Any]:
         """Store a new GeoJSON layer and its features."""
         session = self.session_factory()
@@ -98,6 +107,7 @@ class SpatialLayerService:
                 srid=srid,
                 original_filename=original_filename,
                 feature_count=0,
+                label_field=label_field,
             )
             session.add(layer)
             session.flush()  # assign ID
@@ -127,6 +137,7 @@ class SpatialLayerService:
         filename: str | None,
         description: str | None = None,
         srid: int = 4326,
+        label_field: str | None = None,
     ) -> dict[str, Any]:
         """Create a spatial layer from an uploaded file, detecting the format."""
         try:
@@ -151,7 +162,94 @@ class SpatialLayerService:
             description=description,
             srid=target_srid,
             original_filename=original_label,
+            label_field=label_field,
         )
+
+    def preview_fields(
+        self,
+        upload_payload: bytes,
+        filename: str | None,
+        srid: int = 4326,
+    ) -> dict[str, Any]:
+        """Preview available property fields from an uploaded spatial file.
+
+        Returns field names with sample values to help admin choose the label field.
+        """
+        try:
+            (
+                processed_payload,
+                _target_srid,
+                _original_label,
+            ) = self._prepare_upload_payload(
+                upload_payload,
+                filename,
+                srid,
+            )
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.error("Failed to prepare upload for preview", error=str(exc))
+            raise
+
+        geojson = self._parse_geojson(processed_payload)
+        features = geojson.get("features", [])
+
+        # Collect all unique field names and sample values across features
+        all_fields: dict[str, list[Any]] = {}
+        for feature in features[:100]:  # Sample first 100 features
+            props = feature.get("properties", {})
+            for key, value in props.items():
+                if key not in all_fields:
+                    all_fields[key] = []
+                if len(all_fields[key]) < 3 and value is not None:
+                    # Only add unique sample values
+                    if value not in all_fields[key]:
+                        all_fields[key].append(value)
+
+        # Determine suggested field using heuristics
+        suggested_field = self._detect_label_field(list(all_fields.keys()))
+
+        return {
+            "fields": [
+                {
+                    "name": name,
+                    "sample_values": samples,
+                    "suggested": name == suggested_field,
+                }
+                for name, samples in all_fields.items()
+            ],
+            "recommended_field": suggested_field,
+        }
+
+    def _detect_label_field(self, field_names: list[str]) -> str | None:
+        """Apply heuristics to find the most likely label field."""
+        if not field_names:
+            return None
+
+        # Priority 1: Exact matches for common name fields
+        name_fields = ["name", "NAME", "Name", "title", "TITLE", "label", "LABEL"]
+        for field in name_fields:
+            if field in field_names:
+                return field
+
+        # Priority 2: Fields containing "name" or "nm" (case-insensitive)
+        for field in field_names:
+            lower = field.lower()
+            if "name" in lower or "_nm" in lower or lower.endswith("nm"):
+                return field
+
+        # Priority 3: Description fields
+        for field in field_names:
+            if "desc" in field.lower():
+                return field
+
+        # Priority 4: District/ward identifiers
+        for field in field_names:
+            lower = field.lower()
+            if any(kw in lower for kw in ["district", "ward", "community"]):
+                return field
+
+        return None
 
     def update_layer(
         self,
@@ -159,6 +257,7 @@ class SpatialLayerService:
         name: str | None = None,
         description: str | None = None,
         is_active: bool | None = None,
+        label_field: str | None = None,
     ) -> dict[str, Any] | None:
         """Update spatial layer metadata."""
         session = self.session_factory()
@@ -174,6 +273,9 @@ class SpatialLayerService:
                 layer.description = description
             if is_active is not None:
                 layer.is_active = is_active
+            if label_field is not None:
+                # Allow setting to empty string to clear, or to a field name
+                layer.label_field = label_field if label_field else None
 
             session.commit()
             return self._serialize_layer(layer)
@@ -376,6 +478,7 @@ class SpatialLayerService:
             "feature_count": layer.feature_count,
             "original_filename": layer.original_filename,
             "is_active": layer.is_active,
+            "label_field": layer.label_field,
             "created_at": layer.created_at,
             "updated_at": layer.updated_at,
         }
