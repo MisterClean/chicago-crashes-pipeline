@@ -248,6 +248,7 @@ class SpatialLayerResponse(BaseModel):
     feature_count: int
     original_filename: str | None
     is_active: bool
+    label_field: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -256,6 +257,7 @@ class SpatialLayerDetailResponse(SpatialLayerResponse):
     """Detailed response including sample features."""
 
     feature_samples: list[dict[str, Any]] = []
+    available_fields: list[str] = []  # All property field names from features
 
 
 class SpatialLayerUpdateRequest(BaseModel):
@@ -264,6 +266,14 @@ class SpatialLayerUpdateRequest(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=150)
     description: str | None = None
     is_active: bool | None = None
+    label_field: str | None = None
+
+
+class FieldPreviewResponse(BaseModel):
+    """Response for field preview endpoint."""
+
+    fields: list[dict[str, Any]]
+    recommended_field: str | None = None
 
 
 # Places API Models

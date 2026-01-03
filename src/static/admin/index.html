@@ -373,6 +373,13 @@
                                     <input type="file" class="form-control" id="spatial-layer-file" name="file" accept=".geojson,.json,.zip,application/geo+json,application/json,application/zip" required>
                                     <div class="form-text">Accepted: GeoJSON (.geojson, .json) or zipped ESRI shapefile bundles (.zip with .shp/.shx/.dbf/.prj).</div>
                                 </div>
+                                <div class="mb-3" id="spatial-layer-label-field-group" style="display: none;">
+                                    <label for="spatial-layer-label-field" class="form-label">Label Field</label>
+                                    <select class="form-select" id="spatial-layer-label-field" name="label_field">
+                                        <option value="">Auto-detect (default)</option>
+                                    </select>
+                                    <div class="form-text">Choose which field to display as the feature name in dropdowns.</div>
+                                </div>
                                 <div class="upload-checklist rounded-3 p-3 mb-3">
                                     <p class="small fw-semibold text-uppercase text-muted mb-2">Upload checklist</p>
                                     <ul class="small mb-0 ps-3">
@@ -451,6 +458,13 @@
                             <div class="mb-3">
                                 <label for="spatial-layer-edit-description" class="form-label">Description</label>
                                 <textarea class="form-control" id="spatial-layer-edit-description" rows="2"></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-label-field" class="form-label">Label Field</label>
+                                <select class="form-select" id="spatial-layer-edit-label-field">
+                                    <option value="">Auto-detect</option>
+                                </select>
+                                <div class="form-text">Field used for display names in location report dropdown.</div>
                             </div>
                             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
                                 <div class="form-check">

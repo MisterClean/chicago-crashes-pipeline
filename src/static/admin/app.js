@@ -92,6 +92,14 @@ function setupEventListeners() {
             uploadSpatialLayer();
         });
     }
+
+    // Spatial layer file selection - preview available fields
+    const spatialFileInput = document.getElementById('spatial-layer-file');
+    if (spatialFileInput) {
+        spatialFileInput.addEventListener('change', async function() {
+            await previewSpatialLayerFields(this);
+        });
+    }
     
     // Tab change handlers
     document.querySelectorAll('[data-bs-toggle="tab"]').forEach(tab => {
@@ -862,10 +870,62 @@ function displaySpatialLayers(layers) {
     tbody.innerHTML = rows;
 }
 
+async function previewSpatialLayerFields(fileInput) {
+    const labelFieldGroup = document.getElementById('spatial-layer-label-field-group');
+    const labelFieldSelect = document.getElementById('spatial-layer-label-field');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        labelFieldGroup.style.display = 'none';
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('srid', document.getElementById('spatial-layer-srid').value || '4326');
+
+    try {
+        labelFieldSelect.innerHTML = '<option value="">Analyzing fields...</option>';
+        labelFieldGroup.style.display = 'block';
+
+        const result = await apiRequest('/spatial/layers/preview-fields', {
+            method: 'POST',
+            body: formData
+        });
+
+        // Populate field selector
+        labelFieldSelect.innerHTML = '<option value="">Auto-detect (default)</option>';
+        if (result.fields && result.fields.length > 0) {
+            result.fields.forEach(field => {
+                const option = document.createElement('option');
+                option.value = field.name;
+                let label = field.name;
+                if (field.suggested) {
+                    label += ' (recommended)';
+                }
+                if (field.sample_values && field.sample_values.length > 0) {
+                    const sample = String(field.sample_values[0]).substring(0, 30);
+                    label += ` - e.g. "${sample}"`;
+                }
+                option.textContent = label;
+                labelFieldSelect.appendChild(option);
+            });
+
+            // Auto-select recommended field
+            if (result.recommended_field) {
+                labelFieldSelect.value = result.recommended_field;
+            }
+        }
+    } catch (error) {
+        console.error('Failed to preview fields:', error);
+        labelFieldSelect.innerHTML = '<option value="">Auto-detect (default)</option>';
+    }
+}
+
 async function uploadSpatialLayer() {
     const form = document.getElementById('spatial-layer-upload-form');
     const fileInput = document.getElementById('spatial-layer-file');
     const uploadBtn = document.getElementById('spatial-layer-upload-btn');
+    const labelFieldGroup = document.getElementById('spatial-layer-label-field-group');
 
     if (!fileInput.files || fileInput.files.length === 0) {
         showToast('Error', 'Please select a GeoJSON file or zipped shapefile to upload', 'warning');
@@ -887,6 +947,7 @@ async function uploadSpatialLayer() {
         showToast('Success', 'Spatial layer uploaded successfully', 'success');
         form.reset();
         document.getElementById('spatial-layer-srid').value = '4326';
+        labelFieldGroup.style.display = 'none';
         await loadSpatialLayers();
     } catch (error) {
         console.error('Failed to upload spatial layer:', error);
@@ -926,6 +987,21 @@ function populateSpatialLayerModal(layer) {
     document.getElementById('spatial-layer-edit-description').value = layer.description || '';
     document.getElementById('spatial-layer-edit-active').checked = !!layer.is_active;
 
+    // Populate label field selector
+    const labelFieldSelect = document.getElementById('spatial-layer-edit-label-field');
+    labelFieldSelect.innerHTML = '<option value="">Auto-detect</option>';
+    if (layer.available_fields && layer.available_fields.length > 0) {
+        layer.available_fields.forEach(field => {
+            const option = document.createElement('option');
+            option.value = field;
+            option.textContent = field;
+            labelFieldSelect.appendChild(option);
+        });
+    }
+    if (layer.label_field) {
+        labelFieldSelect.value = layer.label_field;
+    }
+
     const meta = document.getElementById('spatial-layer-meta');
     meta.innerHTML = `
         <div class="row g-3">
@@ -944,6 +1020,10 @@ function populateSpatialLayerModal(layer) {
             <div class="col-md-6">
                 <div class="text-muted small">Original File</div>
                 <div class="fw-bold">${layer.original_filename || '—'}</div>
+            </div>
+            <div class="col-12">
+                <div class="text-muted small">Label Field</div>
+                <div class="fw-bold">${layer.label_field || 'Auto-detect'}</div>
             </div>
         </div>
     `;
@@ -969,6 +1049,7 @@ async function saveSpatialLayerChanges() {
     const nameInput = document.getElementById('spatial-layer-edit-name');
     const descriptionInput = document.getElementById('spatial-layer-edit-description');
     const activeInput = document.getElementById('spatial-layer-edit-active');
+    const labelFieldInput = document.getElementById('spatial-layer-edit-label-field');
     const saveBtn = document.getElementById('spatial-layer-save-btn');
 
     const name = nameInput.value.trim();
@@ -980,7 +1061,8 @@ async function saveSpatialLayerChanges() {
     const payload = {
         name,
         description: descriptionInput.value,
-        is_active: activeInput.checked
+        is_active: activeInput.checked,
+        label_field: labelFieldInput.value || null
     };
 
     saveBtn.disabled = true;
