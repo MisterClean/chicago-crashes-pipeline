@@ -112,25 +112,52 @@ export CHICAGO_API_TOKEN="your-api-token"
 
 ### Admin Portal Authentication
 
-**Important:** The admin portal has **no authentication by default**. This application is designed for:
-- Internal use within trusted networks
-- Data analysis and research environments
-- Development and testing
+**API Key Authentication is now available!** The admin portal and protected API endpoints can be secured using API key authentication.
 
-**For public deployment:**
-1. Add authentication middleware to FastAPI
-2. Implement OAuth2, JWT, or API key authentication
-3. Review FastAPI security documentation: https://fastapi.tiangolo.com/tutorial/security/
-4. Consider using a reverse proxy with built-in authentication
+**To enable API key authentication:**
+
+1. Generate a secure API key:
+   ```bash
+   openssl rand -base64 32
+   ```
+
+2. Set the `API_KEY` environment variable:
+   ```bash
+   # Railway/Production
+   API_KEY=your-generated-key-here
+
+   # Local development (.env file)
+   API_KEY=your-generated-key-here
+   ```
+
+3. The admin portal will automatically prompt for the API key on first visit
+4. The key is stored in the browser session (cleared when tab closes)
+
+**Protected endpoints (require API key when `API_KEY` is set):**
+- `/sync/trigger` - Trigger data synchronization
+- `/sync/test` - Test data source connectivity
+- `/jobs/*` - Job management CRUD operations
+- `/spatial/layers` - Spatial layer uploads and management
+- `/dashboard/location-report/export` - Data export functionality
+
+**Public endpoints (no authentication required):**
+- `/health` - Health check
+- `/dashboard/stats` - Dashboard statistics
+- `/dashboard/trends/*` - Trend data
+- `/dashboard/crashes/geojson` - Crash map data
+- `/places/*` - Geographic place data
+
+**Frontend/Server-Side Requests:**
+The frontend Next.js application includes the API key in server-side requests automatically when `API_KEY` is set in the environment.
 
 ### API Endpoints
 
-All API endpoints are publicly accessible by default. For production:
-- Add authentication to sensitive endpoints
-- Implement rate limiting
-- Use API keys or OAuth2
-- Log all access attempts
-- Monitor for suspicious activity
+API endpoints are protected by API key authentication when the `API_KEY` environment variable is set. For production:
+- Set `API_KEY` to a strong, unique value (32+ characters)
+- Include `X-API-Key` header in all requests to protected endpoints
+- Implement rate limiting at the reverse proxy level
+- Log all access attempts (automatic with API key middleware)
+- Monitor for suspicious activity (unauthorized access attempts are logged)
 
 ### Data Exposure
 
@@ -181,7 +208,7 @@ Before deploying to production, verify:
 - [ ] HTTPS/TLS enabled for all external connections
 - [ ] Reverse proxy configured with rate limiting
 - [ ] Database connections use SSL/TLS
-- [ ] Authentication added to admin portal
+- [ ] **API_KEY set to protect admin portal and sensitive endpoints**
 - [ ] Firewall rules restrict database access
 - [ ] All dependencies updated to latest secure versions
 - [ ] Logging and monitoring enabled
