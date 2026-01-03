@@ -183,7 +183,7 @@ curl -s http://localhost:8000/sync/counts
 
 ### Spatial Layer Management
 
-- **Purpose**: Upload administrative boundaries (e.g., Senate Districts) and make them queryable in PostGIS for spatial joins with crash data.
+- **Purpose**: Upload administrative boundaries (e.g., Senate Districts, Schools) and make them queryable in PostGIS for spatial joins with crash data.
 - **Upload via API**:
   ```bash
   # GeoJSON FeatureCollection
@@ -195,10 +195,23 @@ curl -s http://localhost:8000/sync/counts
   curl -F "name=Zip Districts" \
        -F "file=@data/districts.zip" \
        http://localhost:8000/spatial/layers
+
+  # With label_field to specify display name field
+  curl -F "name=Chicago Schools" \
+       -F "file=@data/schools.zip" \
+       -F "label_field=SCHOOL_NM" \
+       http://localhost:8000/spatial/layers
+  ```
+- **Label Field Configuration**: Each layer can have a `label_field` that specifies which property to use for display names in the location report dropdown. If not set, the system uses heuristics to detect common name fields (`name`, `*_nm`, `desc`, `district`, etc.).
+- **Field Preview**: Before uploading, you can preview available fields:
+  ```bash
+  curl -F "file=@data/schools.zip" \
+       http://localhost:8000/spatial/layers/preview-fields
+  # Returns: {"fields": [{"name": "SCHOOL_NM", "sample_values": ["Lincoln Elementary"], "suggested": true}], "recommended_field": "SCHOOL_NM"}
   ```
 - **Validation**: The service rejects archives missing required shapefile components, disallows path traversal, and converts shapefiles to GeoJSON through `ogr2ogr` before inserting features.
-- **Admin Portal**: `/admin` now has a **Spatial Layers** tab to upload, review sample attributes, replace data, or delete layers without leaving the UI.
-- **Storage**: Layer metadata lives in `spatial_layers`; individual geometries are stored in `spatial_layer_features` with a GiST index for spatial queries.
+- **Admin Portal**: `/admin` now has a **Spatial Layers** tab to upload, review sample attributes, configure label fields, replace data, or delete layers without leaving the UI. When uploading a file, the portal auto-detects available fields and recommends a label field.
+- **Storage**: Layer metadata lives in `spatial_layers` (including `label_field`); individual geometries are stored in `spatial_layer_features` with a GiST index for spatial queries.
 
 ## Key Database Tables
 
