@@ -79,7 +79,11 @@ def is_public_route(path: str) -> bool:
     # Then check if it matches any public route prefix
     public_routes = get_public_routes()
     for route in public_routes:
-        if path == route or path.startswith(route + "/") or path.startswith(route):
+        # Special case: "/" should only match exactly the root path, not as a prefix
+        if route == "/":
+            if path == "/":
+                return True
+        elif path == route or path.startswith(route + "/") or (route.endswith("/") and path.startswith(route)):
             return True
 
     return False
