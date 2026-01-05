@@ -90,6 +90,7 @@ class SpatialLayerService:
         srid: int = 4326,
         original_filename: str | None = None,
         label_field: str | None = None,
+        sort_type: str | None = None,
     ) -> dict[str, Any]:
         """Store a new GeoJSON layer and its features."""
         session = self.session_factory()
@@ -98,6 +99,10 @@ class SpatialLayerService:
             features, geometry_type = self._extract_features(geojson)
 
             slug = self._ensure_unique_slug(session, _slugify(name))
+
+            # Auto-detect sort_type if not provided
+            if sort_type is None:
+                sort_type = self._detect_sort_type(features, label_field)
 
             layer = SpatialLayer(
                 name=name,
@@ -108,6 +113,7 @@ class SpatialLayerService:
                 original_filename=original_filename,
                 feature_count=0,
                 label_field=label_field,
+                sort_type=sort_type,
             )
             session.add(layer)
             session.flush()  # assign ID
@@ -121,6 +127,7 @@ class SpatialLayerService:
                 layer_id=layer.id,
                 name=name,
                 feature_count=layer.feature_count,
+                sort_type=sort_type,
             )
             return self._serialize_layer(layer)
         except Exception as exc:
@@ -138,6 +145,7 @@ class SpatialLayerService:
         description: str | None = None,
         srid: int = 4326,
         label_field: str | None = None,
+        sort_type: str | None = None,
     ) -> dict[str, Any]:
         """Create a spatial layer from an uploaded file, detecting the format."""
         try:
@@ -163,6 +171,7 @@ class SpatialLayerService:
             srid=target_srid,
             original_filename=original_label,
             label_field=label_field,
+            sort_type=sort_type,
         )
 
     def preview_fields(
@@ -251,6 +260,56 @@ class SpatialLayerService:
 
         return None
 
+    def _detect_sort_type(self, features: list[dict[str, Any]], label_field: str | None) -> str:
+        """Auto-detect appropriate sort type based on label field values.
+
+        Returns:
+            'numeric' if label field contains primarily numeric values
+            'alphabetic' otherwise (default)
+        """
+        if not label_field or not features:
+            return 'alphabetic'
+
+        # Sample up to 100 features to determine sort type
+        sample_size = min(100, len(features))
+        numeric_count = 0
+        total_count = 0
+
+        for feature in features[:sample_size]:
+            props = feature.get("properties", {})
+            value = props.get(label_field)
+
+            if value is None:
+                continue
+
+            total_count += 1
+
+            # Check if the value is numeric or can be parsed as numeric
+            try:
+                # Try to convert to float (handles both int and float)
+                if isinstance(value, (int, float)):
+                    numeric_count += 1
+                elif isinstance(value, str):
+                    # Strip whitespace and try parsing
+                    stripped = value.strip()
+                    # Handle cases like "District 5" by extracting numbers
+                    if stripped.isdigit():
+                        numeric_count += 1
+                    else:
+                        # Try extracting trailing number (e.g., "District 5" -> "5")
+                        import re
+                        match = re.search(r'\d+$', stripped)
+                        if match:
+                            numeric_count += 1
+            except (ValueError, TypeError):
+                pass
+
+        # If 80% or more of sampled values are numeric, use numeric sorting
+        if total_count > 0 and (numeric_count / total_count) >= 0.8:
+            return 'numeric'
+
+        return 'alphabetic'
+
     def update_layer(
         self,
         layer_id: int,
@@ -258,6 +317,7 @@ class SpatialLayerService:
         description: str | None = None,
         is_active: bool | None = None,
         label_field: str | None = None,
+        sort_type: str | None = None,
     ) -> dict[str, Any] | None:
         """Update spatial layer metadata."""
         session = self.session_factory()
@@ -276,6 +336,11 @@ class SpatialLayerService:
             if label_field is not None:
                 # Allow setting to empty string to clear, or to a field name
                 layer.label_field = label_field if label_field else None
+            if sort_type is not None:
+                # Validate sort_type
+                if sort_type not in ['alphabetic', 'numeric', 'natural']:
+                    raise ValueError(f"Invalid sort_type: {sort_type}. Must be 'alphabetic', 'numeric', or 'natural'")
+                layer.sort_type = sort_type
 
             session.commit()
             return self._serialize_layer(layer)
@@ -479,6 +544,7 @@ class SpatialLayerService:
             "original_filename": layer.original_filename,
             "is_active": layer.is_active,
             "label_field": layer.label_field,
+            "sort_type": layer.sort_type,
             "created_at": layer.created_at,
             "updated_at": layer.updated_at,
         }

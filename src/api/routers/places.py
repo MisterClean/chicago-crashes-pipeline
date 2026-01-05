@@ -1,5 +1,6 @@
 """API endpoints for place types and geographic boundaries."""
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,6 +26,67 @@ from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/places", tags=["places"])
+
+
+def _extract_numeric_value(text: str) -> float | None:
+    """Extract numeric value from text for sorting purposes.
+
+    Handles cases like:
+    - "5" -> 5.0
+    - "District 5" -> 5.0
+    - "05" -> 5.0
+    - "Area 10" -> 10.0
+
+    Returns None if no numeric value can be extracted.
+    """
+    # Try to find a number in the text
+    match = re.search(r'\d+', text)
+    if match:
+        try:
+            return float(match.group())
+        except (ValueError, AttributeError):
+            pass
+    return None
+
+
+def _sort_items(items: list[PlaceItemResponse], sort_type: str) -> list[PlaceItemResponse]:
+    """Sort place items based on the specified sort type.
+
+    Args:
+        items: List of place items to sort
+        sort_type: 'alphabetic', 'numeric', or 'natural'
+
+    Returns:
+        Sorted list of items
+    """
+    if sort_type == 'numeric':
+        # Sort numerically by extracting numbers from names
+        def numeric_key(item: PlaceItemResponse) -> tuple[float, str]:
+            numeric_val = _extract_numeric_value(item.name)
+            if numeric_val is not None:
+                return (numeric_val, item.name)
+            # Put non-numeric items at the end, sorted alphabetically
+            return (float('inf'), item.name)
+
+        return sorted(items, key=numeric_key)
+
+    elif sort_type == 'natural':
+        # Natural sort: alphanumeric with proper numeric ordering
+        # e.g., "item1", "item2", "item10" instead of "item1", "item10", "item2"
+        def natural_key(item: PlaceItemResponse) -> list:
+            parts = []
+            for part in re.split(r'(\d+)', item.name):
+                if part.isdigit():
+                    parts.append(int(part))
+                else:
+                    parts.append(part.lower())
+            return parts
+
+        return sorted(items, key=natural_key)
+
+    else:  # 'alphabetic' or default
+        # Sort alphabetically (case-insensitive)
+        return sorted(items, key=lambda item: item.name.lower())
 
 
 def _extract_feature_name(props: dict, feature_id: int) -> str:
@@ -204,6 +266,9 @@ async def list_place_items(
                     display_name=name,
                 )
             )
+
+        # Apply sorting based on layer's sort_type
+        items = _sort_items(items, layer.sort_type or 'alphabetic')
         return items
 
     # Handle native place types

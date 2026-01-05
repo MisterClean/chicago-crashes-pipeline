@@ -69,6 +69,7 @@ async def upload_layer(
     description: str | None = Form(None),
     srid: int = Form(4326),
     label_field: str | None = Form(None),
+    sort_type: str | None = Form(None),
     service: SpatialLayerService = Depends(get_service),
 ):
     try:
@@ -80,6 +81,7 @@ async def upload_layer(
             description=description,
             srid=srid,
             label_field=label_field,
+            sort_type=sort_type,
         )
         return layer
     except ValueError as exc:
@@ -104,6 +106,7 @@ async def update_layer(
         description=payload.description,
         is_active=payload.is_active,
         label_field=payload.label_field,
+        sort_type=payload.sort_type,
     )
     if not layer:
         raise HTTPException(
