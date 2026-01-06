@@ -249,6 +249,7 @@ class SpatialLayerResponse(BaseModel):
     original_filename: str | None
     is_active: bool
     label_field: str | None = None
+    sort_type: str = Field(default='alphabetic', description="Sorting method: 'alphabetic', 'numeric', or 'natural'")
     created_at: datetime
     updated_at: datetime
 
@@ -267,6 +268,7 @@ class SpatialLayerUpdateRequest(BaseModel):
     description: str | None = None
     is_active: bool | None = None
     label_field: str | None = None
+    sort_type: str | None = Field(None, description="Sorting method: 'alphabetic', 'numeric', or 'natural'")
 
 
 class FieldPreviewResponse(BaseModel):

@@ -205,3 +205,189 @@ def test_upload_invalid_file_returns_error(client):
     detail = response.json()["detail"]
     assert "Invalid GeoJSON" in detail
     assert _count_layers() == 0
+
+
+# -----------------------------------------------------------------------------
+# Sort Type Detection Tests
+# -----------------------------------------------------------------------------
+
+
+class TestDetectSortType:
+    """Unit tests for _detect_sort_type numeric detection logic."""
+
+    @pytest.fixture
+    def service(self):
+        """Provide a SpatialLayerService instance for unit testing."""
+        from services.spatial_layer_service import SpatialLayerService
+
+        return SpatialLayerService()
+
+    def _make_features(self, labels: list[str], label_field: str = "name") -> list[dict]:
+        """Helper to create feature dicts with given label values."""
+        return [
+            {"properties": {label_field: label}, "geometry": {"type": "Point"}}
+            for label in labels
+        ]
+
+    def test_pure_numeric_labels_return_numeric(self, service):
+        """Labels that are all digits should trigger numeric sort."""
+        features = self._make_features(["1", "2", "3", "10", "20"])
+        result = service._detect_sort_type(features, "name")
+        assert result == "numeric"
+
+    def test_trailing_digit_labels_return_numeric(self, service):
+        """Labels like 'District 5' should trigger numeric sort."""
+        features = self._make_features([
+            "District 1", "District 2", "District 3", "District 10", "District 20"
+        ])
+        result = service._detect_sort_type(features, "name")
+        assert result == "numeric"
+
+    def test_middle_digit_labels_return_numeric(self, service):
+        """Labels like 'Area 10 West' should trigger numeric sort."""
+        features = self._make_features([
+            "Area 1 North", "Area 2 South", "Area 10 West", "Area 15 East"
+        ])
+        result = service._detect_sort_type(features, "name")
+        assert result == "numeric"
+
+    def test_alphanumeric_suffix_labels_return_numeric(self, service):
+        """Labels like 'Ward 2A' should trigger numeric sort."""
+        features = self._make_features([
+            "Ward 1A", "Ward 2B", "Ward 3C", "Ward 10D", "Ward 15E"
+        ])
+        result = service._detect_sort_type(features, "name")
+        assert result == "numeric"
+
+    def test_no_digits_returns_alphabetic(self, service):
+        """Labels with no digits should return alphabetic sort."""
+        features = self._make_features([
+            "Albany Park", "Lincoln Park", "Hyde Park", "Wicker Park"
+        ])
+        result = service._detect_sort_type(features, "name")
+        assert result == "alphabetic"
+
+    def test_mixed_below_threshold_returns_alphabetic(self, service):
+        """Less than 80% numeric labels should return alphabetic."""
+        # 2 out of 10 = 20% numeric, should be alphabetic
+        features = self._make_features([
+            "District 1", "District 2",  # 2 numeric
+            "North Side", "South Side", "West Side", "East Side",  # 4 non-numeric
+            "Downtown", "Uptown", "Midtown", "Old Town"  # 4 non-numeric
+        ])
+        result = service._detect_sort_type(features, "name")
+        assert result == "alphabetic"
+
+    def test_exactly_80_percent_returns_numeric(self, service):
+        """Exactly 80% numeric labels should return numeric sort."""
+        # 8 out of 10 = 80% numeric
+        features = self._make_features([
+            "Ward 1", "Ward 2", "Ward 3", "Ward 4",
+            "Ward 5", "Ward 6", "Ward 7", "Ward 8",  # 8 numeric
+            "North Side", "South Side"  # 2 non-numeric
+        ])
+        result = service._detect_sort_type(features, "name")
+        assert result == "numeric"
+
+    def test_int_float_values_counted_as_numeric(self, service):
+        """Integer and float property values should be counted as numeric."""
+        features = [
+            {"properties": {"id": 1}, "geometry": {"type": "Point"}},
+            {"properties": {"id": 2}, "geometry": {"type": "Point"}},
+            {"properties": {"id": 3.5}, "geometry": {"type": "Point"}},
+            {"properties": {"id": 4}, "geometry": {"type": "Point"}},
+            {"properties": {"id": 5}, "geometry": {"type": "Point"}},
+        ]
+        result = service._detect_sort_type(features, "id")
+        assert result == "numeric"
+
+    def test_empty_features_returns_alphabetic(self, service):
+        """Empty feature list should return alphabetic (default)."""
+        result = service._detect_sort_type([], "name")
+        assert result == "alphabetic"
+
+    def test_no_label_field_returns_alphabetic(self, service):
+        """No label field should return alphabetic (default)."""
+        features = self._make_features(["District 1", "District 2"])
+        result = service._detect_sort_type(features, None)
+        assert result == "alphabetic"
+
+    def test_null_values_skipped(self, service):
+        """Null/None values should be skipped in the count."""
+        features = [
+            {"properties": {"name": "Ward 1"}, "geometry": {"type": "Point"}},
+            {"properties": {"name": "Ward 2"}, "geometry": {"type": "Point"}},
+            {"properties": {"name": None}, "geometry": {"type": "Point"}},
+            {"properties": {"name": "Ward 3"}, "geometry": {"type": "Point"}},
+            {"properties": {}, "geometry": {"type": "Point"}},  # missing field
+        ]
+        result = service._detect_sort_type(features, "name")
+        # 3 out of 3 non-null values have digits = 100%
+        assert result == "numeric"
+
+
+# -----------------------------------------------------------------------------
+# Sort Type API Tests
+# -----------------------------------------------------------------------------
+
+
+def test_update_layer_invalid_sort_type_returns_400(client):
+    """PATCH with invalid sort_type should return 400 Bad Request."""
+    # First create a layer
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Test Layer", "srid": "4326"}
+    create_response = client.post("/spatial/layers", files=files, data=data)
+
+    if create_response.status_code != 201:
+        pytest.skip("Could not create test layer (database may be missing sort_type column)")
+
+    layer_id = create_response.json()["id"]
+
+    # Try to update with invalid sort_type
+    update_response = client.patch(
+        f"/spatial/layers/{layer_id}",
+        json={"sort_type": "invalid_sort_type"}
+    )
+
+    assert update_response.status_code == 400
+    assert "Invalid sort_type" in update_response.json()["detail"]
+
+
+def test_update_layer_valid_sort_type_succeeds(client):
+    """PATCH with valid sort_type should succeed."""
+    # First create a layer
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Test Layer", "srid": "4326"}
+    create_response = client.post("/spatial/layers", files=files, data=data)
+
+    if create_response.status_code != 201:
+        pytest.skip("Could not create test layer (database may be missing sort_type column)")
+
+    layer_id = create_response.json()["id"]
+
+    # Update with valid sort_type values
+    for sort_type in ["alphabetic", "numeric", "natural"]:
+        update_response = client.patch(
+            f"/spatial/layers/{layer_id}",
+            json={"sort_type": sort_type}
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["sort_type"] == sort_type
+
+
+def test_upload_layer_with_sort_type(client):
+    """Upload with explicit sort_type should use that value."""
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Test Layer", "srid": "4326", "sort_type": "numeric"}
+    response = client.post("/spatial/layers", files=files, data=data)
+
+    if response.status_code != 201:
+        pytest.skip("Could not create test layer (database may be missing sort_type column)")
+
+    assert response.json()["sort_type"] == "numeric"

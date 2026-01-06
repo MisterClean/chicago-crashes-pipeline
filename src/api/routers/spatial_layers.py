@@ -69,6 +69,7 @@ async def upload_layer(
     description: str | None = Form(None),
     srid: int = Form(4326),
     label_field: str | None = Form(None),
+    sort_type: str | None = Form(None),
     service: SpatialLayerService = Depends(get_service),
 ):
     try:
@@ -80,6 +81,7 @@ async def upload_layer(
             description=description,
             srid=srid,
             label_field=label_field,
+            sort_type=sort_type,
         )
         return layer
     except ValueError as exc:
@@ -98,18 +100,24 @@ async def update_layer(
     payload: SpatialLayerUpdateRequest,
     service: SpatialLayerService = Depends(get_service),
 ):
-    layer = service.update_layer(
-        layer_id=layer_id,
-        name=payload.name,
-        description=payload.description,
-        is_active=payload.is_active,
-        label_field=payload.label_field,
-    )
-    if not layer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+    try:
+        layer = service.update_layer(
+            layer_id=layer_id,
+            name=payload.name,
+            description=payload.description,
+            is_active=payload.is_active,
+            label_field=payload.label_field,
+            sort_type=payload.sort_type,
         )
-    return layer
+        if not layer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+            )
+        return layer
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
 
 
 @router.post("/layers/{layer_id}/replace", response_model=SpatialLayerResponse)
