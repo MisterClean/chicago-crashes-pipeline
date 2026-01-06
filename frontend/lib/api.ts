@@ -4,6 +4,21 @@ const API_BASE =
     ? process.env.BACKEND_URL || "http://localhost:8000"
     : process.env.NEXT_PUBLIC_API_URL || "/api";
 
+// API Key for server-side requests (set in Railway environment)
+const API_KEY = process.env.API_KEY || "";
+
+// Header name for API key authentication
+const API_KEY_HEADER = "X-API-Key";
+
+// Helper to get auth headers for server-side requests
+function getAuthHeaders(): HeadersInit {
+  // Only include API key on server-side where it's available from env
+  if (typeof window === "undefined" && API_KEY) {
+    return { [API_KEY_HEADER]: API_KEY };
+  }
+  return {};
+}
+
 export interface DashboardStats {
   total_crashes: number;
   total_injuries: number;
@@ -64,6 +79,7 @@ export async function fetchDashboardStats(params?: {
     searchParams.set("community_area", params.community_area);
 
   const res = await fetch(`${API_BASE}/dashboard/stats?${searchParams}`, {
+    headers: getAuthHeaders(),
     next: { revalidate: 300 }, // Cache for 5 minutes
   });
 
@@ -85,6 +101,7 @@ export async function fetchWeeklyTrends(params?: {
   if (params?.end_date) searchParams.set("end_date", params.end_date);
 
   const res = await fetch(`${API_BASE}/dashboard/trends/weekly?${searchParams}`, {
+    headers: getAuthHeaders(),
     next: { revalidate: 300 },
   });
 
@@ -106,6 +123,7 @@ export async function fetchCrashesGeoJSON(params?: {
   if (params?.limit) searchParams.set("limit", params.limit.toString());
 
   const res = await fetch(`${API_BASE}/dashboard/crashes/geojson?${searchParams}`, {
+    headers: getAuthHeaders(),
     next: { revalidate: 60 }, // Cache for 1 minute
   });
 
@@ -118,6 +136,7 @@ export async function fetchCrashesGeoJSON(params?: {
 
 export async function fetchSyncStatus(): Promise<SyncStatus> {
   const res = await fetch(`${API_BASE}/sync/status`, {
+    headers: getAuthHeaders(),
     cache: "no-store", // Always fresh
   });
 
@@ -236,7 +255,7 @@ export async function exportLocationReport(
 ): Promise<{ blob: Blob; filename: string }> {
   const res = await fetch(`${API_BASE}/dashboard/location-report/export`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(request),
   });
 
@@ -282,6 +301,7 @@ export async function fetchLocationReport(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeaders(),
     },
     body: JSON.stringify(request),
     cache: "no-store",
@@ -298,6 +318,7 @@ export async function fetchLocationReport(
 // Places API Functions
 export async function fetchPlaceTypes(): Promise<PlaceType[]> {
   const res = await fetch(`${API_BASE}/places/types`, {
+    headers: getAuthHeaders(),
     cache: "no-store",
   });
 
@@ -310,6 +331,7 @@ export async function fetchPlaceTypes(): Promise<PlaceType[]> {
 
 export async function fetchPlaceItems(placeType: string): Promise<PlaceItem[]> {
   const res = await fetch(`${API_BASE}/places/types/${encodeURIComponent(placeType)}/items`, {
+    headers: getAuthHeaders(),
     cache: "no-store",
   });
 
@@ -327,6 +349,7 @@ export async function fetchPlaceGeometry(
   const res = await fetch(
     `${API_BASE}/places/types/${encodeURIComponent(placeType)}/items/${encodeURIComponent(placeId)}/geometry`,
     {
+      headers: getAuthHeaders(),
       cache: "no-store",
     }
   );

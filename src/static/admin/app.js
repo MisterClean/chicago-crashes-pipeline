@@ -5,6 +5,8 @@
 const API_BASE = '';  // No prefix for our API
 const REFRESH_INTERVAL = 30000; // 30 seconds
 const EXECUTION_POLL_INTERVAL = 5000; // 5 seconds for live execution updates
+const API_KEY_HEADER = 'X-API-Key';
+const API_KEY_STORAGE_KEY = 'chicago_crashes_api_key';
 
 // Global variables
 let jobs = [];
@@ -16,6 +18,159 @@ let refreshTimer = null;
 let executionDetailTimer = null;
 let activeExecutionId = null;
 
+// API Key Management
+function getStoredApiKey() {
+    return sessionStorage.getItem(API_KEY_STORAGE_KEY);
+}
+
+function setStoredApiKey(key) {
+    if (key) {
+        sessionStorage.setItem(API_KEY_STORAGE_KEY, key);
+    } else {
+        sessionStorage.removeItem(API_KEY_STORAGE_KEY);
+    }
+}
+
+function clearStoredApiKey() {
+    sessionStorage.removeItem(API_KEY_STORAGE_KEY);
+}
+
+function showApiKeyModal() {
+    const existingModal = document.getElementById('apiKeyModal');
+    if (existingModal) {
+        const modal = new bootstrap.Modal(existingModal);
+        modal.show();
+        return;
+    }
+
+    // Create modal dynamically
+    const modalHtml = `
+        <div class="modal fade" id="apiKeyModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content glass-card">
+                    <div class="modal-header border-0">
+                        <h5 class="modal-title">
+                            <i class="bi bi-shield-lock me-2"></i>Admin Authentication
+                        </h5>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-muted mb-3">
+                            This admin portal requires an API key for access. Enter the key configured in your deployment.
+                        </p>
+                        <div class="mb-3">
+                            <label for="api-key-input" class="form-label">API Key</label>
+                            <input type="password" class="form-control" id="api-key-input"
+                                   placeholder="Enter your API key" autocomplete="off">
+                            <div class="form-text">
+                                The key is stored in your browser session and cleared when you close the tab.
+                            </div>
+                        </div>
+                        <div id="api-key-error" class="alert alert-danger d-none" role="alert">
+                            Invalid API key. Please check and try again.
+                        </div>
+                    </div>
+                    <div class="modal-footer border-0">
+                        <button type="button" class="btn btn-primary" id="api-key-submit-btn" onclick="submitApiKey()">
+                            <i class="bi bi-unlock me-1"></i>Authenticate
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+
+    // Add enter key handler
+    document.getElementById('api-key-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            submitApiKey();
+        }
+    });
+
+    const modal = new bootstrap.Modal(document.getElementById('apiKeyModal'));
+    modal.show();
+
+    // Focus the input after modal is shown
+    document.getElementById('apiKeyModal').addEventListener('shown.bs.modal', function() {
+        document.getElementById('api-key-input').focus();
+    });
+}
+
+async function submitApiKey() {
+    const input = document.getElementById('api-key-input');
+    const errorDiv = document.getElementById('api-key-error');
+    const submitBtn = document.getElementById('api-key-submit-btn');
+    const key = input.value.trim();
+
+    if (!key) {
+        errorDiv.textContent = 'Please enter an API key.';
+        errorDiv.classList.remove('d-none');
+        return;
+    }
+
+    // Disable button and show loading
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Verifying...';
+    errorDiv.classList.add('d-none');
+
+    try {
+        // Test the API key with a protected endpoint
+        const response = await fetch(`${API_BASE}/jobs/summary`, {
+            headers: {
+                [API_KEY_HEADER]: key
+            }
+        });
+
+        if (response.ok) {
+            // Key is valid, store it and reload the app
+            setStoredApiKey(key);
+            const modal = bootstrap.Modal.getInstance(document.getElementById('apiKeyModal'));
+            modal.hide();
+
+            // Reinitialize the app
+            await initializeApp();
+        } else if (response.status === 401) {
+            errorDiv.textContent = 'Invalid API key. Please check and try again.';
+            errorDiv.classList.remove('d-none');
+            input.select();
+        } else {
+            errorDiv.textContent = `Server error: ${response.status}. Please try again.`;
+            errorDiv.classList.remove('d-none');
+        }
+    } catch (error) {
+        console.error('API key verification failed:', error);
+        errorDiv.textContent = 'Connection error. Please check your network and try again.';
+        errorDiv.classList.remove('d-none');
+    } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="bi bi-unlock me-1"></i>Authenticate';
+    }
+}
+
+function showLogoutButton() {
+    // Add logout button to navbar if not already present
+    if (document.getElementById('logout-btn')) {
+        return;
+    }
+
+    const navStatus = document.querySelector('.navbar .d-flex');
+    if (navStatus) {
+        const logoutBtn = document.createElement('button');
+        logoutBtn.id = 'logout-btn';
+        logoutBtn.className = 'btn btn-outline-secondary btn-sm ms-2';
+        logoutBtn.innerHTML = '<i class="bi bi-box-arrow-right"></i>';
+        logoutBtn.title = 'Logout (clear API key)';
+        logoutBtn.onclick = function() {
+            if (confirm('Clear stored API key and logout?')) {
+                clearStoredApiKey();
+                window.location.reload();
+            }
+        };
+        navStatus.appendChild(logoutBtn);
+    }
+}
+
 // Initialize the application
 document.addEventListener('DOMContentLoaded', function() {
     initializeApp();
@@ -25,6 +180,23 @@ async function initializeApp() {
     try {
         // Set active navigation link based on current page
         setActiveNavLink();
+
+        // Check if authentication is required by testing a protected endpoint
+        const apiKey = getStoredApiKey();
+        const testResponse = await fetch(`${API_BASE}/jobs/summary`, {
+            headers: apiKey ? { [API_KEY_HEADER]: apiKey } : {}
+        });
+
+        if (testResponse.status === 401) {
+            // Authentication required, show login modal
+            showApiKeyModal();
+            return;
+        }
+
+        // If we have a valid key, show logout button
+        if (apiKey) {
+            showLogoutButton();
+        }
 
         await loadDashboardData();
         await loadJobs();
@@ -41,6 +213,10 @@ async function initializeApp() {
         showToast('Connected', 'Admin portal loaded successfully', 'success');
     } catch (error) {
         console.error('Failed to initialize app:', error);
+        // Check if it's an auth error
+        if (error.message === 'Authentication required') {
+            return; // Modal already shown
+        }
         document.getElementById('api-status').textContent = 'API Error';
         document.getElementById('api-status').className = 'badge bg-danger me-2';
         showToast('Error', 'Failed to connect to API', 'danger');
@@ -121,10 +297,23 @@ async function apiRequest(endpoint, options = {}) {
     const url = `${API_BASE}${endpoint}`;
     const isFormData = options.body instanceof FormData;
     const defaultHeaders = isFormData ? {} : { 'Content-Type': 'application/json' };
-    const headers = { ...defaultHeaders, ...(options.headers || {}) };
+
+    // Include API key if available
+    const apiKey = getStoredApiKey();
+    const authHeaders = apiKey ? { [API_KEY_HEADER]: apiKey } : {};
+
+    const headers = { ...defaultHeaders, ...authHeaders, ...(options.headers || {}) };
     const fetchOptions = { ...options, headers };
 
     const response = await fetch(url, fetchOptions);
+
+    // Handle authentication errors
+    if (response.status === 401) {
+        // Clear invalid key and show login modal
+        clearStoredApiKey();
+        showApiKeyModal();
+        throw new Error('Authentication required');
+    }
 
     if (!response.ok) {
         let detail = `HTTP ${response.status}`;

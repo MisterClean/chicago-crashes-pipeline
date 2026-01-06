@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from src.api.dependencies import sync_state
+from src.api.middleware.auth import APIKeyMiddleware
 from src.api.routers import dashboard, health, jobs, places, spatial, spatial_layers, sync, validation
 from src.services.job_scheduler import start_job_scheduler, stop_job_scheduler
 from src.utils.config import settings
@@ -104,6 +105,11 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
+
+# Add API Key authentication middleware
+# Set API_KEY environment variable to enable authentication
+# When API_KEY is not set, authentication is disabled (development mode)
+app.add_middleware(APIKeyMiddleware)
 
 # Mount static assets
 static_root = os.path.join(os.path.dirname(__file__), "..", "static")
