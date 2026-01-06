@@ -73,8 +73,8 @@ export function TrendCharts({ data }: TrendChartsProps) {
           type="monotone"
           dataKey="fatalities"
           name="Fatalities"
-          stroke="#dc2626"
-          fill="#dc2626"
+          stroke="#440154"
+          fill="#440154"
           fillOpacity={0.3}
         />
       </AreaChart>
