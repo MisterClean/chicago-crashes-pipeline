@@ -284,25 +284,14 @@ class SpatialLayerService:
 
             total_count += 1
 
-            # Check if the value is numeric or can be parsed as numeric
-            try:
-                # Try to convert to float (handles both int and float)
-                if isinstance(value, (int, float)):
+            # Check if the value is numeric or contains numbers
+            # (handles "District 5", "Ward 2A", "Area 10 West", etc.)
+            if isinstance(value, (int, float)):
+                numeric_count += 1
+            elif isinstance(value, str):
+                # Check if string contains any digits
+                if re.search(r'\d', value):
                     numeric_count += 1
-                elif isinstance(value, str):
-                    # Strip whitespace and try parsing
-                    stripped = value.strip()
-                    # Handle cases like "District 5" by extracting numbers
-                    if stripped.isdigit():
-                        numeric_count += 1
-                    else:
-                        # Try extracting trailing number (e.g., "District 5" -> "5")
-                        import re
-                        match = re.search(r'\d+$', stripped)
-                        if match:
-                            numeric_count += 1
-            except (ValueError, TypeError):
-                pass
 
         # If 80% or more of sampled values are numeric, use numeric sorting
         if total_count > 0 and (numeric_count / total_count) >= 0.8:
