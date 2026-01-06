@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import Map, {
   Source,
   Layer,
@@ -11,6 +11,8 @@ import Map, {
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { bbox } from "@turf/turf";
+import hexGrid from "@turf/hex-grid";
+import booleanPointInPolygon from "@turf/boolean-point-in-polygon";
 import {
   LOOP_VIEW_STATE,
   SEVERITY_LEGEND,
@@ -78,6 +80,76 @@ function formatCurrency(value: number | undefined | null): string {
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
+}
+
+const HEX_COLOR_STOPS = [
+  "#e0f2fe",
+  "#7dd3fc",
+  "#38bdf8",
+  "#0ea5e9",
+  "#0284c7",
+  "#0c4a6e",
+] as const;
+
+function buildHexColorExpression(maxCount: number) {
+  const safeMax = Math.max(maxCount, 1);
+  return [
+    "interpolate",
+    ["linear"],
+    ["get", "crash_count"],
+    0,
+    HEX_COLOR_STOPS[0],
+    safeMax * 0.15,
+    HEX_COLOR_STOPS[1],
+    safeMax * 0.35,
+    HEX_COLOR_STOPS[2],
+    safeMax * 0.55,
+    HEX_COLOR_STOPS[3],
+    safeMax * 0.8,
+    HEX_COLOR_STOPS[4],
+    safeMax,
+    HEX_COLOR_STOPS[5],
+  ];
+}
+
+function buildHexBins(
+  areaFeature: GeoJSON.Feature | null,
+  crashPoints: GeoJSON.Feature[],
+  cellSizeKm: number
+) {
+  if (!areaFeature || crashPoints.length === 0) {
+    return { collection: { type: "FeatureCollection", features: [] }, maxCount: 0 };
+  }
+
+  const bounds = bbox(areaFeature);
+  const grid = hexGrid(bounds, cellSizeKm, { units: "kilometers" });
+  const features: GeoJSON.Feature[] = [];
+  let maxCount = 0;
+
+  for (const hex of grid.features) {
+    let crashCount = 0;
+    for (const point of crashPoints) {
+      if (booleanPointInPolygon(point, hex)) {
+        crashCount += 1;
+      }
+    }
+
+    if (crashCount === 0) {
+      continue;
+    }
+
+    maxCount = Math.max(maxCount, crashCount);
+    features.push({
+      type: "Feature",
+      geometry: hex.geometry,
+      properties: { crash_count: crashCount },
+    });
+  }
+
+  return {
+    collection: { type: "FeatureCollection", features },
+    maxCount,
+  };
 }
 
 // Basemap style URL - requires NEXT_PUBLIC_PROTOMAPS_KEY env var
@@ -249,6 +321,37 @@ export function LocationReportMap({
      mode === "polygon" ? completedPolygonGeoJSON() :
      placeGeoJSON());
 
+  const crashPoints = useMemo(
+    () => reportData?.crashes_geojson?.features ?? [],
+    [reportData]
+  );
+
+  const coarseHexBins = useMemo(
+    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 2),
+    [selectionAreaGeoJSON, crashPoints]
+  );
+  const midHexBins = useMemo(
+    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 1),
+    [selectionAreaGeoJSON, crashPoints]
+  );
+  const fineHexBins = useMemo(
+    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 0.5),
+    [selectionAreaGeoJSON, crashPoints]
+  );
+
+  const coarseHexColor = useMemo(
+    () => buildHexColorExpression(coarseHexBins.maxCount),
+    [coarseHexBins.maxCount]
+  );
+  const midHexColor = useMemo(
+    () => buildHexColorExpression(midHexBins.maxCount),
+    [midHexBins.maxCount]
+  );
+  const fineHexColor = useMemo(
+    () => buildHexColorExpression(fineHexBins.maxCount),
+    [fineHexBins.maxCount]
+  );
+
   return (
     <div className="relative">
       <Map
@@ -264,6 +367,107 @@ export function LocationReportMap({
         cursor={mode === "polygon" && isDrawing ? "crosshair" : "pointer"}
       >
         <NavigationControl position="top-right" />
+
+        {/* Hexagonal crash density bins */}
+        {coarseHexBins.collection.features.length > 0 && (
+          <Source id="hex-coarse" type="geojson" data={coarseHexBins.collection}>
+            <Layer
+              id="hex-coarse-fill"
+              type="fill"
+              paint={{
+                "fill-color": coarseHexColor as any,
+                "fill-opacity": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  8.5,
+                  0.8,
+                  10.5,
+                  0.8,
+                  11.5,
+                  0,
+                ],
+              }}
+            />
+            <Layer
+              id="hex-coarse-outline"
+              type="line"
+              paint={{
+                "line-color": "#0c4a6e",
+                "line-opacity": 0.35,
+                "line-width": 1,
+              }}
+            />
+          </Source>
+        )}
+
+        {midHexBins.collection.features.length > 0 && (
+          <Source id="hex-mid" type="geojson" data={midHexBins.collection}>
+            <Layer
+              id="hex-mid-fill"
+              type="fill"
+              paint={{
+                "fill-color": midHexColor as any,
+                "fill-opacity": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  10,
+                  0,
+                  11,
+                  0.85,
+                  12,
+                  0.85,
+                  13,
+                  0,
+                ],
+              }}
+            />
+            <Layer
+              id="hex-mid-outline"
+              type="line"
+              paint={{
+                "line-color": "#0c4a6e",
+                "line-opacity": 0.25,
+                "line-width": 0.8,
+              }}
+            />
+          </Source>
+        )}
+
+        {fineHexBins.collection.features.length > 0 && (
+          <Source id="hex-fine" type="geojson" data={fineHexBins.collection}>
+            <Layer
+              id="hex-fine-fill"
+              type="fill"
+              paint={{
+                "fill-color": fineHexColor as any,
+                "fill-opacity": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  12,
+                  0,
+                  12.5,
+                  0.9,
+                  13.5,
+                  0.9,
+                  14.5,
+                  0,
+                ],
+              }}
+            />
+            <Layer
+              id="hex-fine-outline"
+              type="line"
+              paint={{
+                "line-color": "#0c4a6e",
+                "line-opacity": 0.2,
+                "line-width": 0.6,
+              }}
+            />
+          </Source>
+        )}
 
         {/* Selection Area (circle or polygon) - use empty FeatureCollection when no selection */}
         <Source
@@ -357,7 +561,17 @@ export function LocationReportMap({
                   "#eab308",
                   "#22c55e",
                 ],
-                "circle-opacity": 0.8,
+                "circle-opacity": [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  11.5,
+                  0,
+                  13,
+                  0.7,
+                  14.5,
+                  0.9,
+                ],
                 "circle-stroke-width": 1,
                 "circle-stroke-color": "#ffffff",
               }}
@@ -467,6 +681,16 @@ export function LocationReportMap({
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+
+          <div className="mt-3 pt-2 border-t border-gray-200 dark:border-gray-700">
+            <p className="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1">
+              Crash Density (Hex)
+            </p>
+            <div className="flex items-center gap-2">
+              <div className="h-2 flex-1 rounded-full bg-gradient-to-r from-sky-100 via-sky-400 to-sky-950" />
+              <div className="text-[10px] text-gray-500 dark:text-gray-400">Low → High</div>
             </div>
           </div>
         </div>
