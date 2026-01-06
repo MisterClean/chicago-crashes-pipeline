@@ -13,12 +13,12 @@ const config: Config = {
           blue: "#b3ddf2",
           red: "#cf142b",
         },
-        // Severity colors for crash data
+        // Severity colors for crash data - colorblind-safe palette
         severity: {
-          fatal: "#dc2626",
-          incapacitating: "#ea580c",
-          injury: "#eab308",
-          property: "#22c55e",
+          fatal: "#440154",        // Deep Violet
+          incapacitating: "#E66100", // Vermillion
+          injury: "#56B4E9",       // Sky Blue
+          property: "#CCCCCC",     // Light Grey
         },
       },
     },

@@ -36,12 +36,12 @@ export const LOOP_VIEW_STATE = {
 export const MIN_ZOOM = 7; // Allow zooming out to see full Chicago metro area
 export const MAX_ZOOM = 18;
 
-// Severity legend for UI
+// Severity legend for UI - colorblind-safe palette
 export const SEVERITY_LEGEND = [
-  { label: "Fatal", color: "#dc2626" },
-  { label: "Incapacitating Injury", color: "#ea580c" },
-  { label: "Other Injury", color: "#eab308" },
-  { label: "Property Damage Only", color: "#22c55e" },
+  { label: "Fatal", color: "#440154" },              // Deep Violet
+  { label: "Incapacitating Injury", color: "#E66100" }, // Vermillion
+  { label: "Other Injury", color: "#56B4E9" },       // Sky Blue
+  { label: "Property Damage Only", color: "#CCCCCC" }, // Light Grey
 ];
 
 // Map metric options for user selection
@@ -65,12 +65,12 @@ export const MAP_METRICS: MetricConfig[] = [
     colorExpression: [
       "case",
       [">", ["get", "injuries_fatal"], 0],
-      "#dc2626",
+      "#440154",  // Deep Violet - Fatal
       [">", ["get", "injuries_incapacitating"], 0],
-      "#ea580c",
+      "#E66100",  // Vermillion - Incapacitating
       [">", ["get", "injuries_total"], 0],
-      "#eab308",
-      "#22c55e",
+      "#56B4E9",  // Sky Blue - Other Injury
+      "#CCCCCC",  // Light Grey - Property Damage Only
     ],
     getFilterExpression: (visible: Set<string>) => {
       const conditions: unknown[] = ["any"];
