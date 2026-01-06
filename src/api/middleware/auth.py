@@ -24,6 +24,7 @@ DEFAULT_PUBLIC_ROUTES = [
     "/dashboard/stats",
     "/dashboard/trends",
     "/dashboard/crashes/geojson",
+    "/dashboard/location-report",
     # Places API (read-only geographic data)
     "/places/",
     # Static assets

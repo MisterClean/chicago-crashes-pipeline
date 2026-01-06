@@ -48,6 +48,14 @@ class TestIsPublicRoute:
         assert is_public_route("/dashboard/trends") is True
         assert is_public_route("/dashboard/crashes/geojson") is True
 
+    def test_dashboard_location_report_is_public(self):
+        """Location report endpoint should be public (read-only crash data)."""
+        assert is_public_route("/dashboard/location-report") is True
+
+    def test_dashboard_location_report_export_is_protected(self):
+        """Location report export should require authentication."""
+        assert is_public_route("/dashboard/location-report/export") is False
+
     def test_places_endpoints_are_public(self):
         """Places API endpoints should be public."""
         assert is_public_route("/places/") is True
@@ -71,7 +79,6 @@ class TestIsPublicRoute:
     def test_unprotected_non_public_routes_require_auth(self):
         """Routes not in public list should require authentication."""
         assert is_public_route("/spatial/load") is False
-        assert is_public_route("/dashboard/location-report") is False
         assert is_public_route("/sync/counts") is False
         assert is_public_route("/some/random/path") is False
         assert is_public_route("/api/private") is False
@@ -314,7 +321,6 @@ class TestSecurityVulnerabilityRegression:
         # These should NOT be public even though they all start with "/"
         non_public_paths = [
             "/spatial/load",
-            "/dashboard/location-report",
             "/sync/counts",
             "/api/internal",
             "/arbitrary/endpoint",
