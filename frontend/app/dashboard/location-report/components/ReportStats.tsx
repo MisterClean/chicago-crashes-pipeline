@@ -64,6 +64,12 @@ export function ReportStats({ stats }: ReportStatsProps) {
       bgColor: "bg-slate-50 dark:bg-slate-800",
     },
     {
+      label: "Children Injured",
+      value: stats.children_injured,
+      color: "text-amber-700 dark:text-amber-400",
+      bgColor: "bg-amber-50 dark:bg-amber-900/20",
+    },
+    {
       label: "Hit & Run",
       value: stats.hit_and_run_count,
       color: "text-amber-700 dark:text-amber-400",

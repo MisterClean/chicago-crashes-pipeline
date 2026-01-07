@@ -182,6 +182,7 @@ export interface LocationReportStats {
   cyclists_involved: number;
   hit_and_run_count: number;
   incapacitating_injuries: number;
+  children_injured: number;
   crashes_with_injuries: number;
   crashes_with_fatalities: number;
   // Cost estimates (2024$) - FHWA methodology

@@ -662,6 +662,10 @@ class LocationReportStats(BaseModel):
     cyclists_involved: int
     hit_and_run_count: int
     incapacitating_injuries: int
+    children_injured: int = Field(
+        default=0,
+        description="Count of people under 18 with any injury classification"
+    )
     # Severity breakdown
     crashes_with_injuries: int
     crashes_with_fatalities: int
@@ -900,7 +904,13 @@ async def get_location_report(
                 COUNT(*) FILTER (WHERE injury_classification IS NULL OR injury_classification NOT IN (
                     'FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY',
                     'REPORTED, NOT EVIDENT', 'NO INDICATION OF INJURY'
-                )) AS unknown_count
+                )) AS unknown_count,
+                COUNT(*) FILTER (
+                    WHERE cp.age >= 0 AND cp.age < 18
+                    AND injury_classification IN (
+                        'FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT'
+                    )
+                ) AS children_injured
             FROM crash_people cp
             INNER JOIN crashes c ON cp.crash_record_id = c.crash_record_id
             WHERE c.geometry IS NOT NULL
@@ -1003,6 +1013,7 @@ async def get_location_report(
             hit_and_run_count=stats_result.hit_and_run_count or 0,
             pedestrians_involved=people_result.pedestrians or 0,
             cyclists_involved=people_result.cyclists or 0,
+            children_injured=people_result.children_injured or 0,
             estimated_economic_damages=estimated_economic_damages,
             estimated_societal_costs=estimated_societal_costs,
             total_vehicles=total_vehicles,
