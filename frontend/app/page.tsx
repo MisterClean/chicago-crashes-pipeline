@@ -20,7 +20,7 @@ export default function Home() {
               View Dashboard
             </Link>
             <a
-              href="https://github.com/lakeview-urbanists/chicago-crash-dashboard"
+              href="https://github.com/MisterClean/chicago-crashes-pipeline"
               target="_blank"
               rel="noopener noreferrer"
               className="rounded-md bg-gray-100 dark:bg-gray-700 px-6 py-3 text-lg font-semibold text-gray-900 dark:text-white shadow-sm hover:bg-gray-200 dark:hover:bg-gray-600"
