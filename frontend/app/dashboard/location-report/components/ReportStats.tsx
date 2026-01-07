@@ -65,7 +65,7 @@ export function ReportStats({ stats }: ReportStatsProps) {
     },
     {
       label: "Children Injured",
-      value: stats.children_injured,
+      value: stats.children_injured ?? 0,
       color: "text-amber-700 dark:text-amber-400",
       bgColor: "bg-amber-50 dark:bg-amber-900/20",
     },
