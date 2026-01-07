@@ -326,16 +326,18 @@ export function LocationReportMap({
     [reportData]
   );
 
+  // Hex bin sizes scaled to Chicago city blocks (~100-200m per block)
+  // Coarse: ~6 blocks, Mid: ~2 blocks, Fine: ~half block (intersection level)
   const coarseHexBins = useMemo(
-    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 2),
+    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 0.5),
     [selectionAreaGeoJSON, crashPoints]
   );
   const midHexBins = useMemo(
-    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 1),
+    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 0.15),
     [selectionAreaGeoJSON, crashPoints]
   );
   const fineHexBins = useMemo(
-    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 0.5),
+    () => buildHexBins(selectionAreaGeoJSON ?? null, crashPoints, 0.05),
     [selectionAreaGeoJSON, crashPoints]
   );
 
@@ -380,11 +382,11 @@ export function LocationReportMap({
                   "interpolate",
                   ["linear"],
                   ["zoom"],
-                  8.5,
+                  11,
                   0.8,
-                  10.5,
+                  13.5,
                   0.8,
-                  11.5,
+                  14.5,
                   0,
                 ],
               }}
@@ -412,13 +414,13 @@ export function LocationReportMap({
                   "interpolate",
                   ["linear"],
                   ["zoom"],
-                  10,
+                  14,
                   0,
-                  11,
+                  14.5,
                   0.85,
-                  12,
+                  16,
                   0.85,
-                  13,
+                  17,
                   0,
                 ],
               }}
@@ -446,14 +448,14 @@ export function LocationReportMap({
                   "interpolate",
                   ["linear"],
                   ["zoom"],
-                  12,
+                  16.5,
                   0,
-                  12.5,
+                  17,
                   0.9,
-                  13.5,
+                  18,
                   0.9,
-                  14.5,
-                  0,
+                  19,
+                  0.5,
                 ],
               }}
             />
@@ -565,11 +567,11 @@ export function LocationReportMap({
                   "interpolate",
                   ["linear"],
                   ["zoom"],
-                  11.5,
+                  14,
                   0,
-                  13,
+                  15,
                   0.7,
-                  14.5,
+                  16.5,
                   0.9,
                 ],
                 "circle-stroke-width": 1,
