@@ -89,6 +89,16 @@ def _sort_items(items: list[PlaceItemResponse], sort_type: str) -> list[PlaceIte
         return sorted(items, key=lambda item: item.name.lower())
 
 
+def _format_label_value(val: Any) -> str:
+    """Format a label value for display.
+
+    Converts floats to ints if they're whole numbers (e.g., 1.0 -> "1").
+    """
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    return str(val)
+
+
 def _extract_feature_name(props: dict, feature_id: int) -> str:
     """Extract a human-readable name from feature properties.
 
@@ -255,7 +265,7 @@ async def list_place_items(
 
             # Use configured label_field if available, otherwise fall back to heuristics
             if layer.label_field and layer.label_field in props:
-                name = str(props[layer.label_field])
+                name = _format_label_value(props[layer.label_field])
             else:
                 name = _extract_feature_name(props, feature.id)
 
@@ -353,7 +363,7 @@ async def get_place_geometry(
 
         # Use configured label_field if available, otherwise fall back to heuristics
         if layer.label_field and layer.label_field in props:
-            name = str(props[layer.label_field])
+            name = _format_label_value(props[layer.label_field])
         else:
             name = _extract_feature_name(props, result.id)
 

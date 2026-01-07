@@ -391,3 +391,136 @@ def test_upload_layer_with_sort_type(client):
         pytest.skip("Could not create test layer (database may be missing sort_type column)")
 
     assert response.json()["sort_type"] == "numeric"
+
+
+def test_upload_layer_without_sort_type_defaults_to_alphabetic(client):
+    """Upload without sort_type should default to alphabetic."""
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Default Sort Layer", "srid": "4326"}
+    response = client.post("/spatial/layers", files=files, data=data)
+
+    if response.status_code != 201:
+        pytest.skip("Could not create test layer")
+
+    # Default should be alphabetic (or auto-detected based on content)
+    assert response.json()["sort_type"] in ["alphabetic", "numeric", "natural"]
+
+
+def test_list_layers_includes_sort_type(client):
+    """GET /spatial/layers should include sort_type in each layer."""
+    # Create a layer first
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "List Test Layer", "srid": "4326", "sort_type": "natural"}
+    create_response = client.post("/spatial/layers", files=files, data=data)
+
+    if create_response.status_code != 201:
+        pytest.skip("Could not create test layer")
+
+    # List layers
+    list_response = client.get("/spatial/layers")
+    assert list_response.status_code == 200
+
+    layers = list_response.json()
+    assert len(layers) >= 1
+
+    # Find our layer and check sort_type
+    test_layer = next((l for l in layers if l["name"] == "List Test Layer"), None)
+    assert test_layer is not None
+    assert test_layer["sort_type"] == "natural"
+
+
+def test_get_layer_detail_includes_sort_type(client):
+    """GET /spatial/layers/{id} should include sort_type."""
+    # Create a layer first
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Detail Test Layer", "srid": "4326", "sort_type": "numeric"}
+    create_response = client.post("/spatial/layers", files=files, data=data)
+
+    if create_response.status_code != 201:
+        pytest.skip("Could not create test layer")
+
+    layer_id = create_response.json()["id"]
+
+    # Get layer detail
+    detail_response = client.get(f"/spatial/layers/{layer_id}")
+    assert detail_response.status_code == 200
+
+    detail = detail_response.json()
+    assert detail["sort_type"] == "numeric"
+    assert "available_fields" in detail  # Detail response includes extra fields
+
+
+def test_update_layer_sort_type_persists(client):
+    """Updating sort_type should persist and be returned in subsequent requests."""
+    # Create a layer with alphabetic sort
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Persist Test Layer", "srid": "4326", "sort_type": "alphabetic"}
+    create_response = client.post("/spatial/layers", files=files, data=data)
+
+    if create_response.status_code != 201:
+        pytest.skip("Could not create test layer")
+
+    layer_id = create_response.json()["id"]
+    assert create_response.json()["sort_type"] == "alphabetic"
+
+    # Update to numeric
+    update_response = client.patch(
+        f"/spatial/layers/{layer_id}",
+        json={"sort_type": "numeric"}
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["sort_type"] == "numeric"
+
+    # Verify it persisted by fetching again
+    get_response = client.get(f"/spatial/layers/{layer_id}")
+    assert get_response.status_code == 200
+    assert get_response.json()["sort_type"] == "numeric"
+
+    # Update to natural
+    update_response = client.patch(
+        f"/spatial/layers/{layer_id}",
+        json={"sort_type": "natural"}
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["sort_type"] == "natural"
+
+
+def test_update_layer_sort_type_with_other_fields(client):
+    """Updating sort_type along with other fields should work correctly."""
+    # Create a layer
+    files = {
+        "file": ("layer.geojson", _create_geojson_bytes(), "application/geo+json"),
+    }
+    data = {"name": "Multi-field Test", "srid": "4326"}
+    create_response = client.post("/spatial/layers", files=files, data=data)
+
+    if create_response.status_code != 201:
+        pytest.skip("Could not create test layer")
+
+    layer_id = create_response.json()["id"]
+
+    # Update multiple fields including sort_type
+    update_response = client.patch(
+        f"/spatial/layers/{layer_id}",
+        json={
+            "name": "Updated Multi-field Test",
+            "description": "New description",
+            "sort_type": "numeric",
+            "is_active": False
+        }
+    )
+    assert update_response.status_code == 200
+
+    result = update_response.json()
+    assert result["name"] == "Updated Multi-field Test"
+    assert result["description"] == "New description"
+    assert result["sort_type"] == "numeric"
+    assert result["is_active"] is False

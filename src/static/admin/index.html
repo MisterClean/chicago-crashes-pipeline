@@ -380,6 +380,15 @@
                                     </select>
                                     <div class="form-text">Choose which field to display as the feature name in dropdowns.</div>
                                 </div>
+                                <div class="mb-3" id="spatial-layer-sort-type-group" style="display: none;">
+                                    <label for="spatial-layer-sort-type" class="form-label">Sort Order</label>
+                                    <select class="form-select" id="spatial-layer-sort-type" name="sort_type">
+                                        <option value="alphabetic">Alphabetic (A, B, C...)</option>
+                                        <option value="numeric">Numeric (1, 2, 10, 20...)</option>
+                                        <option value="natural">Natural (1, 2, 10, District 1...)</option>
+                                    </select>
+                                    <div class="form-text">How to sort features in the location report dropdown.</div>
+                                </div>
                                 <div class="upload-checklist rounded-3 p-3 mb-3">
                                     <p class="small fw-semibold text-uppercase text-muted mb-2">Upload checklist</p>
                                     <ul class="small mb-0 ps-3">
@@ -465,6 +474,15 @@
                                     <option value="">Auto-detect</option>
                                 </select>
                                 <div class="form-text">Field used for display names in location report dropdown.</div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-sort-type" class="form-label">Sort Order</label>
+                                <select class="form-select" id="spatial-layer-edit-sort-type">
+                                    <option value="alphabetic">Alphabetic (A, B, C...)</option>
+                                    <option value="numeric">Numeric (1, 2, 10, 20...)</option>
+                                    <option value="natural">Natural (1, 2, 10, District 1...)</option>
+                                </select>
+                                <div class="form-text">How to sort features in the location report dropdown.</div>
                             </div>
                             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
                                 <div class="form-check">
