@@ -1062,9 +1062,11 @@ function displaySpatialLayers(layers) {
 async function previewSpatialLayerFields(fileInput) {
     const labelFieldGroup = document.getElementById('spatial-layer-label-field-group');
     const labelFieldSelect = document.getElementById('spatial-layer-label-field');
+    const sortTypeGroup = document.getElementById('spatial-layer-sort-type-group');
 
     if (!fileInput.files || fileInput.files.length === 0) {
         labelFieldGroup.style.display = 'none';
+        if (sortTypeGroup) sortTypeGroup.style.display = 'none';
         return;
     }
 
@@ -1075,6 +1077,7 @@ async function previewSpatialLayerFields(fileInput) {
     try {
         labelFieldSelect.innerHTML = '<option value="">Analyzing fields...</option>';
         labelFieldGroup.style.display = 'block';
+        if (sortTypeGroup) sortTypeGroup.style.display = 'block';
 
         const result = await apiRequest('/spatial/layers/preview-fields', {
             method: 'POST',
@@ -1137,6 +1140,8 @@ async function uploadSpatialLayer() {
         form.reset();
         document.getElementById('spatial-layer-srid').value = '4326';
         labelFieldGroup.style.display = 'none';
+        const sortTypeGroup = document.getElementById('spatial-layer-sort-type-group');
+        if (sortTypeGroup) sortTypeGroup.style.display = 'none';
         await loadSpatialLayers();
     } catch (error) {
         console.error('Failed to upload spatial layer:', error);
@@ -1191,6 +1196,12 @@ function populateSpatialLayerModal(layer) {
         labelFieldSelect.value = layer.label_field;
     }
 
+    // Populate sort type selector
+    const sortTypeSelect = document.getElementById('spatial-layer-edit-sort-type');
+    if (sortTypeSelect && layer.sort_type) {
+        sortTypeSelect.value = layer.sort_type;
+    }
+
     const meta = document.getElementById('spatial-layer-meta');
     meta.innerHTML = `
         <div class="row g-3">
@@ -1210,9 +1221,13 @@ function populateSpatialLayerModal(layer) {
                 <div class="text-muted small">Original File</div>
                 <div class="fw-bold">${layer.original_filename || '—'}</div>
             </div>
-            <div class="col-12">
+            <div class="col-md-6">
                 <div class="text-muted small">Label Field</div>
                 <div class="fw-bold">${layer.label_field || 'Auto-detect'}</div>
+            </div>
+            <div class="col-md-6">
+                <div class="text-muted small">Sort Order</div>
+                <div class="fw-bold">${formatSortType(layer.sort_type)}</div>
             </div>
         </div>
     `;
@@ -1239,6 +1254,7 @@ async function saveSpatialLayerChanges() {
     const descriptionInput = document.getElementById('spatial-layer-edit-description');
     const activeInput = document.getElementById('spatial-layer-edit-active');
     const labelFieldInput = document.getElementById('spatial-layer-edit-label-field');
+    const sortTypeInput = document.getElementById('spatial-layer-edit-sort-type');
     const saveBtn = document.getElementById('spatial-layer-save-btn');
 
     const name = nameInput.value.trim();
@@ -1251,7 +1267,8 @@ async function saveSpatialLayerChanges() {
         name,
         description: descriptionInput.value,
         is_active: activeInput.checked,
-        label_field: labelFieldInput.value || null
+        label_field: labelFieldInput.value || null,
+        sort_type: sortTypeInput ? sortTypeInput.value : null
     };
 
     saveBtn.disabled = true;
@@ -1397,6 +1414,15 @@ function formatJobType(jobType) {
 
 function formatRecurrenceType(recurrenceType) {
     return recurrenceType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function formatSortType(sortType) {
+    const labels = {
+        'alphabetic': 'Alphabetic',
+        'numeric': 'Numeric',
+        'natural': 'Natural'
+    };
+    return labels[sortType] || 'Alphabetic';
 }
 
 function getStatusIcon(status) {
