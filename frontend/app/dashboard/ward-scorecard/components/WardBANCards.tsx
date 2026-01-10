@@ -28,6 +28,7 @@ export function WardBANCards({
   const metrics = [
     {
       label: "KSI",
+      field: "ksi" as keyof WardStats,
       value: stats.ksi,
       color: "text-red-600 dark:text-red-400",
       bgColor: "bg-red-50 dark:bg-red-900/20",
@@ -35,6 +36,7 @@ export function WardBANCards({
     },
     {
       label: "Fatalities",
+      field: "fatalities" as keyof WardStats,
       value: stats.fatalities,
       color: "text-red-700 dark:text-red-500",
       bgColor: "bg-red-100 dark:bg-red-900/30",
@@ -42,6 +44,7 @@ export function WardBANCards({
     },
     {
       label: "Serious Injuries",
+      field: "serious_injuries" as keyof WardStats,
       value: stats.serious_injuries,
       color: "text-amber-600 dark:text-amber-400",
       bgColor: "bg-amber-50 dark:bg-amber-900/20",
@@ -49,6 +52,7 @@ export function WardBANCards({
     },
     {
       label: "VRU Injuries",
+      field: "vru_injuries" as keyof WardStats,
       value: stats.vru_injuries,
       color: "text-blue-600 dark:text-blue-400",
       bgColor: "bg-blue-50 dark:bg-blue-900/20",
@@ -56,6 +60,7 @@ export function WardBANCards({
     },
     {
       label: "Children Injured",
+      field: "children_injured" as keyof WardStats,
       value: stats.children_injured,
       color: "text-purple-600 dark:text-purple-400",
       bgColor: "bg-purple-50 dark:bg-purple-900/20",
@@ -63,6 +68,7 @@ export function WardBANCards({
     },
     {
       label: "Hit & Run",
+      field: "hit_and_run" as keyof WardStats,
       value: stats.hit_and_run,
       color: "text-slate-600 dark:text-slate-400",
       bgColor: "bg-slate-50 dark:bg-slate-800",
@@ -136,7 +142,7 @@ export function WardBANCards({
             </p>
             {comparison && (
               <p className="text-[10px] text-gray-500 dark:text-gray-500 mt-1">
-                Avg: {getPerWardAvg(comparison[metric.label.toLowerCase().replace(/ /g, "_") as keyof WardStats] as number).toLocaleString()}
+                Avg: {getPerWardAvg(comparison[metric.field] as number).toLocaleString()}
               </p>
             )}
             <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
