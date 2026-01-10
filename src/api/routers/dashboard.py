@@ -10,7 +10,7 @@ from datetime import datetime, time, timedelta
 from typing import Any, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
@@ -1240,4 +1240,864 @@ async def export_location_report(
         )
     except Exception as e:
         logger.error("Failed to export location report", error=str(e))
+        raise
+
+
+# ==========================================
+# Ward Scorecard Endpoints
+# ==========================================
+
+
+class WardStats(BaseModel):
+    """Statistics for a single ward or citywide."""
+
+    total_crashes: int
+    fatalities: int
+    serious_injuries: int
+    ksi: int  # Killed or Seriously Injured
+    vru_injuries: int  # Vulnerable Road User injuries
+    children_injured: int
+    hit_and_run: int
+    economic_cost: float
+    societal_cost: float
+
+
+class WardRanking(BaseModel):
+    """Ward with stats for ranking table."""
+
+    ward: int
+    ward_name: str
+    alderman: Optional[str] = None
+    total_crashes: int
+    fatalities: int
+    serious_injuries: int
+    ksi: int
+    vru_injuries: int
+    children_injured: int
+    economic_cost: float
+    societal_cost: float
+
+
+class WardScorecardCitywideResponse(BaseModel):
+    """Response for citywide ward scorecard endpoint."""
+
+    year: int
+    citywide_stats: WardStats
+    ward_rankings: List[WardRanking]
+    wards_geojson: dict  # GeoJSON FeatureCollection with ward boundaries
+
+
+class WardTrendData(BaseModel):
+    """Trend data for a single entity (citywide or ward)."""
+
+    ksi: List[int]
+    fatalities: List[int]
+    serious_injuries: List[int]
+
+
+class WardTrendResponse(BaseModel):
+    """Response for citywide trends endpoint."""
+
+    years: List[int]
+    citywide: WardTrendData
+    ward: Optional[dict] = None  # Includes ward number + trend data
+
+
+class MonthlySeasonalityData(BaseModel):
+    """Monthly seasonality data."""
+
+    months: List[str]
+    selected_year: dict
+    five_year_avg: dict
+
+
+class WardDetailTrendResponse(BaseModel):
+    """Response for ward detail trends endpoint."""
+
+    ward: int
+    yearly_trends: dict
+    monthly_seasonality: MonthlySeasonalityData
+
+
+class WardDetailResponse(BaseModel):
+    """Response for ward detail endpoint."""
+
+    year: int
+    ward: int
+    ward_name: str
+    alderman: Optional[str] = None
+    stats: WardStats
+    citywide_comparison: WardStats
+    cost_breakdown: CostBreakdown
+    crashes_geojson: dict
+    ward_boundary_geojson: dict
+
+
+def _get_ward_layer_id(db: Session) -> int:
+    """Get the spatial layer ID for wards."""
+    result = db.execute(
+        text("SELECT id FROM spatial_layers WHERE slug = 'wards' LIMIT 1")
+    ).fetchone()
+    if not result:
+        raise HTTPException(status_code=500, detail="Wards spatial layer not found")
+    return result.id
+
+
+def _calculate_ward_costs(
+    fatalities: int,
+    serious_injuries: int,
+    nonincap_injuries: int,
+    possible_injuries: int,
+    no_indication: int,
+    pdo_vehicles: int,
+) -> tuple[float, float]:
+    """Calculate economic and societal costs for ward stats."""
+    # Person-based costs
+    person_economic = (
+        fatalities * KABCO_COSTS["FATAL"][0]
+        + serious_injuries * KABCO_COSTS["INCAPACITATING INJURY"][0]
+        + nonincap_injuries * KABCO_COSTS["NONINCAPACITATING INJURY"][0]
+        + possible_injuries * KABCO_COSTS["REPORTED, NOT EVIDENT"][0]
+        + no_indication * KABCO_COSTS["NO INDICATION OF INJURY"][0]
+    )
+    person_qaly = (
+        fatalities * KABCO_COSTS["FATAL"][1]
+        + serious_injuries * KABCO_COSTS["INCAPACITATING INJURY"][1]
+        + nonincap_injuries * KABCO_COSTS["NONINCAPACITATING INJURY"][1]
+        + possible_injuries * KABCO_COSTS["REPORTED, NOT EVIDENT"][1]
+        + no_indication * KABCO_COSTS["NO INDICATION OF INJURY"][1]
+    )
+
+    # Vehicle costs (PDO only)
+    vehicle_economic = pdo_vehicles * VEHICLE_ECONOMIC_COST
+    vehicle_qaly = pdo_vehicles * VEHICLE_QALY_COST
+
+    economic_cost = person_economic + vehicle_economic
+    societal_cost = economic_cost + person_qaly + vehicle_qaly
+
+    return economic_cost, societal_cost
+
+
+@router.get("/ward-scorecard/citywide", response_model=WardScorecardCitywideResponse)
+async def get_ward_scorecard_citywide(
+    year: int = Query(..., ge=2018, le=2026, description="Year to query"),
+    db: Session = Depends(get_db),
+) -> WardScorecardCitywideResponse:
+    """
+    Get citywide aggregated stats and all ward rankings for a given year.
+
+    Returns ward statistics aggregated by ward with costs and geometry for choropleth.
+    """
+    from datetime import date
+
+    try:
+        ward_layer_id = _get_ward_layer_id(db)
+
+        # Use date range for better index utilization
+        start_date = date(year, 1, 1)
+        end_date = date(year + 1, 1, 1)
+
+        # Query 1: Crash-level aggregation (fast with ward index)
+        crash_stats_query = text("""
+            SELECT
+                c.ward,
+                COUNT(DISTINCT c.crash_record_id) as total_crashes,
+                COALESCE(SUM(c.injuries_fatal), 0) as fatalities,
+                COALESCE(SUM(c.injuries_incapacitating), 0) as serious_injuries,
+                COUNT(DISTINCT c.crash_record_id) FILTER (WHERE c.hit_and_run_i = 'Y') as hit_and_run,
+                COUNT(DISTINCT c.crash_record_id) FILTER (
+                    WHERE COALESCE(c.injuries_total, 0) = 0
+                    AND COALESCE(c.injuries_fatal, 0) = 0
+                ) as pdo_crashes
+            FROM crashes c
+            WHERE c.ward IS NOT NULL
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+            GROUP BY c.ward
+            ORDER BY c.ward
+        """)
+
+        crash_results = db.execute(
+            crash_stats_query,
+            {"start_date": start_date, "end_date": end_date},
+        ).fetchall()
+
+        # Query 2: Person-level aggregation (VRU, children, injury counts)
+        people_stats_query = text("""
+            SELECT
+                c.ward,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'FATAL') as fatal_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'INCAPACITATING INJURY') as incap_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'NONINCAPACITATING INJURY') as nonincap_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'REPORTED, NOT EVIDENT') as possible_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'NO INDICATION OF INJURY') as no_injury_people,
+                COUNT(*) FILTER (
+                    WHERE cp.person_type IN ('PEDESTRIAN', 'BICYCLE', 'PEDALCYCLIST')
+                    AND cp.injury_classification IN (
+                        'FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT'
+                    )
+                ) as vru_injuries,
+                COUNT(*) FILTER (
+                    WHERE cp.age >= 0 AND cp.age < 18
+                    AND cp.injury_classification IN (
+                        'FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT'
+                    )
+                ) as children_injured
+            FROM crashes c
+            JOIN crash_people cp ON c.crash_record_id = cp.crash_record_id
+            WHERE c.ward IS NOT NULL
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+            GROUP BY c.ward
+        """)
+
+        people_results = db.execute(
+            people_stats_query,
+            {"start_date": start_date, "end_date": end_date},
+        ).fetchall()
+
+        # Merge results in Python
+        people_by_ward = {r.ward: r for r in people_results}
+
+        # Build combined results
+        ward_results = []
+        for crash_row in crash_results:
+            people_row = people_by_ward.get(crash_row.ward)
+            ward_results.append({
+                "ward": crash_row.ward,
+                "total_crashes": crash_row.total_crashes,
+                "fatalities": crash_row.fatalities,
+                "serious_injuries": crash_row.serious_injuries,
+                "hit_and_run": crash_row.hit_and_run,
+                "fatal_people": people_row.fatal_people if people_row else 0,
+                "incap_people": people_row.incap_people if people_row else 0,
+                "nonincap_people": people_row.nonincap_people if people_row else 0,
+                "possible_people": people_row.possible_people if people_row else 0,
+                "no_injury_people": people_row.no_injury_people if people_row else 0,
+                "vru_injuries": people_row.vru_injuries if people_row else 0,
+                "children_injured": people_row.children_injured if people_row else 0,
+                "pdo_vehicles": crash_row.pdo_crashes * 2,  # Estimate 2 vehicles per PDO crash
+            })
+
+        # Build ward rankings and calculate citywide totals
+        ward_rankings = []
+        citywide_totals = {
+            "total_crashes": 0,
+            "fatalities": 0,
+            "serious_injuries": 0,
+            "ksi": 0,
+            "vru_injuries": 0,
+            "children_injured": 0,
+            "hit_and_run": 0,
+            "economic_cost": 0.0,
+            "societal_cost": 0.0,
+        }
+
+        for row in ward_results:
+            ksi = row["fatalities"] + row["serious_injuries"]
+            economic_cost, societal_cost = _calculate_ward_costs(
+                row["fatal_people"],
+                row["incap_people"],
+                row["nonincap_people"],
+                row["possible_people"],
+                row["no_injury_people"],
+                row["pdo_vehicles"],
+            )
+
+            ward_rankings.append(
+                WardRanking(
+                    ward=row["ward"],
+                    ward_name=f"Ward {row['ward']}",
+                    alderman=None,  # Could add alderman lookup if needed
+                    total_crashes=row["total_crashes"],
+                    fatalities=row["fatalities"],
+                    serious_injuries=row["serious_injuries"],
+                    ksi=ksi,
+                    vru_injuries=row["vru_injuries"],
+                    children_injured=row["children_injured"],
+                    economic_cost=economic_cost,
+                    societal_cost=societal_cost,
+                )
+            )
+
+            # Accumulate citywide totals
+            citywide_totals["total_crashes"] += row["total_crashes"]
+            citywide_totals["fatalities"] += row["fatalities"]
+            citywide_totals["serious_injuries"] += row["serious_injuries"]
+            citywide_totals["ksi"] += ksi
+            citywide_totals["vru_injuries"] += row["vru_injuries"]
+            citywide_totals["children_injured"] += row["children_injured"]
+            citywide_totals["hit_and_run"] += row["hit_and_run"]
+            citywide_totals["economic_cost"] += economic_cost
+            citywide_totals["societal_cost"] += societal_cost
+
+        citywide_stats = WardStats(**citywide_totals)
+
+        # Get ward geometries for choropleth map
+        geojson_query = text("""
+            SELECT
+                FLOOR((f.properties->>'ward')::numeric)::int as ward,
+                ST_AsGeoJSON(f.geometry)::json as geometry
+            FROM spatial_layer_features f
+            WHERE f.layer_id = :ward_layer_id
+            ORDER BY ward
+        """)
+
+        geom_results = db.execute(
+            geojson_query, {"ward_layer_id": ward_layer_id}
+        ).fetchall()
+
+        # Build GeoJSON with KSI values for coloring
+        ward_ksi_map = {w.ward: w.ksi for w in ward_rankings}
+        features = []
+        for row in geom_results:
+            features.append({
+                "type": "Feature",
+                "geometry": row.geometry,
+                "properties": {
+                    "ward": row.ward,
+                    "ward_name": f"Ward {row.ward}",
+                    "ksi": ward_ksi_map.get(row.ward, 0),
+                },
+            })
+
+        wards_geojson = {
+            "type": "FeatureCollection",
+            "features": features,
+        }
+
+        return WardScorecardCitywideResponse(
+            year=year,
+            citywide_stats=citywide_stats,
+            ward_rankings=ward_rankings,
+            wards_geojson=wards_geojson,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get ward scorecard citywide", error=str(e))
+        raise
+
+
+@router.get("/ward-scorecard/citywide/trends", response_model=WardTrendResponse)
+async def get_ward_scorecard_citywide_trends(
+    ward: Optional[int] = Query(None, ge=1, le=50, description="Ward to compare"),
+    db: Session = Depends(get_db),
+) -> WardTrendResponse:
+    """
+    Get yearly trend data for citywide stats, optionally with a ward for comparison.
+    """
+    try:
+        ward_layer_id = _get_ward_layer_id(db)
+
+        # Citywide yearly trends
+        citywide_query = text("""
+            SELECT
+                EXTRACT(YEAR FROM crash_date)::int as year,
+                COALESCE(SUM(injuries_fatal), 0) as fatalities,
+                COALESCE(SUM(injuries_incapacitating), 0) as serious_injuries
+            FROM crashes
+            WHERE crash_date IS NOT NULL
+                AND EXTRACT(YEAR FROM crash_date) >= 2018
+                AND geometry IS NOT NULL
+            GROUP BY EXTRACT(YEAR FROM crash_date)
+            ORDER BY year
+        """)
+
+        citywide_results = db.execute(citywide_query).fetchall()
+
+        years = [r.year for r in citywide_results]
+        citywide = WardTrendData(
+            ksi=[r.fatalities + r.serious_injuries for r in citywide_results],
+            fatalities=[r.fatalities for r in citywide_results],
+            serious_injuries=[r.serious_injuries for r in citywide_results],
+        )
+
+        ward_data = None
+        if ward:
+            # Use pre-computed ward column for fast filtering
+            ward_query = text("""
+                SELECT
+                    EXTRACT(YEAR FROM c.crash_date)::int as year,
+                    COALESCE(SUM(c.injuries_fatal), 0) as fatalities,
+                    COALESCE(SUM(c.injuries_incapacitating), 0) as serious_injuries
+                FROM crashes c
+                WHERE c.ward = :ward
+                    AND c.crash_date IS NOT NULL
+                    AND EXTRACT(YEAR FROM c.crash_date) >= 2018
+                GROUP BY EXTRACT(YEAR FROM c.crash_date)
+                ORDER BY year
+            """)
+
+            ward_results = db.execute(
+                ward_query, {"ward_layer_id": ward_layer_id, "ward": ward}
+            ).fetchall()
+
+            # Build ward data aligned with years
+            ward_year_map = {r.year: r for r in ward_results}
+            ward_data = {
+                "ward": ward,
+                "ksi": [
+                    (ward_year_map[y].fatalities + ward_year_map[y].serious_injuries)
+                    if y in ward_year_map else 0
+                    for y in years
+                ],
+                "fatalities": [
+                    ward_year_map[y].fatalities if y in ward_year_map else 0
+                    for y in years
+                ],
+                "serious_injuries": [
+                    ward_year_map[y].serious_injuries if y in ward_year_map else 0
+                    for y in years
+                ],
+            }
+
+        return WardTrendResponse(
+            years=years,
+            citywide=citywide,
+            ward=ward_data,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get ward scorecard citywide trends", error=str(e))
+        raise
+
+
+@router.get("/ward-scorecard/ward/{ward}", response_model=WardDetailResponse)
+async def get_ward_detail(
+    ward: int = Path(..., ge=1, le=50, description="Ward number"),
+    year: int = Query(..., ge=2018, le=2026, description="Year to query"),
+    db: Session = Depends(get_db),
+) -> WardDetailResponse:
+    """
+    Get detailed stats for a specific ward including crash points and cost breakdown.
+    """
+    from datetime import date as date_type
+
+    try:
+        ward_layer_id = _get_ward_layer_id(db)
+
+        # Use date range for better index utilization
+        start_date = date_type(year, 1, 1)
+        end_date = date_type(year + 1, 1, 1)
+
+        # Query 1: Ward crash-level stats (fast)
+        ward_crash_query = text("""
+            SELECT
+                COUNT(DISTINCT c.crash_record_id) as total_crashes,
+                COALESCE(SUM(c.injuries_fatal), 0) as fatalities,
+                COALESCE(SUM(c.injuries_incapacitating), 0) as serious_injuries,
+                COUNT(DISTINCT c.crash_record_id) FILTER (WHERE c.hit_and_run_i = 'Y') as hit_and_run,
+                COUNT(DISTINCT c.crash_record_id) FILTER (
+                    WHERE COALESCE(c.injuries_total, 0) = 0 AND COALESCE(c.injuries_fatal, 0) = 0
+                ) as pdo_crashes
+            FROM crashes c
+            WHERE c.ward = :ward
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+        """)
+
+        ward_crash_result = db.execute(
+            ward_crash_query,
+            {"ward": ward, "start_date": start_date, "end_date": end_date},
+        ).fetchone()
+
+        # Query 2: Ward person-level stats
+        ward_people_query = text("""
+            SELECT
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'FATAL') as fatal_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'INCAPACITATING INJURY') as incap_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'NONINCAPACITATING INJURY') as nonincap_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'REPORTED, NOT EVIDENT') as possible_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'NO INDICATION OF INJURY') as no_injury_people,
+                COUNT(*) FILTER (
+                    WHERE cp.person_type IN ('PEDESTRIAN', 'BICYCLE', 'PEDALCYCLIST')
+                    AND cp.injury_classification IN ('FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT')
+                ) as vru_injuries,
+                COUNT(*) FILTER (
+                    WHERE cp.age >= 0 AND cp.age < 18
+                    AND cp.injury_classification IN ('FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT')
+                ) as children_injured
+            FROM crashes c
+            JOIN crash_people cp ON c.crash_record_id = cp.crash_record_id
+            WHERE c.ward = :ward
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+        """)
+
+        ward_people_result = db.execute(
+            ward_people_query,
+            {"ward": ward, "start_date": start_date, "end_date": end_date},
+        ).fetchone()
+
+        # Combine results
+        stats_result = type('obj', (object,), {
+            'total_crashes': ward_crash_result.total_crashes,
+            'fatalities': ward_crash_result.fatalities,
+            'serious_injuries': ward_crash_result.serious_injuries,
+            'hit_and_run': ward_crash_result.hit_and_run,
+            'fatal_people': ward_people_result.fatal_people,
+            'incap_people': ward_people_result.incap_people,
+            'nonincap_people': ward_people_result.nonincap_people,
+            'possible_people': ward_people_result.possible_people,
+            'no_injury_people': ward_people_result.no_injury_people,
+            'vru_injuries': ward_people_result.vru_injuries,
+            'children_injured': ward_people_result.children_injured,
+            'pdo_vehicles': ward_crash_result.pdo_crashes * 2,  # Estimate 2 vehicles per PDO crash
+        })()
+
+        ksi = stats_result.fatalities + stats_result.serious_injuries
+        economic_cost, societal_cost = _calculate_ward_costs(
+            stats_result.fatal_people,
+            stats_result.incap_people,
+            stats_result.nonincap_people,
+            stats_result.possible_people,
+            stats_result.no_injury_people,
+            stats_result.pdo_vehicles,
+        )
+
+        ward_stats = WardStats(
+            total_crashes=stats_result.total_crashes,
+            fatalities=stats_result.fatalities,
+            serious_injuries=stats_result.serious_injuries,
+            ksi=ksi,
+            vru_injuries=stats_result.vru_injuries,
+            children_injured=stats_result.children_injured,
+            hit_and_run=stats_result.hit_and_run,
+            economic_cost=economic_cost,
+            societal_cost=societal_cost,
+        )
+
+        # Get citywide stats for comparison - use date range and split queries for speed
+        citywide_crash_query = text("""
+            SELECT
+                COUNT(DISTINCT c.crash_record_id) as total_crashes,
+                COALESCE(SUM(c.injuries_fatal), 0) as fatalities,
+                COALESCE(SUM(c.injuries_incapacitating), 0) as serious_injuries,
+                COUNT(DISTINCT c.crash_record_id) FILTER (WHERE c.hit_and_run_i = 'Y') as hit_and_run,
+                COUNT(DISTINCT c.crash_record_id) FILTER (
+                    WHERE COALESCE(c.injuries_total, 0) = 0 AND COALESCE(c.injuries_fatal, 0) = 0
+                ) as pdo_crashes
+            FROM crashes c
+            WHERE c.ward IS NOT NULL
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+        """)
+
+        citywide_crash_result = db.execute(
+            citywide_crash_query,
+            {"start_date": start_date, "end_date": end_date},
+        ).fetchone()
+
+        citywide_people_query = text("""
+            SELECT
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'FATAL') as fatal_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'INCAPACITATING INJURY') as incap_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'NONINCAPACITATING INJURY') as nonincap_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'REPORTED, NOT EVIDENT') as possible_people,
+                COUNT(*) FILTER (WHERE cp.injury_classification = 'NO INDICATION OF INJURY') as no_injury_people,
+                COUNT(*) FILTER (
+                    WHERE cp.person_type IN ('PEDESTRIAN', 'BICYCLE', 'PEDALCYCLIST')
+                    AND cp.injury_classification IN ('FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT')
+                ) as vru_injuries,
+                COUNT(*) FILTER (
+                    WHERE cp.age >= 0 AND cp.age < 18
+                    AND cp.injury_classification IN ('FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT')
+                ) as children_injured
+            FROM crashes c
+            JOIN crash_people cp ON c.crash_record_id = cp.crash_record_id
+            WHERE c.ward IS NOT NULL
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+        """)
+
+        citywide_people_result = db.execute(
+            citywide_people_query,
+            {"start_date": start_date, "end_date": end_date},
+        ).fetchone()
+
+        # Combine citywide results
+        citywide_result = type('obj', (object,), {
+            'total_crashes': citywide_crash_result.total_crashes,
+            'fatalities': citywide_crash_result.fatalities,
+            'serious_injuries': citywide_crash_result.serious_injuries,
+            'hit_and_run': citywide_crash_result.hit_and_run,
+            'fatal_people': citywide_people_result.fatal_people,
+            'incap_people': citywide_people_result.incap_people,
+            'nonincap_people': citywide_people_result.nonincap_people,
+            'possible_people': citywide_people_result.possible_people,
+            'no_injury_people': citywide_people_result.no_injury_people,
+            'vru_injuries': citywide_people_result.vru_injuries,
+            'children_injured': citywide_people_result.children_injured,
+            'pdo_vehicles': citywide_crash_result.pdo_crashes * 2,  # Estimate 2 vehicles per PDO crash
+        })()
+
+        citywide_ksi = citywide_result.fatalities + citywide_result.serious_injuries
+        citywide_economic, citywide_societal = _calculate_ward_costs(
+            citywide_result.fatal_people,
+            citywide_result.incap_people,
+            citywide_result.nonincap_people,
+            citywide_result.possible_people,
+            citywide_result.no_injury_people,
+            citywide_result.pdo_vehicles,
+        )
+
+        citywide_comparison = WardStats(
+            total_crashes=citywide_result.total_crashes,
+            fatalities=citywide_result.fatalities,
+            serious_injuries=citywide_result.serious_injuries,
+            ksi=citywide_ksi,
+            vru_injuries=citywide_result.vru_injuries,
+            children_injured=citywide_result.children_injured,
+            hit_and_run=citywide_result.hit_and_run,
+            economic_cost=citywide_economic,
+            societal_cost=citywide_societal,
+        )
+
+        # Build cost breakdown
+        injury_cost_breakdowns = [
+            InjuryClassificationCost(
+                classification="FATAL",
+                classification_label=KABCO_LABELS["FATAL"],
+                count=stats_result.fatal_people,
+                unit_economic_cost=KABCO_COSTS["FATAL"][0],
+                unit_qaly_cost=KABCO_COSTS["FATAL"][1],
+                subtotal_economic=stats_result.fatal_people * KABCO_COSTS["FATAL"][0],
+                subtotal_societal=stats_result.fatal_people * (KABCO_COSTS["FATAL"][0] + KABCO_COSTS["FATAL"][1]),
+            ),
+            InjuryClassificationCost(
+                classification="INCAPACITATING INJURY",
+                classification_label=KABCO_LABELS["INCAPACITATING INJURY"],
+                count=stats_result.incap_people,
+                unit_economic_cost=KABCO_COSTS["INCAPACITATING INJURY"][0],
+                unit_qaly_cost=KABCO_COSTS["INCAPACITATING INJURY"][1],
+                subtotal_economic=stats_result.incap_people * KABCO_COSTS["INCAPACITATING INJURY"][0],
+                subtotal_societal=stats_result.incap_people * (KABCO_COSTS["INCAPACITATING INJURY"][0] + KABCO_COSTS["INCAPACITATING INJURY"][1]),
+            ),
+            InjuryClassificationCost(
+                classification="NONINCAPACITATING INJURY",
+                classification_label=KABCO_LABELS["NONINCAPACITATING INJURY"],
+                count=stats_result.nonincap_people,
+                unit_economic_cost=KABCO_COSTS["NONINCAPACITATING INJURY"][0],
+                unit_qaly_cost=KABCO_COSTS["NONINCAPACITATING INJURY"][1],
+                subtotal_economic=stats_result.nonincap_people * KABCO_COSTS["NONINCAPACITATING INJURY"][0],
+                subtotal_societal=stats_result.nonincap_people * (KABCO_COSTS["NONINCAPACITATING INJURY"][0] + KABCO_COSTS["NONINCAPACITATING INJURY"][1]),
+            ),
+            InjuryClassificationCost(
+                classification="REPORTED, NOT EVIDENT",
+                classification_label=KABCO_LABELS["REPORTED, NOT EVIDENT"],
+                count=stats_result.possible_people,
+                unit_economic_cost=KABCO_COSTS["REPORTED, NOT EVIDENT"][0],
+                unit_qaly_cost=KABCO_COSTS["REPORTED, NOT EVIDENT"][1],
+                subtotal_economic=stats_result.possible_people * KABCO_COSTS["REPORTED, NOT EVIDENT"][0],
+                subtotal_societal=stats_result.possible_people * (KABCO_COSTS["REPORTED, NOT EVIDENT"][0] + KABCO_COSTS["REPORTED, NOT EVIDENT"][1]),
+            ),
+            InjuryClassificationCost(
+                classification="NO INDICATION OF INJURY",
+                classification_label=KABCO_LABELS["NO INDICATION OF INJURY"],
+                count=stats_result.no_injury_people,
+                unit_economic_cost=KABCO_COSTS["NO INDICATION OF INJURY"][0],
+                unit_qaly_cost=KABCO_COSTS["NO INDICATION OF INJURY"][1],
+                subtotal_economic=0,
+                subtotal_societal=0,
+            ),
+        ]
+
+        vehicle_breakdown = VehicleCostBreakdown(
+            count=stats_result.pdo_vehicles,
+            unit_economic_cost=VEHICLE_ECONOMIC_COST,
+            unit_qaly_cost=VEHICLE_QALY_COST,
+            subtotal_economic=stats_result.pdo_vehicles * VEHICLE_ECONOMIC_COST,
+            subtotal_societal=stats_result.pdo_vehicles * (VEHICLE_ECONOMIC_COST + VEHICLE_QALY_COST),
+        )
+
+        cost_breakdown = CostBreakdown(
+            injury_costs=injury_cost_breakdowns,
+            vehicle_costs=vehicle_breakdown,
+            total_economic=int(economic_cost),
+            total_societal=int(societal_cost),
+        )
+
+        # Get crash points for map - use ward column and date range for speed
+        crashes_query = text("""
+            SELECT
+                c.crash_record_id,
+                c.crash_date,
+                c.injuries_fatal,
+                c.injuries_incapacitating,
+                c.most_severe_injury,
+                c.longitude,
+                c.latitude
+            FROM crashes c
+            WHERE c.ward = :ward
+                AND c.crash_date >= :start_date
+                AND c.crash_date < :end_date
+                AND c.latitude IS NOT NULL
+                AND c.longitude IS NOT NULL
+            ORDER BY c.crash_date DESC
+            LIMIT 5000
+        """)
+
+        crashes_results = db.execute(
+            crashes_query,
+            {"ward": ward, "start_date": start_date, "end_date": end_date},
+        ).fetchall()
+
+        crash_features = []
+        for row in crashes_results:
+            crash_features.append({
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [row.longitude, row.latitude],
+                },
+                "properties": {
+                    "crash_record_id": row.crash_record_id,
+                    "crash_date": row.crash_date.isoformat() if row.crash_date else None,
+                    "injuries_fatal": row.injuries_fatal or 0,
+                    "injuries_incapacitating": row.injuries_incapacitating or 0,
+                    "most_severe_injury": row.most_severe_injury,
+                },
+            })
+
+        crashes_geojson = {
+            "type": "FeatureCollection",
+            "features": crash_features,
+        }
+
+        # Get ward boundary
+        boundary_query = text("""
+            SELECT ST_AsGeoJSON(f.geometry)::json as geometry
+            FROM spatial_layer_features f
+            WHERE f.layer_id = :ward_layer_id
+                AND FLOOR((f.properties->>'ward')::numeric)::int = :ward
+            LIMIT 1
+        """)
+
+        boundary_result = db.execute(
+            boundary_query,
+            {"ward_layer_id": ward_layer_id, "ward": ward},
+        ).fetchone()
+
+        ward_boundary_geojson = {
+            "type": "Feature",
+            "geometry": boundary_result.geometry if boundary_result else None,
+            "properties": {"ward": ward, "ward_name": f"Ward {ward}"},
+        }
+
+        return WardDetailResponse(
+            year=year,
+            ward=ward,
+            ward_name=f"Ward {ward}",
+            alderman=None,
+            stats=ward_stats,
+            citywide_comparison=citywide_comparison,
+            cost_breakdown=cost_breakdown,
+            crashes_geojson=crashes_geojson,
+            ward_boundary_geojson=ward_boundary_geojson,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get ward detail", error=str(e))
+        raise
+
+
+@router.get("/ward-scorecard/ward/{ward}/trends", response_model=WardDetailTrendResponse)
+async def get_ward_detail_trends(
+    ward: int = Path(..., ge=1, le=50, description="Ward number"),
+    year: int = Query(..., ge=2018, le=2026, description="Selected year for monthly"),
+    db: Session = Depends(get_db),
+) -> WardDetailTrendResponse:
+    """
+    Get yearly and monthly trend data for a specific ward.
+    """
+    try:
+        ward_layer_id = _get_ward_layer_id(db)
+
+        # Yearly trends (using pre-computed ward column)
+        yearly_query = text("""
+            SELECT
+                EXTRACT(YEAR FROM c.crash_date)::int as year,
+                COUNT(DISTINCT c.crash_record_id) as total_crashes,
+                COALESCE(SUM(c.injuries_fatal), 0) as fatalities,
+                COALESCE(SUM(c.injuries_incapacitating), 0) as serious_injuries
+            FROM crashes c
+            WHERE c.ward = :ward
+                AND c.crash_date IS NOT NULL
+                AND EXTRACT(YEAR FROM c.crash_date) >= 2018
+            GROUP BY EXTRACT(YEAR FROM c.crash_date)
+            ORDER BY year
+        """)
+
+        yearly_results = db.execute(
+            yearly_query, {"ward_layer_id": ward_layer_id, "ward": ward}
+        ).fetchall()
+
+        yearly_trends = {
+            "years": [r.year for r in yearly_results],
+            "ksi": [r.fatalities + r.serious_injuries for r in yearly_results],
+            "fatalities": [r.fatalities for r in yearly_results],
+            "serious_injuries": [r.serious_injuries for r in yearly_results],
+            "total_crashes": [r.total_crashes for r in yearly_results],
+        }
+
+        # Monthly seasonality for selected year + 5-year average (using pre-computed ward column)
+        monthly_query = text("""
+            SELECT
+                EXTRACT(MONTH FROM c.crash_date)::int as month,
+                EXTRACT(YEAR FROM c.crash_date)::int as year,
+                COALESCE(SUM(c.injuries_fatal), 0) + COALESCE(SUM(c.injuries_incapacitating), 0) as ksi
+            FROM crashes c
+            WHERE c.ward = :ward
+                AND EXTRACT(YEAR FROM c.crash_date) BETWEEN :start_year AND :year
+            GROUP BY EXTRACT(MONTH FROM c.crash_date), EXTRACT(YEAR FROM c.crash_date)
+            ORDER BY month, year
+        """)
+
+        start_year = year - 5
+        monthly_results = db.execute(
+            monthly_query,
+            {"ward_layer_id": ward_layer_id, "ward": ward, "year": year, "start_year": start_year},
+        ).fetchall()
+
+        # Organize monthly data
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        selected_year_ksi = [0] * 12
+        five_year_sums = [0] * 12
+        five_year_counts = [0] * 12
+
+        for row in monthly_results:
+            month_idx = row.month - 1
+            if row.year == year:
+                selected_year_ksi[month_idx] = row.ksi
+            elif row.year < year:
+                five_year_sums[month_idx] += row.ksi
+                five_year_counts[month_idx] += 1
+
+        five_year_avg_ksi = [
+            round(five_year_sums[i] / five_year_counts[i], 1) if five_year_counts[i] > 0 else 0
+            for i in range(12)
+        ]
+
+        monthly_seasonality = MonthlySeasonalityData(
+            months=months,
+            selected_year={"year": year, "ksi": selected_year_ksi},
+            five_year_avg={"ksi": five_year_avg_ksi},
+        )
+
+        return WardDetailTrendResponse(
+            ward=ward,
+            yearly_trends=yearly_trends,
+            monthly_seasonality=monthly_seasonality,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get ward detail trends", error=str(e))
         raise

@@ -48,6 +48,7 @@ class Crash(Base, TimestampMixin):
 
     # Beat and location codes
     beat_of_occurrence = Column(String(10))
+    ward = Column(Integer, index=True)  # Pre-computed ward assignment from spatial join
     photos_taken_i = Column(String(1))
     statements_taken_i = Column(String(1))
 
