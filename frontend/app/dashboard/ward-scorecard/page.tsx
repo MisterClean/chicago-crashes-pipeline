@@ -17,6 +17,7 @@ import { CitywideTrendChart } from "./components/CitywideTrendChart";
 import { WardBANCards } from "./components/WardBANCards";
 import { WardDetailMap } from "./components/WardDetailMap";
 import { SeasonalityChart } from "./components/SeasonalityChart";
+import { ShareExportButtons } from "./components/ShareExportButtons";
 import { CostBreakdownTable } from "../location-report/components/CostBreakdownTable";
 
 type TabType = "citywide" | "ward";
@@ -136,6 +137,12 @@ export default function WardScorecardPage() {
                 ))}
               </select>
             </div>
+
+            {/* Share/Export Buttons */}
+            <ShareExportButtons
+              year={selectedYear}
+              ward={activeTab === "ward" ? selectedWard ?? undefined : undefined}
+            />
 
             {/* Tab Navigation */}
             <div className="flex gap-2 ml-auto">

@@ -2101,3 +2101,108 @@ async def get_ward_detail_trends(
     except Exception as e:
         logger.error("Failed to get ward detail trends", error=str(e))
         raise
+
+
+@router.get("/ward-scorecard/export")
+async def export_ward_scorecard(
+    year: int = Query(..., ge=2018, le=2026, description="Year to export"),
+    ward: int = Query(None, ge=1, le=50, description="Ward number (optional, omit for citywide)"),
+    format: str = Query("csv", pattern="^(csv|json)$", description="Export format"),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Export crash data for a ward or citywide.
+    Returns CSV or JSON with crash records including injury counts and costs.
+    """
+    from datetime import date as date_type
+
+    try:
+        start_date = date_type(year, 1, 1)
+        end_date = date_type(year + 1, 1, 1)
+
+        if ward:
+            # Export crashes for specific ward
+            query = text("""
+                SELECT
+                    c.crash_record_id,
+                    c.crash_date,
+                    c.street_name,
+                    c.street_name_2,
+                    c.latitude,
+                    c.longitude,
+                    c.ward,
+                    c.injuries_fatal,
+                    c.injuries_incapacitating,
+                    c.injuries_non_incapacitating,
+                    c.injuries_total,
+                    c.hit_and_run_i as hit_and_run,
+                    c.most_severe_injury,
+                    c.prim_contributory_cause,
+                    c.weather_condition,
+                    c.lighting_condition
+                FROM crashes c
+                WHERE c.ward = :ward
+                    AND c.crash_date >= :start_date
+                    AND c.crash_date < :end_date
+                ORDER BY c.crash_date DESC
+            """)
+            params = {"ward": ward, "start_date": start_date, "end_date": end_date}
+            filename = f"ward-{ward}-crashes-{year}"
+        else:
+            # Export citywide summary by ward
+            query = text("""
+                SELECT
+                    c.ward,
+                    COUNT(DISTINCT c.crash_record_id) as total_crashes,
+                    COALESCE(SUM(c.injuries_fatal), 0) as fatalities,
+                    COALESCE(SUM(c.injuries_incapacitating), 0) as serious_injuries,
+                    COALESCE(SUM(c.injuries_fatal), 0) + COALESCE(SUM(c.injuries_incapacitating), 0) as ksi,
+                    COUNT(DISTINCT c.crash_record_id) FILTER (WHERE c.hit_and_run_i = 'Y') as hit_and_run
+                FROM crashes c
+                WHERE c.ward IS NOT NULL
+                    AND c.crash_date >= :start_date
+                    AND c.crash_date < :end_date
+                GROUP BY c.ward
+                ORDER BY c.ward
+            """)
+            params = {"start_date": start_date, "end_date": end_date}
+            filename = f"citywide-ward-summary-{year}"
+
+        result = db.execute(query, params)
+
+        if format == "json":
+            # Convert to JSON
+            rows = result.fetchall()
+            keys = result.keys()
+            data = [dict(zip(keys, row)) for row in rows]
+
+            # Handle datetime serialization
+            import json
+            from datetime import datetime
+
+            def json_serial(obj):
+                if isinstance(obj, datetime):
+                    return obj.isoformat()
+                raise TypeError(f"Type {type(obj)} not serializable")
+
+            json_str = json.dumps(data, default=json_serial, indent=2)
+            headers = {"Content-Disposition": f'attachment; filename="{filename}.json"'}
+            return StreamingResponse(
+                iter([json_str]),
+                media_type="application/json",
+                headers=headers,
+            )
+        else:
+            # Stream CSV
+            headers = {"Content-Disposition": f'attachment; filename="{filename}.csv"'}
+            return StreamingResponse(
+                _stream_csv(result),
+                media_type="text/csv",
+                headers=headers,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to export ward scorecard data", error=str(e))
+        raise

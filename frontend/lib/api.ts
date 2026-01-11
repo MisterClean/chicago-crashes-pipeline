@@ -520,3 +520,22 @@ export async function fetchWardDetailTrends(
 
   return res.json();
 }
+
+export function getWardExportUrl(
+  year: number,
+  format: "csv" | "json" = "csv",
+  ward?: number
+): string {
+  const baseUrl =
+    typeof window === "undefined"
+      ? process.env.BACKEND_URL || "http://localhost:8000"
+      : "";
+  const params = new URLSearchParams({
+    year: year.toString(),
+    format,
+  });
+  if (ward) {
+    params.set("ward", ward.toString());
+  }
+  return `${baseUrl}/dashboard/ward-scorecard/export?${params}`;
+}
