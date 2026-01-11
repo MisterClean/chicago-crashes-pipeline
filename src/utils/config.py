@@ -26,7 +26,23 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
-        """Get SQLAlchemy database URL."""
+        """Get SQLAlchemy database URL.
+
+        Checks for DATABASE_URL environment variable first (standard for Railway
+        and other PaaS platforms), then falls back to component-based URL construction.
+
+        Note: Normalizes postgres:// to postgresql:// for SQLAlchemy 2.x compatibility.
+        """
+        # Check for DATABASE_URL environment variable first (Railway/PaaS standard)
+        database_url = os.getenv("DATABASE_URL")
+        if database_url:
+            # Normalize postgres:// to postgresql:// for SQLAlchemy 2.x compatibility
+            # Many PaaS providers (Railway, Heroku) use postgres:// but SQLAlchemy 2.x
+            # requires postgresql:// scheme
+            if database_url.startswith("postgres://"):
+                database_url = database_url.replace("postgres://", "postgresql://", 1)
+            return database_url
+
         return (
             f"postgresql://{self.username}:{self.password}@"
             f"{self.host}:{self.port}/{self.database}"
