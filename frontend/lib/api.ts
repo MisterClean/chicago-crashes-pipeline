@@ -361,3 +361,181 @@ export async function fetchPlaceGeometry(
 
   return res.json();
 }
+
+// Ward Scorecard Types
+export interface WardStats {
+  total_crashes: number;
+  fatalities: number;
+  serious_injuries: number;
+  ksi: number;
+  vru_injuries: number;
+  children_injured: number;
+  hit_and_run: number;
+  economic_cost: number;
+  societal_cost: number;
+}
+
+export interface WardRanking {
+  ward: number;
+  ward_name: string;
+  alderman: string | null;
+  total_crashes: number;
+  fatalities: number;
+  serious_injuries: number;
+  ksi: number;
+  vru_injuries: number;
+  children_injured: number;
+  economic_cost: number;
+  societal_cost: number;
+}
+
+export interface WardScorecardCitywideResponse {
+  year: number;
+  citywide_stats: WardStats;
+  ward_rankings: WardRanking[];
+  wards_geojson: GeoJSON.FeatureCollection;
+}
+
+export interface WardTrendData {
+  ksi: number[];
+  fatalities: number[];
+  serious_injuries: number[];
+}
+
+export interface WardTrendResponse {
+  years: number[];
+  citywide: WardTrendData;
+  ward: {
+    ward: number;
+    ksi: number[];
+    fatalities: number[];
+    serious_injuries: number[];
+  } | null;
+}
+
+export interface MonthlySeasonalityData {
+  months: string[];
+  selected_year: { year: number; ksi: number[] };
+  five_year_avg: { ksi: number[] };
+}
+
+export interface WardDetailTrendResponse {
+  ward: number;
+  yearly_trends: {
+    years: number[];
+    ksi: number[];
+    fatalities: number[];
+    serious_injuries: number[];
+    total_crashes: number[];
+  };
+  monthly_seasonality: MonthlySeasonalityData;
+}
+
+export interface WardDetailResponse {
+  year: number;
+  ward: number;
+  ward_name: string;
+  alderman: string | null;
+  stats: WardStats;
+  citywide_comparison: WardStats;
+  cost_breakdown: CostBreakdown;
+  crashes_geojson: CrashGeoJSON;
+  ward_boundary_geojson: GeoJSON.Feature;
+}
+
+// Ward Scorecard API Functions
+export async function fetchWardScorecardCitywide(
+  year: number
+): Promise<WardScorecardCitywideResponse> {
+  const res = await fetch(
+    `${API_BASE}/dashboard/ward-scorecard/citywide?year=${year}`,
+    {
+      headers: getAuthHeaders(),
+      next: { revalidate: 300 },
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ward scorecard citywide: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchWardScorecardCitywidetrends(
+  ward?: number
+): Promise<WardTrendResponse> {
+  const params = new URLSearchParams();
+  if (ward) params.set("ward", ward.toString());
+
+  const res = await fetch(
+    `${API_BASE}/dashboard/ward-scorecard/citywide/trends?${params}`,
+    {
+      headers: getAuthHeaders(),
+      next: { revalidate: 300 },
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ward scorecard trends: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchWardDetail(
+  ward: number,
+  year: number
+): Promise<WardDetailResponse> {
+  const res = await fetch(
+    `${API_BASE}/dashboard/ward-scorecard/ward/${ward}?year=${year}`,
+    {
+      headers: getAuthHeaders(),
+      next: { revalidate: 300 },
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ward detail: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchWardDetailTrends(
+  ward: number,
+  year: number
+): Promise<WardDetailTrendResponse> {
+  const res = await fetch(
+    `${API_BASE}/dashboard/ward-scorecard/ward/${ward}/trends?year=${year}`,
+    {
+      headers: getAuthHeaders(),
+      next: { revalidate: 300 },
+    }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch ward detail trends: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export function getWardExportUrl(
+  year: number,
+  format: "csv" | "json" = "csv",
+  ward?: number
+): string {
+  const baseUrl =
+    typeof window === "undefined"
+      ? process.env.BACKEND_URL || "http://localhost:8000"
+      : "";
+  const params = new URLSearchParams({
+    year: year.toString(),
+    format,
+  });
+  if (ward) {
+    params.set("ward", ward.toString());
+  }
+  return `${baseUrl}/dashboard/ward-scorecard/export?${params}`;
+}
