@@ -31,8 +31,13 @@ logger = get_logger(__name__)
 class JobService:
     """Service for managing scheduled jobs and executions."""
 
+    DEFAULT_JOB_MIGRATION_MARKER = "system:migrated-default-v2"
+    LEGACY_CORE_JOB_TYPE = "last_30_days_crashes"
     LEGACY_JOB_TYPE_ALIASES = {
-        JobType.LAST_30_DAYS_CORE_DATA: {JobType.LAST_30_DAYS_CORE_DATA, "last_30_days_crashes"},
+        JobType.LAST_30_DAYS_CORE_DATA: {
+            JobType.LAST_30_DAYS_CORE_DATA,
+            LEGACY_CORE_JOB_TYPE,
+        },
     }
     LEGACY_JOB_TYPES_TO_DISABLE = {
         JobType.LAST_30_DAYS_PEOPLE,
@@ -86,7 +91,7 @@ class JobService:
                     )
                     continue
 
-                self._apply_default_job_template(existing, job_config)
+                self._reconcile_default_job(existing, job_config)
 
             session.commit()
             logger.info(f"Initialized {len(created_jobs)} default jobs")
@@ -648,29 +653,68 @@ class JobService:
             .first()
         )
 
-    def _apply_default_job_template(
+    def _reconcile_default_job(
         self, job: ScheduledJob, template: dict[str, Any]
     ) -> None:
-        """Reconcile an existing default job with the current template."""
-        job.name = template["name"]
-        job.description = template["description"]
-        job.job_type = template["job_type"]
-        job.config = template["config"]
-        job.timeout_minutes = template["timeout_minutes"]
-        job.max_retries = template["max_retries"]
-        job.recurrence_type = template["recurrence_type"]
-        job.enabled = template["enabled"]
+        """Apply one-time migrations for legacy default jobs without resetting operator changes."""
+        if (
+            template["job_type"] == JobType.LAST_30_DAYS_CORE_DATA
+            and job.job_type == self.LEGACY_CORE_JOB_TYPE
+        ):
+            self._migrate_legacy_core_job(job, template)
+            return
 
-        if job.enabled and job.recurrence_type != RecurrenceType.ONCE:
+        if (
+            template["job_type"] in self.LEGACY_JOB_TYPES_TO_DISABLE
+            and self._should_disable_legacy_child_job(job)
+        ):
+            self._disable_legacy_child_job(job)
+
+    def _migrate_legacy_core_job(
+        self, job: ScheduledJob, template: dict[str, Any]
+    ) -> None:
+        """Promote the legacy crash-only job to the ordered core-data job."""
+        if job.name == "Last 30 Days - Crash Data":
+            job.name = template["name"]
+        if (
+            not job.description
+            or job.description == "Refresh crash data from the last 30 days"
+        ):
+            job.description = template["description"]
+
+        job.job_type = template["job_type"]
+
+        updated_config = dict(job.config or {})
+        updated_config["endpoints"] = list(template["config"]["endpoints"])
+        updated_config.setdefault(
+            "date_range_days", template["config"]["date_range_days"]
+        )
+        updated_config.setdefault("force", template["config"]["force"])
+        job.config = updated_config
+
+        if (
+            job.enabled
+            and job.recurrence_type != RecurrenceType.ONCE
+            and job.next_run is None
+        ):
             job.next_run = calculate_next_run(
                 RecurrenceType(job.recurrence_type), job.cron_expression, job.last_run
             )
-        else:
-            job.next_run = None
 
-        if job.job_type in self.LEGACY_JOB_TYPES_TO_DISABLE:
-            job.enabled = False
-            job.next_run = None
+    def _should_disable_legacy_child_job(self, job: ScheduledJob) -> bool:
+        """Disable each legacy dependency job once, but preserve later operator edits."""
+        return (
+            job.job_type in self.LEGACY_JOB_TYPES_TO_DISABLE
+            and job.enabled
+            and job.created_by != self.DEFAULT_JOB_MIGRATION_MARKER
+            and (job.created_by or "system") == "system"
+        )
+
+    def _disable_legacy_child_job(self, job: ScheduledJob) -> None:
+        """Turn off the legacy people/vehicle default jobs and mark them migrated."""
+        job.enabled = False
+        job.next_run = None
+        job.created_by = self.DEFAULT_JOB_MIGRATION_MARKER
 
     def get_job_executions(
         self, job_id: int = None, limit: int = 50
