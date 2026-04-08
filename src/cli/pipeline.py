@@ -7,6 +7,7 @@ import asyncio
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
+from src.services.database_service import DatabaseService
 from src.services.sync_service import run_sync
 from src.utils.logging import get_logger
 
@@ -45,6 +46,15 @@ async def _run_sync_command(args: argparse.Namespace) -> None:
         if result.completed_at
         else None,
     )
+
+
+def _run_people_crash_date_backfill_command(args: argparse.Namespace) -> None:
+    service = DatabaseService()
+    result = service.backfill_person_crash_dates(
+        batch_size=args.batch_size,
+        max_batches=args.max_batches,
+    )
+    logger.info("People crash_date backfill completed", **result)
 
 
 def _resolve_start_date(args: argparse.Namespace) -> None:
@@ -105,15 +115,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
     delta.set_defaults(mode="delta")
 
+    backfill_people_dates = subparsers.add_parser(
+        "backfill-people-crash-dates",
+        help="Backfill crash_people.crash_date from parent crash records",
+    )
+    backfill_people_dates.add_argument(
+        "--batch-size",
+        type=int,
+        default=50000,
+        help="Rows to update per batch",
+    )
+    backfill_people_dates.add_argument(
+        "--max-batches",
+        type=int,
+        help="Optional limit for staged repair runs",
+    )
+    backfill_people_dates.set_defaults(mode="backfill-people-crash-dates")
+
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    _resolve_start_date(args)
+    if args.mode in {"initial-load", "delta"}:
+        _resolve_start_date(args)
+        asyncio.run(_run_sync_command(args))
+        return
+    if args.mode == "backfill-people-crash-dates":
+        _run_people_crash_date_backfill_command(args)
+        return
 
-    asyncio.run(_run_sync_command(args))
+    parser.error(f"Unsupported mode: {args.mode}")
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

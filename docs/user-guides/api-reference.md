@@ -76,14 +76,14 @@ Create a job. Request matches `CreateJobRequest`:
 
 ```json
 {
-  "name": "Last 30 Days - Vehicles",
-  "description": "Daily vehicles refresh",
-  "job_type": "last_30_days_vehicles",
+  "name": "Last 30 Days - Core Crash Data",
+  "description": "Daily ordered refresh for crash, people, and vehicle data",
+  "job_type": "last_30_days_core_data",
   "enabled": true,
   "recurrence_type": "daily",
   "config": {
-    "endpoints": ["vehicles"],
-    "window_days": 30
+    "endpoints": ["crashes", "people", "vehicles"],
+    "date_range_days": 30
   },
   "timeout_minutes": 60,
   "max_retries": 3,

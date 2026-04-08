@@ -19,7 +19,7 @@ The landing view surfaces real-time metrics pulled from the REST API:
 - **Total Jobs / Active Jobs** – counts from `GET /jobs/summary`.
 - **Running Jobs** – active executions reported by the scheduler.
 - **Failed Jobs (24h)** – execution failures recorded during the last day.
-- **Quick Actions** – buttons that trigger the default sync jobs (e.g., `full_refresh`, `last_30_days_crashes`). These map to the job type identifiers defined in `src/models/jobs.py`.
+- **Quick Actions** – buttons that trigger the default sync jobs (e.g., `full_refresh`, `last_30_days_core_data`). These map to the job type identifiers defined in `src/models/jobs.py`.
 - **Recent Activity** – rolling feed of the last ten executions with status, record counts, and timestamps.
 
 Use the toolbar refresh button or enable auto-refresh (30 second interval) to keep data current.

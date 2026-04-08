@@ -31,6 +31,14 @@ logger = get_logger(__name__)
 class JobService:
     """Service for managing scheduled jobs and executions."""
 
+    LEGACY_JOB_TYPE_ALIASES = {
+        JobType.LAST_30_DAYS_CORE_DATA: {JobType.LAST_30_DAYS_CORE_DATA, "last_30_days_crashes"},
+    }
+    LEGACY_JOB_TYPES_TO_DISABLE = {
+        JobType.LAST_30_DAYS_PEOPLE,
+        JobType.LAST_30_DAYS_VEHICLES,
+    }
+
     def __init__(self):
         self.db_service = DatabaseService()
 
@@ -47,12 +55,7 @@ class JobService:
             default_jobs = get_default_jobs()
 
             for job_config in default_jobs:
-                # Check if job already exists
-                existing = (
-                    session.query(ScheduledJob)
-                    .filter_by(job_type=job_config["job_type"])
-                    .first()
-                )
+                existing = self._find_existing_default_job(session, job_config["job_type"])
 
                 if not existing:
                     next_run = None
@@ -81,6 +84,9 @@ class JobService:
                     created_jobs.append(
                         {"id": job.id, "name": job.name, "job_type": job.job_type}
                     )
+                    continue
+
+                self._apply_default_job_template(existing, job_config)
 
             session.commit()
             logger.info(f"Initialized {len(created_jobs)} default jobs")
@@ -570,10 +576,10 @@ class JobService:
                 "end_date": None,
                 "force": True,
             }
-        elif job_type == JobType.LAST_30_DAYS_CRASHES:
+        elif job_type in {JobType.LAST_30_DAYS_CORE_DATA, "last_30_days_crashes"}:
             start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
             return {
-                "endpoints": ["crashes"],
+                "endpoints": config.get("endpoints", ["crashes", "people", "vehicles"]),
                 "start_date": start_date,
                 "end_date": now.strftime("%Y-%m-%d"),
                 "force": config.get("force", True),
@@ -629,6 +635,42 @@ class JobService:
             "end_date": now.strftime("%Y-%m-%d"),
             "force": False,
         }
+
+    def _find_existing_default_job(
+        self, session: Session, job_type: str
+    ) -> ScheduledJob | None:
+        """Find an existing job matching a default template, including legacy aliases."""
+        job_types = self.LEGACY_JOB_TYPE_ALIASES.get(job_type, {job_type})
+        return (
+            session.query(ScheduledJob)
+            .filter(ScheduledJob.job_type.in_(list(job_types)))
+            .order_by(ScheduledJob.id.asc())
+            .first()
+        )
+
+    def _apply_default_job_template(
+        self, job: ScheduledJob, template: dict[str, Any]
+    ) -> None:
+        """Reconcile an existing default job with the current template."""
+        job.name = template["name"]
+        job.description = template["description"]
+        job.job_type = template["job_type"]
+        job.config = template["config"]
+        job.timeout_minutes = template["timeout_minutes"]
+        job.max_retries = template["max_retries"]
+        job.recurrence_type = template["recurrence_type"]
+        job.enabled = template["enabled"]
+
+        if job.enabled and job.recurrence_type != RecurrenceType.ONCE:
+            job.next_run = calculate_next_run(
+                RecurrenceType(job.recurrence_type), job.cron_expression, job.last_run
+            )
+        else:
+            job.next_run = None
+
+        if job.job_type in self.LEGACY_JOB_TYPES_TO_DISABLE:
+            job.enabled = False
+            job.next_run = None
 
     def get_job_executions(
         self, job_id: int = None, limit: int = 50

@@ -58,12 +58,16 @@ def sample_person_record():
     return {
         "crash_record_id": "TEST123",
         "person_id": "PERSON001",
+        "crash_date": "2024-01-01T12:30:00.000",
+        "vehicle_id": "42",
         "person_type": "DRIVER",
         "age": "35",
         "sex": "M",
         "safety_equipment": "SAFETY BELT USED",
         "injury_classification": "INCAPACITATING INJURY",
         "hospital": "NORTHWESTERN MEMORIAL",
+        "driver_action": "FAILED TO REDUCE SPEED",
+        "driver_vision": "NOT OBSCURED",
         "bac_result": "NEGATIVE",
         "bac_result_value": None,
     }

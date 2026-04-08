@@ -54,12 +54,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error("Failed to initialize default jobs", error=str(e))
 
-    # Start job scheduler
-    try:
-        await start_job_scheduler()
-        logger.info("Job scheduler started successfully")
-    except Exception as e:
-        logger.error("Failed to start job scheduler", error=str(e))
+    # Start job scheduler only on the designated scheduler owner.
+    if settings.job_scheduler_enabled:
+        try:
+            await start_job_scheduler()
+            logger.info("Job scheduler started successfully")
+        except Exception as e:
+            logger.error("Failed to start job scheduler", error=str(e))
+    else:
+        logger.info("Job scheduler startup disabled by configuration")
 
     logger.info("API started successfully", startup_time=datetime.now())
 
@@ -68,12 +71,13 @@ async def lifespan(app: FastAPI):
     # Cleanup tasks
     logger.info("Shutting down Chicago Crash Data Pipeline API")
 
-    # Stop job scheduler
-    try:
-        await stop_job_scheduler()
-        logger.info("Job scheduler stopped successfully")
-    except Exception as e:
-        logger.error("Failed to stop job scheduler", error=str(e))
+    # Stop job scheduler if this instance owns it.
+    if settings.job_scheduler_enabled:
+        try:
+            await stop_job_scheduler()
+            logger.info("Job scheduler stopped successfully")
+        except Exception as e:
+            logger.error("Failed to stop job scheduler", error=str(e))
 
 
 # Create FastAPI app

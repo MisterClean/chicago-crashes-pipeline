@@ -48,6 +48,7 @@ services:
       DB_USER: postgres
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       REDIS_URL: redis://redis:6379
+      JOB_SCHEDULER_ENABLED: ${JOB_SCHEDULER_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy
