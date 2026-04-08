@@ -13,9 +13,9 @@ On startup (`src/api/main.py`) the application seeds a set of jobs defined in `s
 | Job Type | Description | Enabled | Recurrence |
 | --- | --- | --- | --- |
 | `full_refresh` | Complete backfill across crashes, people, vehicles, fatalities | Disabled | Manual |
-| `last_30_days_crashes` | Rolling 30-day refresh for crash records | Enabled | Daily |
-| `last_30_days_people` | Rolling 30-day refresh for people data | Enabled | Daily |
-| `last_30_days_vehicles` | Rolling 30-day refresh for vehicle data | Enabled | Daily |
+| `last_30_days_core_data` | Rolling 30-day refresh for crashes, people, and vehicles in dependency order | Enabled | Daily |
+| `last_30_days_people` | Legacy people-only 30-day refresh retained for manual use | Disabled | Daily |
+| `last_30_days_vehicles` | Legacy vehicle-only 30-day refresh retained for manual use | Disabled | Daily |
 | `last_6_months_fatalities` | Fatality refresh with a six-month window | Enabled | Weekly |
 
 Adjust these defaults by editing `get_default_jobs()` or managing them from the admin portal.
@@ -37,6 +37,15 @@ python -m src.cli.pipeline delta \
   --start-date 2024-01-01 \
   --end-date 2024-01-31 \
   --batch-size 20000
+
+# Backfill missing crash_date values on existing people rows
+python -m src.cli.pipeline backfill-people-crash-dates \
+  --batch-size 50000
+
+# Re-sync historical people fields in dependency order after deploying the sanitizer fix
+python -m src.cli.pipeline initial-load \
+  --endpoints crashes people \
+  --start-date 2017-09-01
 ```
 
 CLI runs log progress to `logs/etl.log` and update the shared job execution history so the admin portal reflects manual operations.
@@ -77,3 +86,4 @@ Use `GET /sync/status` to monitor state or poll the job executions list for comp
 - Use smaller `batch_size` values during daytime hours to respect SODA API rate limits.
 - Store your `CHICAGO_API_TOKEN` in `.env` to unlock significantly higher throughput.
 - Schedule heavy backfills during off-peak hours to reduce contention with production workloads.
+- Repairing legacy people data is a two-step process: backfill `crash_date` from `crashes`, then run a historical `crashes -> people` sync to repopulate source-backed fields like `vehicle_id`, `driver_action`, and `driver_vision` without hitting foreign key violations.

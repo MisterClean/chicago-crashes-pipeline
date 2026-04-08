@@ -1377,10 +1377,14 @@ function updateJobFormForType(jobType) {
         
         if (jobType === 'full_refresh') {
             document.querySelectorAll('.job-endpoint').forEach(cb => cb.checked = true);
-        } else if (jobType === 'last_30_days_crashes') {
+        } else if (jobType === 'last_30_days_core_data' || jobType === 'last_30_days_crashes') {
             document.getElementById('endpoint-crashes').checked = true;
+            document.getElementById('endpoint-people').checked = true;
+            document.getElementById('endpoint-vehicles').checked = true;
         } else if (jobType === 'last_30_days_people') {
             document.getElementById('endpoint-people').checked = true;
+        } else if (jobType === 'last_30_days_vehicles') {
+            document.getElementById('endpoint-vehicles').checked = true;
         } else if (jobType === 'last_6_months_fatalities') {
             document.getElementById('endpoint-fatalities').checked = true;
         }

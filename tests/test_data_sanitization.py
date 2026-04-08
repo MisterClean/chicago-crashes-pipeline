@@ -39,9 +39,13 @@ class TestDataSanitizer:
 
         assert result["crash_record_id"] == "TEST123"
         assert result["person_id"] == "PERSON001"
+        assert isinstance(result["crash_date"], datetime)
+        assert result["vehicle_id"] == "42"
         assert result["age"] == 35
         assert result["sex"] == "M"
         assert result["person_type"] == "DRIVER"
+        assert result["driver_action"] == "FAILED TO REDUCE SPEED"
+        assert result["driver_vision"] == "NOT OBSCURED"
 
     def test_sanitize_vehicle_record(self, sanitizer, sample_vehicle_record):
         """Test vehicle record sanitization."""

@@ -69,7 +69,7 @@ vision_zero_fatalities.person_id (PK)
 - **Primary key:** (`crash_record_id`, `person_id`)
 - **Indexes:** `person_type`, `injury_classification`, `age`.
 - **Common roles:** DRIVER, PASSENGER, BICYCLE, PEDESTRIAN, NON-MOTOR VEHICLE, NON-CONTACT VEHICLE.
-- **Data gaps:** `crash_date` is frequently null from the upstream portal; rely on the parent crash record for event timing.
+- **Data gaps:** Legacy rows may have null `crash_date`, `vehicle_id`, `driver_action`, and `driver_vision` from an older ingest bug; run the people repair workflow before relying on those columns historically.
 
 **Key analytic fields**
 - Demographics: `age`, `sex`.
@@ -195,7 +195,7 @@ LIMIT 10;
 - **Temporal coverage:** Incremental jobs refresh recent windows as defined in `scheduled_jobs`; run the `initial-load` CLI task for a full-history backfill.
 - **Coordinate accuracy:** Records without lat/long cannot be spatially joined; the pipeline skips geometry creation when either coordinate is null.
 - **RD numbers:** `vision_zero_fatalities.rd_no` is retained internally even though the public portal removes it; treat as sensitive and avoid exposing externally.
-- **Null crash dates in people data:** Use the parent crash timestamp instead of `crash_people.crash_date` when building timelines.
+- **Legacy people field gaps:** Older rows may need a `crash_date` backfill and historical people re-sync before `crash_people.crash_date`, `vehicle_id`, `driver_action`, and `driver_vision` are complete.
 - **Amended reports:** Records can be updated post-ingestion; rely on `updated_at` to detect changes during CDC-style processes.
 
 ## Usage Recommendations

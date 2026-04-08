@@ -155,14 +155,8 @@
                                 <button class="btn btn-primary" onclick="executeJob('full_refresh')">
                                     <i class="bi bi-arrow-clockwise me-2"></i>Run Full Data Refresh
                                 </button>
-                                <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_crashes')">
-                                    <i class="bi bi-calendar-week me-2"></i>Refresh Last 30 Days - Crashes
-                                </button>
-                                <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_people')">
-                                    <i class="bi bi-people me-2"></i>Refresh Last 30 Days - People
-                                </button>
-                                <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_vehicles')">
-                                    <i class="bi bi-truck me-2"></i>Refresh Last 30 Days - Vehicles
+                                <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_core_data')">
+                                    <i class="bi bi-calendar-week me-2"></i>Refresh Last 30 Days - Core Crash Data
                                 </button>
                                 <button class="btn btn-outline-primary" onclick="executeJob('last_6_months_fatalities')">
                                     <i class="bi bi-exclamation-diamond me-2"></i>Refresh Fatalities (6 Months)
@@ -548,7 +542,7 @@
                                             <option value="">Select job type...</option>
                                             <option value="custom">Custom</option>
                                             <option value="full_refresh">Full Refresh</option>
-                                            <option value="last_30_days_crashes">Last 30 Days - Crashes</option>
+                                            <option value="last_30_days_core_data">Last 30 Days - Core Crash Data</option>
                                             <option value="last_30_days_people">Last 30 Days - People</option>
                                             <option value="last_30_days_vehicles">Last 30 Days - Vehicles</option>
                                             <option value="last_6_months_fatalities">Last 6 Months - Fatalities</option>

@@ -113,12 +113,14 @@ class DataSanitizer:
         # Required fields
         sanitized["crash_record_id"] = self._clean_string(record.get("crash_record_id"))
         sanitized["person_id"] = self._clean_string(record.get("person_id"))
+        sanitized["crash_date"] = self._parse_datetime(record.get("crash_date"))
 
         # Age validation
         sanitized["age"] = self._clean_age(record.get("age"))
 
         # String fields
         string_fields = [
+            "vehicle_id",
             "person_type",
             "sex",
             "safety_equipment",
@@ -130,6 +132,8 @@ class DataSanitizer:
             "ems_unit",
             "drivers_license_state",
             "drivers_license_class",
+            "driver_action",
+            "driver_vision",
             "physical_condition",
             "pedpedal_action",
             "pedpedal_visibility",

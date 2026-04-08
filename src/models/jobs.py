@@ -36,7 +36,7 @@ class JobType(str, Enum):
     """Type of job to execute."""
 
     FULL_REFRESH = "full_refresh"
-    LAST_30_DAYS_CRASHES = "last_30_days_crashes"
+    LAST_30_DAYS_CORE_DATA = "last_30_days_core_data"
     LAST_30_DAYS_PEOPLE = "last_30_days_people"
     LAST_30_DAYS_VEHICLES = "last_30_days_vehicles"
     LAST_6_MONTHS_FATALITIES = "last_6_months_fatalities"
@@ -189,12 +189,19 @@ def get_default_jobs():
             "max_retries": 1,
         },
         {
-            "name": "Last 30 Days - Crash Data",
-            "description": "Refresh crash data from the last 30 days",
-            "job_type": JobType.LAST_30_DAYS_CRASHES,
+            "name": "Last 30 Days - Core Crash Data",
+            "description": (
+                "Refresh crash, people, and vehicle data from the last 30 days "
+                "in dependency order"
+            ),
+            "job_type": JobType.LAST_30_DAYS_CORE_DATA,
             "enabled": True,
             "recurrence_type": RecurrenceType.DAILY,
-            "config": {"endpoints": ["crashes"], "date_range_days": 30, "force": True},
+            "config": {
+                "endpoints": ["crashes", "people", "vehicles"],
+                "date_range_days": 30,
+                "force": True,
+            },
             "timeout_minutes": 60,
             "max_retries": 3,
         },
@@ -202,7 +209,7 @@ def get_default_jobs():
             "name": "Last 30 Days - People Data",
             "description": "Refresh people data from the last 30 days",
             "job_type": JobType.LAST_30_DAYS_PEOPLE,
-            "enabled": True,
+            "enabled": False,
             "recurrence_type": RecurrenceType.DAILY,
             "config": {"endpoints": ["people"], "date_range_days": 30, "force": True},
             "timeout_minutes": 60,
@@ -212,7 +219,7 @@ def get_default_jobs():
             "name": "Last 30 Days - Vehicle Data",
             "description": "Refresh vehicle data from the last 30 days",
             "job_type": JobType.LAST_30_DAYS_VEHICLES,
-            "enabled": True,
+            "enabled": False,
             "recurrence_type": RecurrenceType.DAILY,
             "config": {"endpoints": ["vehicles"], "date_range_days": 30, "force": True},
             "timeout_minutes": 60,

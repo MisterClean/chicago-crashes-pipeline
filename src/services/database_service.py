@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.base import SessionLocal, get_db
@@ -59,6 +59,82 @@ class DatabaseService:
         except Exception as exc:  # pragma: no cover - defensive logging path
             logger.error("Failed to collect record counts", error=str(exc))
             return {}
+        finally:
+            session.close()
+
+    def backfill_person_crash_dates(
+        self, batch_size: int = 50000, max_batches: int | None = None
+    ) -> dict[str, int]:
+        """Backfill missing crash_people.crash_date values from parent crashes."""
+        session = self.session_factory()
+        total_updated = 0
+        batches = 0
+
+        try:
+            initial_missing = session.execute(
+                text("SELECT COUNT(*) FROM crash_people WHERE crash_date IS NULL")
+            ).scalar_one()
+
+            while True:
+                if max_batches is not None and batches >= max_batches:
+                    break
+
+                updated = len(
+                    session.execute(
+                        text(
+                            """
+                            WITH batch AS (
+                                SELECT cp.ctid, c.crash_date
+                                FROM crash_people cp
+                                JOIN crashes c ON c.crash_record_id = cp.crash_record_id
+                                WHERE cp.crash_date IS NULL
+                                LIMIT :batch_size
+                            )
+                            UPDATE crash_people cp
+                            SET crash_date = batch.crash_date
+                            FROM batch
+                            WHERE cp.ctid = batch.ctid
+                            RETURNING 1
+                            """
+                        ),
+                        {"batch_size": batch_size},
+                    ).fetchall()
+                )
+                session.commit()
+
+                if updated == 0:
+                    break
+
+                batches += 1
+                total_updated += updated
+                logger.info(
+                    "Backfilled crash_people.crash_date batch",
+                    updated=updated,
+                    total_updated=total_updated,
+                    batch_number=batches,
+                )
+
+            remaining_missing = session.execute(
+                text("SELECT COUNT(*) FROM crash_people WHERE crash_date IS NULL")
+            ).scalar_one()
+
+            logger.info(
+                "Completed crash_people.crash_date backfill",
+                initial_missing=initial_missing,
+                updated=total_updated,
+                remaining_missing=remaining_missing,
+                batches=batches,
+            )
+            return {
+                "initial_missing": initial_missing,
+                "updated": total_updated,
+                "remaining_missing": remaining_missing,
+                "batches": batches,
+            }
+        except SQLAlchemyError as exc:  # pragma: no cover - error path
+            session.rollback()
+            logger.error("Failed to backfill crash_people.crash_date", error=str(exc))
+            raise
         finally:
             session.close()
 

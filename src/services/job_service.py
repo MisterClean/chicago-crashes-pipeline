@@ -31,6 +31,19 @@ logger = get_logger(__name__)
 class JobService:
     """Service for managing scheduled jobs and executions."""
 
+    DEFAULT_JOB_MIGRATION_MARKER = "system:migrated-default-v2"
+    LEGACY_CORE_JOB_TYPE = "last_30_days_crashes"
+    LEGACY_JOB_TYPE_ALIASES = {
+        JobType.LAST_30_DAYS_CORE_DATA: {
+            JobType.LAST_30_DAYS_CORE_DATA,
+            LEGACY_CORE_JOB_TYPE,
+        },
+    }
+    LEGACY_JOB_TYPES_TO_DISABLE = {
+        JobType.LAST_30_DAYS_PEOPLE,
+        JobType.LAST_30_DAYS_VEHICLES,
+    }
+
     def __init__(self):
         self.db_service = DatabaseService()
 
@@ -47,12 +60,7 @@ class JobService:
             default_jobs = get_default_jobs()
 
             for job_config in default_jobs:
-                # Check if job already exists
-                existing = (
-                    session.query(ScheduledJob)
-                    .filter_by(job_type=job_config["job_type"])
-                    .first()
-                )
+                existing = self._find_existing_default_job(session, job_config["job_type"])
 
                 if not existing:
                     next_run = None
@@ -81,6 +89,9 @@ class JobService:
                     created_jobs.append(
                         {"id": job.id, "name": job.name, "job_type": job.job_type}
                     )
+                    continue
+
+                self._reconcile_default_job(existing, job_config)
 
             session.commit()
             logger.info(f"Initialized {len(created_jobs)} default jobs")
@@ -570,10 +581,10 @@ class JobService:
                 "end_date": None,
                 "force": True,
             }
-        elif job_type == JobType.LAST_30_DAYS_CRASHES:
+        elif job_type in {JobType.LAST_30_DAYS_CORE_DATA, "last_30_days_crashes"}:
             start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
             return {
-                "endpoints": ["crashes"],
+                "endpoints": config.get("endpoints", ["crashes", "people", "vehicles"]),
                 "start_date": start_date,
                 "end_date": now.strftime("%Y-%m-%d"),
                 "force": config.get("force", True),
@@ -629,6 +640,81 @@ class JobService:
             "end_date": now.strftime("%Y-%m-%d"),
             "force": False,
         }
+
+    def _find_existing_default_job(
+        self, session: Session, job_type: str
+    ) -> ScheduledJob | None:
+        """Find an existing job matching a default template, including legacy aliases."""
+        job_types = self.LEGACY_JOB_TYPE_ALIASES.get(job_type, {job_type})
+        return (
+            session.query(ScheduledJob)
+            .filter(ScheduledJob.job_type.in_(list(job_types)))
+            .order_by(ScheduledJob.id.asc())
+            .first()
+        )
+
+    def _reconcile_default_job(
+        self, job: ScheduledJob, template: dict[str, Any]
+    ) -> None:
+        """Apply one-time migrations for legacy default jobs without resetting operator changes."""
+        if (
+            template["job_type"] == JobType.LAST_30_DAYS_CORE_DATA
+            and job.job_type == self.LEGACY_CORE_JOB_TYPE
+        ):
+            self._migrate_legacy_core_job(job, template)
+            return
+
+        if (
+            template["job_type"] in self.LEGACY_JOB_TYPES_TO_DISABLE
+            and self._should_disable_legacy_child_job(job)
+        ):
+            self._disable_legacy_child_job(job)
+
+    def _migrate_legacy_core_job(
+        self, job: ScheduledJob, template: dict[str, Any]
+    ) -> None:
+        """Promote the legacy crash-only job to the ordered core-data job."""
+        if job.name == "Last 30 Days - Crash Data":
+            job.name = template["name"]
+        if (
+            not job.description
+            or job.description == "Refresh crash data from the last 30 days"
+        ):
+            job.description = template["description"]
+
+        job.job_type = template["job_type"]
+
+        updated_config = dict(job.config or {})
+        updated_config["endpoints"] = list(template["config"]["endpoints"])
+        updated_config.setdefault(
+            "date_range_days", template["config"]["date_range_days"]
+        )
+        updated_config.setdefault("force", template["config"]["force"])
+        job.config = updated_config
+
+        if (
+            job.enabled
+            and job.recurrence_type != RecurrenceType.ONCE
+            and job.next_run is None
+        ):
+            job.next_run = calculate_next_run(
+                RecurrenceType(job.recurrence_type), job.cron_expression, job.last_run
+            )
+
+    def _should_disable_legacy_child_job(self, job: ScheduledJob) -> bool:
+        """Disable each legacy dependency job once, but preserve later operator edits."""
+        return (
+            job.job_type in self.LEGACY_JOB_TYPES_TO_DISABLE
+            and job.enabled
+            and job.created_by != self.DEFAULT_JOB_MIGRATION_MARKER
+            and (job.created_by or "system") == "system"
+        )
+
+    def _disable_legacy_child_job(self, job: ScheduledJob) -> None:
+        """Turn off the legacy people/vehicle default jobs and mark them migrated."""
+        job.enabled = False
+        job.next_run = None
+        job.created_by = self.DEFAULT_JOB_MIGRATION_MARKER
 
     def get_job_executions(
         self, job_id: int = None, limit: int = 50
