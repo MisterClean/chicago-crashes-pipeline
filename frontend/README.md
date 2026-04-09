@@ -38,7 +38,7 @@ npm run dev
 # Build for production
 npm run build
 
-# Run production build
+# Run the standalone production server
 npm start
 ```
 

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev -p 3001",
     "build": "next build",
-    "start": "next start -p ${PORT:-3001}",
+    "start": "sh -c 'HOSTNAME=0.0.0.0 PORT=${PORT:-3001} node .next/standalone/server.js'",
     "lint": "next lint"
   },
   "dependencies": {
