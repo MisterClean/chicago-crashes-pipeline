@@ -1,7 +1,25 @@
-// Use absolute URL for server-side rendering, relative for client-side
+const ABSOLUTE_URL_PATTERN = /^https?:\/\//i;
+
+function isAbsoluteUrl(value: string | undefined): value is string {
+  return Boolean(value && ABSOLUTE_URL_PATTERN.test(value));
+}
+
+function getServerApiBase(): string {
+  const publicApiUrl = process.env.NEXT_PUBLIC_API_URL;
+
+  // Prefer a public absolute URL in production so SSR does not depend on a
+  // separate internal hostname being configured correctly.
+  if (isAbsoluteUrl(publicApiUrl)) {
+    return publicApiUrl;
+  }
+
+  return process.env.BACKEND_URL || "http://localhost:8000";
+}
+
+// Use an absolute URL for server-side rendering, relative for client-side.
 const API_BASE =
   typeof window === "undefined"
-    ? process.env.BACKEND_URL || "http://localhost:8000"
+    ? getServerApiBase()
     : process.env.NEXT_PUBLIC_API_URL || "/api";
 
 // API Key for server-side requests (set in Railway environment)
