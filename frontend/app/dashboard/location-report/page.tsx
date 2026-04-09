@@ -229,6 +229,17 @@ export default function LocationReportPage() {
     }
   }, []);
 
+  const handlePlaceTypeChange = useCallback((value: string) => {
+    const nextPlaceType = value || null;
+
+    // Clear the current selection before switching layers so we never request
+    // geometry for a stale place id under the new type.
+    setSelectedPlaceId(null);
+    setSelectedPlaceGeometry(null);
+    setPlaceItems([]);
+    setSelectedPlaceType(nextPlaceType);
+  }, []);
+
   // Handle center selection - clear report when user clicks new location
   const handleCenterSelect = useCallback((center: [number, number]) => {
     setSelectedCenter(center);
@@ -480,7 +491,7 @@ export default function LocationReportPage() {
                 <div className="space-y-2">
                   <select
                     value={selectedPlaceType || ""}
-                    onChange={(e) => setSelectedPlaceType(e.target.value || null)}
+                    onChange={(e) => handlePlaceTypeChange(e.target.value)}
                     disabled={loadingPlaceTypes}
                     className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
                   >
