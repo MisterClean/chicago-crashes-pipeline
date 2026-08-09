@@ -60,7 +60,9 @@ class JobService:
             default_jobs = get_default_jobs()
 
             for job_config in default_jobs:
-                existing = self._find_existing_default_job(session, job_config["job_type"])
+                existing = self._find_existing_default_job(
+                    session, job_config["job_type"]
+                )
 
                 if not existing:
                     next_run = None
@@ -462,15 +464,22 @@ class JobService:
 
         except Exception as e:
             if execution:
+                failed_at = datetime.now()
                 execution.status = JobStatus.FAILED
-                execution.completed_at = datetime.now()
+                execution.completed_at = failed_at
                 execution.error_message = str(e)
                 execution.error_details = {"exception": type(e).__name__}
 
-                if execution.started_at:
-                    duration = int(
-                        (datetime.now() - execution.started_at).total_seconds()
+                job = execution.job
+                if job and job.enabled and job.recurrence_type != RecurrenceType.ONCE:
+                    job.next_run = calculate_next_run(
+                        RecurrenceType(job.recurrence_type),
+                        job.cron_expression,
+                        failed_at,
                     )
+
+                if execution.started_at:
+                    duration = int((failed_at - execution.started_at).total_seconds())
                     execution.duration_seconds = duration
 
                 session.commit()
@@ -644,7 +653,7 @@ class JobService:
     def _find_existing_default_job(
         self, session: Session, job_type: str
     ) -> ScheduledJob | None:
-        """Find an existing job matching a default template, including legacy aliases."""
+        """Find an existing default job, including legacy aliases."""
         job_types = self.LEGACY_JOB_TYPE_ALIASES.get(job_type, {job_type})
         return (
             session.query(ScheduledJob)
@@ -656,7 +665,7 @@ class JobService:
     def _reconcile_default_job(
         self, job: ScheduledJob, template: dict[str, Any]
     ) -> None:
-        """Apply one-time migrations for legacy default jobs without resetting operator changes."""
+        """Migrate legacy defaults without resetting operator changes."""
         if (
             template["job_type"] == JobType.LAST_30_DAYS_CORE_DATA
             and job.job_type == self.LEGACY_CORE_JOB_TYPE
@@ -702,7 +711,7 @@ class JobService:
             )
 
     def _should_disable_legacy_child_job(self, job: ScheduledJob) -> bool:
-        """Disable each legacy dependency job once, but preserve later operator edits."""
+        """Disable a legacy dependency job once, preserving later edits."""
         return (
             job.job_type in self.LEGACY_JOB_TYPES_TO_DISABLE
             and job.enabled
