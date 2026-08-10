@@ -245,6 +245,14 @@ export interface LocationReportExportRequest extends LocationReportRequest {
   datasets: LocationReportDataset[];
 }
 
+function getLocationReportExportUrl(): string {
+  if (typeof window === "undefined") {
+    return `${API_BASE}/dashboard/location-report/export`;
+  }
+
+  return "/api/location-report-export";
+}
+
 function parseFilenameFromDisposition(disposition: string | null): string | null {
   if (!disposition) return null;
   const match = disposition.match(/filename="?([^"]+)"?/i);
@@ -254,7 +262,7 @@ function parseFilenameFromDisposition(disposition: string | null): string | null
 export async function exportLocationReport(
   request: LocationReportExportRequest
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${API_BASE}/dashboard/location-report/export`, {
+  const res = await fetch(getLocationReportExportUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...getAuthHeaders() },
     body: JSON.stringify(request),
