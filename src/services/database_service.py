@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.base import SessionLocal, get_db
@@ -32,12 +32,22 @@ class DatabaseService:
     def upsert_person_records(
         self, records: Sequence[dict[str, Any]]
     ) -> dict[str, int]:
-        return self._upsert_records(CrashPerson, records, self._prepare_person_record)
+        return self._upsert_records(
+            CrashPerson,
+            records,
+            self._prepare_person_record,
+            parent_key="crash_record_id",
+        )
 
     def upsert_vehicle_records(
         self, records: Sequence[dict[str, Any]]
     ) -> dict[str, int]:
-        return self._upsert_records(CrashVehicle, records, self._prepare_vehicle_record)
+        return self._upsert_records(
+            CrashVehicle,
+            records,
+            self._prepare_vehicle_record,
+            parent_key="crash_record_id",
+        )
 
     def upsert_fatality_records(
         self, records: Sequence[dict[str, Any]]
@@ -146,11 +156,13 @@ class DatabaseService:
         model: type,
         records: Sequence[dict[str, Any]],
         prepare: Callable[[dict[str, Any]], dict[str, Any] | None],
+        parent_key: str | None = None,
     ) -> dict[str, int]:
         inserted = updated = skipped = 0
         session = self.session_factory()
 
         try:
+            prepared_records: list[tuple[dict[str, Any], Any]] = []
             for raw_record in records:
                 prepared = prepare(raw_record)
                 if not prepared:
@@ -162,6 +174,18 @@ class DatabaseService:
                     skipped += 1
                     continue
 
+                prepared_records.append((prepared, pk))
+
+            if parent_key:
+                prepared_records, orphaned = self._filter_orphaned_child_records(
+                    session,
+                    model,
+                    prepared_records,
+                    parent_key,
+                )
+                skipped += orphaned
+
+            for prepared, pk in prepared_records:
                 existing = session.get(model, pk)
                 if existing:
                     self._assign_columns(existing, prepared)
@@ -191,6 +215,49 @@ class DatabaseService:
         )
 
         return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
+    @staticmethod
+    def _filter_orphaned_child_records(
+        session: Any,
+        model: type,
+        prepared_records: list[tuple[dict[str, Any], Any]],
+        parent_key: str,
+    ) -> tuple[list[tuple[dict[str, Any], Any]], int]:
+        """Exclude child records whose referenced crash is not stored locally."""
+        parent_ids = {
+            prepared[parent_key]
+            for prepared, _ in prepared_records
+            if prepared.get(parent_key)
+        }
+        if not parent_ids:
+            return prepared_records, 0
+
+        existing_parent_ids = set(
+            session.scalars(
+                select(Crash.crash_record_id).where(
+                    Crash.crash_record_id.in_(parent_ids)
+                )
+            ).all()
+        )
+        orphaned_parent_ids = parent_ids - existing_parent_ids
+        if not orphaned_parent_ids:
+            return prepared_records, 0
+
+        valid_records = [
+            (prepared, pk)
+            for prepared, pk in prepared_records
+            if prepared.get(parent_key) in existing_parent_ids
+        ]
+        orphaned_count = len(prepared_records) - len(valid_records)
+
+        logger.warning(
+            "Skipped child records with missing crash parents",
+            model=model.__tablename__,
+            orphaned_records=orphaned_count,
+            orphaned_crash_ids=len(orphaned_parent_ids),
+            sample_crash_ids=sorted(orphaned_parent_ids)[:10],
+        )
+        return valid_records, orphaned_count
 
     # ------------------------------------------------------------------
     # Record preparation helpers
