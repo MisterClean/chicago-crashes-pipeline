@@ -57,8 +57,8 @@ function getDefaultDates() {
 }
 
 // Default place configuration (LOOP community area)
-const DEFAULT_PLACE_TYPE = "layer:4"; // Community Areas uploaded layer
-const DEFAULT_PLACE_ID = "259"; // LOOP community area feature ID
+const DEFAULT_PLACE_TYPE = "layer:9"; // Community Areas uploaded layer
+const DEFAULT_PLACE_ID = "1330"; // LOOP community area feature ID
 
 export default function LocationReportPage() {
   const defaultDates = getDefaultDates();
