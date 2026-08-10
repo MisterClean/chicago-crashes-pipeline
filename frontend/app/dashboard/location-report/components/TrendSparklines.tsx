@@ -86,14 +86,14 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">crashes</p>
         </div>
-        <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-3">
+        <div className="bg-sky-50 dark:bg-sky-900/20 rounded-lg p-3">
           <p className="text-xs text-gray-500 dark:text-gray-400">Avg/Month</p>
-          <p className="text-lg font-bold text-yellow-600">{avgInjuries}</p>
+          <p className="text-lg font-bold" style={{ color: "#56B4E9" }}>{avgInjuries}</p>
           <p className="text-xs text-gray-500 dark:text-gray-400">injuries</p>
         </div>
-        <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-3">
+        <div className="bg-violet-50 dark:bg-violet-900/20 rounded-lg p-3">
           <p className="text-xs text-gray-500 dark:text-gray-400">Total</p>
-          <p className="text-lg font-bold text-red-600">{totals.fatalities}</p>
+          <p className="text-lg font-bold" style={{ color: "#440154" }}>{totals.fatalities}</p>
           <p className="text-xs text-gray-500 dark:text-gray-400">fatalities</p>
         </div>
       </div>
@@ -144,8 +144,8 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
             <AreaChart data={data}>
               <defs>
                 <linearGradient id="injuryGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#eab308" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#eab308" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#56B4E9" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#56B4E9" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <XAxis
@@ -160,7 +160,7 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
               <Area
                 type="monotone"
                 dataKey="injuries"
-                stroke="#eab308"
+                stroke="#56B4E9"
                 strokeWidth={2}
                 fill="url(#injuryGradient)"
                 name="Injuries"
@@ -181,8 +181,8 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
               <AreaChart data={data}>
                 <defs>
                   <linearGradient id="fatalityGradient" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#dc2626" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#dc2626" stopOpacity={0} />
+                    <stop offset="5%" stopColor="#440154" stopOpacity={0.3} />
+                    <stop offset="95%" stopColor="#440154" stopOpacity={0} />
                   </linearGradient>
                 </defs>
                 <XAxis
@@ -197,7 +197,7 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
                 <Area
                   type="monotone"
                   dataKey="fatalities"
-                  stroke="#dc2626"
+                  stroke="#440154"
                   strokeWidth={2}
                   fill="url(#fatalityGradient)"
                   name="Fatalities"

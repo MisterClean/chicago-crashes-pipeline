@@ -350,12 +350,12 @@ export function LocationReportMap({
                 "circle-color": [
                   "case",
                   [">", ["get", "injuries_fatal"], 0],
-                  "#dc2626",
+                  "#440154",  // Deep Violet - Fatal
                   [">", ["get", "injuries_incapacitating"], 0],
-                  "#ea580c",
+                  "#E66100",  // Vermillion - Incapacitating
                   [">", ["get", "injuries_total"], 0],
-                  "#eab308",
-                  "#22c55e",
+                  "#56B4E9",  // Sky Blue - Other Injury
+                  "#CCCCCC",  // Light Grey - Property Damage Only
                 ],
                 "circle-opacity": 0.8,
                 "circle-stroke-width": 1,
