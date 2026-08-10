@@ -42,6 +42,12 @@ export default function RootLayout({
                 >
                   Location Report
                 </Link>
+                <Link
+                  href="/dashboard/ward-scorecard"
+                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
+                >
+                  Ward Scorecard
+                </Link>
               </div>
             </div>
           </nav>
