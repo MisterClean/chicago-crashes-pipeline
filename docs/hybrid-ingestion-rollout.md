@@ -1,7 +1,7 @@
 # Hybrid ingestion and durable workers
 
 Branch: `codex/hybrid-ingestion-worker-exports`. These changes are implemented and
-deployed to production for the API, export worker and frontend. Ingestion activation is in progress on the existing 5 GB Hobby volume.
+deployed to production for the API, export worker, frontend and ingestion worker. The existing 5 GB Hobby volume is retained. Routine schedules are active; the large historical people backfill is held as described below.
 
 ## What changes
 
@@ -78,7 +78,7 @@ has room for changed rows, indexes and WAL during full publication. Set `INGESTI
 
 ## Verification and performance
 
-The production Docker image passed 209 Python tests, including real PostGIS tests
+The production Docker image passed 215 Python tests, including real PostGIS tests
 for atomic rollback, spatial filtering, snapshot consistency, leases and migrations.
 Frontend production build and two export-client tests passed. Browser QA used a
 synthetic 500-crash dataset; no synthetic records were written to production.
@@ -122,3 +122,50 @@ join keys with bigint IDs is a future migration, not part of this release.
 Production export queue/worker/bucket/signed-download smoke passed with a ZIP
 containing one crash, two people, two vehicles and a manifest. Browser QA of
 the Loop report reconciled the heatmap total to the summary (3,652 crashes).
+
+A separate local restore of the production backup loaded all 5,719,379 core
+records and rebuilt their indexes into a 3,126 MiB database (including the old
+coordinate indexes). This suggests about 678 MiB of additional compaction
+potential relative to production after maintenance. The only restore warning
+was an incompatible `topology.topology.useslargeids` extension column on the
+older local PostGIS image; the source topology table is empty. A real cutover
+must use the matching production PostGIS version and validate all objects.
+No production rebuild or source-ID migration has been performed.
+
+Ingestion worker revision `c08b80a` deployment
+`dcd66004-5ed7-47b2-88ea-427488cb211e` reached SUCCESS. First full refresh
+execution `exec_6_c18061bd1dfa41e79b363b9fa0ed2aa9` validated all sources but was stopped by the mutation guard. Its pending retry was explicitly cancelled before publication.
+
+### Bootstrap result and active operating mode
+
+The full-source comparison found 2,276,795 proposed changes: crashes 188 new /
+1,279 updated; people 1,446 new / 2,271,554 updated; vehicles 1,312 new / 2
+updated; fatalities 1 new / 1,013 updated. The 25,000-row guard rejected this
+publication before destination writes. Production has 2,274,426 person records
+with null crash_date and 2,278,016 with null vehicle_id; a 30-record CSV sample
+confirmed these and some driver fields are now available from the portal. This
+is a substantial historical backfill, not merely a transport-format mismatch.
+The full-source download/staging reached comparison in about 21 minutes. That
+is not a successful full-refresh duration: publication was deliberately held.
+
+Routine updates were validated and restored:
+- Daily core job 2 temporarily retains the legacy 30-day API window (`mode=api`).
+  Execution `exec_2_7551db3ac85240b1aacd8b0662dbee8a` completed in 45.9 seconds:
+  47,688 records checked, zero inserts/updates because the window was current.
+- Fatalities full CSV plus SODA catch-up execution
+  `exec_7_7ea0871727354446806f9973a395cdcf` completed in 19.5 seconds,
+  inserting 1 and updating 1,013 valid records. The checkpoint is established;
+  weekly job 5 remains `mode=incremental` and enabled. The 34 identity exclusions
+  were recorded. Final database size was 3,805 MiB.
+
+Next recommended operation: prepare a fresh 5 GB database with compact tables,
+perform the historical backfill there with measured disk/WAL headroom, verify
+counts, source fields and dashboard/export results, then perform a controlled
+connection cutover. Retain the old database for rollback. Do not simply raise
+the production mutation guard or drop/reload its live people table. Numeric
+internal crash join keys are a separate structural space optimization.
+
+Release routing: API/export/frontend were manually deployed from `ff1503e`;
+ingestion worker from `c08b80a`. The existing API/frontend GitHub source settings
+remain on main, so a later main deployment must include these changes to avoid
+reverting the manual release. Workers were deployed from clean CLI packages.
