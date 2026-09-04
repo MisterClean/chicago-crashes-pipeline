@@ -1,5 +1,7 @@
 """Database models for Chicago crash data pipeline."""
 
+from src.models.ingestion import IngestionCheckpoint  # noqa: F401
+from src.models.exports import ExportJob  # noqa: F401
 from .base import Base
 from .crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from .jobs import (

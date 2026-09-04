@@ -10,7 +10,17 @@ from fastapi.staticfiles import StaticFiles
 
 from src.api.dependencies import sync_state
 from src.api.middleware.auth import APIKeyMiddleware
-from src.api.routers import dashboard, health, jobs, places, spatial, spatial_layers, sync, validation
+from src.api.routers import (
+    dashboard,
+    exports,
+    health,
+    jobs,
+    places,
+    spatial,
+    spatial_layers,
+    sync,
+    validation,
+)
 from src.services.job_scheduler import start_job_scheduler, stop_job_scheduler
 from src.utils.config import settings
 from src.utils.logging import get_logger, setup_logging
@@ -145,6 +155,7 @@ app.include_router(spatial.router)
 app.include_router(spatial_layers.router)
 app.include_router(places.router)
 app.include_router(dashboard.router)
+app.include_router(exports.router)
 
 
 if __name__ == "__main__":

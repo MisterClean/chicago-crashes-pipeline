@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -115,22 +115,17 @@ class SODAClient:
         """Yield batches of records without loading everything into memory."""
 
         where_clause = self._build_date_where_clause(start_date, end_date, date_field)
-        order_clause = order_by or date_field
+        order_clause = order_by or f"{date_field}, :id"
 
-        total_count = await self._get_record_count(endpoint, where_clause)
-        if total_count == 0:
-            return
-
-        num_batches = (total_count + batch_size - 1) // batch_size
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
 
         progress = None
         if show_progress:
-            progress = tqdm(
-                total=total_count, desc=f"Fetching {endpoint}", unit="records"
-            )
+            progress = tqdm(desc=f"Fetching {endpoint}", unit="records")
 
-        for batch_index in range(num_batches):
-            offset = batch_index * batch_size
+        offset = 0
+        while True:
             batch = await self.fetch_records(
                 endpoint=endpoint,
                 limit=batch_size,
@@ -146,6 +141,7 @@ class SODAClient:
                 progress.update(len(batch))
 
             yield batch
+            offset += len(batch)
 
             if len(batch) < batch_size:
                 break
@@ -213,43 +209,70 @@ class SODAClient:
         Returns:
             List of modified record dictionaries
         """
-        # Format datetime for SODA API
-        last_modified_str = last_modified.strftime("%Y-%m-%dT%H:%M:%S")
-
-        logger.info(
-            "Starting incremental fetch",
-            endpoint=endpoint,
-            last_modified=last_modified_str,
-        )
-
-        # Use :updated_at system field for incremental sync
-        where_clause = f":updated_at > '{last_modified_str}'"
-
-        where_clause = f":updated_at > '{last_modified_str}'"
-        order_clause = ":updated_at"
-
         records: list[dict[str, Any]] = []
-        offset = 0
-
-        while True:
-            batch = await self.fetch_records(
-                endpoint=endpoint,
-                limit=batch_size,
-                offset=offset,
-                where_clause=where_clause,
-                order_by=order_clause,
-            )
-
-            if not batch:
-                break
-
+        async for batch in self.iter_incremental_batches(
+            endpoint, last_modified, datetime.now(timezone.utc), batch_size
+        ):
             records.extend(batch)
-            offset += len(batch)
-
-            if len(batch) < batch_size:
-                break
-
         return records
+
+    async def iter_incremental_batches(
+        self,
+        endpoint: str,
+        lower_bound: datetime,
+        upper_bound: datetime,
+        batch_size: int = 50000,
+    ) -> AsyncIterator[list[dict[str, Any]]]:
+        """Read a bounded source-modification interval with a stable row cursor.
+
+        Bounds are UTC source timestamps, not local crash timestamps. The caller
+        persists the upper bound only after successfully publishing every batch.
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+
+        def literal(value: str) -> str:
+            return "'" + value.replace("'", "''") + "'"
+
+        def timestamp(value: datetime) -> str:
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.astimezone(timezone.utc).isoformat(timespec="milliseconds")
+
+        bounds = (
+            f":updated_at >= {literal(timestamp(lower_bound))} AND "
+            f":updated_at < {literal(timestamp(upper_bound))}"
+        )
+        cursor: tuple[str, str] | None = None
+        while True:
+            where = bounds
+            if cursor is not None:
+                modified, row_id = map(literal, cursor)
+                where += (
+                    f" AND (:updated_at > {modified} OR "
+                    f"(:updated_at = {modified} AND :id > {row_id}))"
+                )
+            batch = await self.fetch_records(
+                endpoint,
+                limit=batch_size,
+                where_clause=where,
+                order_by=":updated_at, :id",
+                select_fields=[
+                    "*",
+                    ":id AS source_row_id",
+                    ":updated_at AS source_updated_at",
+                ],
+            )
+            if not batch:
+                return
+            tail = batch[-1]
+            next_cursor = (str(tail["source_updated_at"]), str(tail["source_row_id"]))
+            if next_cursor == cursor:
+                raise ValueError("SODA incremental cursor did not advance")
+            yield batch
+            cursor = next_cursor
+            if len(batch) < batch_size:
+                return
 
     @staticmethod
     def _build_date_where_clause(
@@ -261,7 +284,8 @@ class SODAClient:
         if start_date:
             clauses.append(f"{date_field} >= '{start_date}T00:00:00'")
         if end_date:
-            clauses.append(f"{date_field} < '{end_date}T23:59:59'")
+            next_day = date.fromisoformat(end_date) + timedelta(days=1)
+            clauses.append(f"{date_field} < '{next_day.isoformat()}T00:00:00'")
         return " AND ".join(clauses) if clauses else None
 
     async def _make_request(self, url: str) -> httpx.Response:

@@ -1,10 +1,12 @@
 """Job management service for handling scheduled jobs and executions."""
 
-import asyncio
+from copy import deepcopy
+from dataclasses import asdict
 from datetime import datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
-from sqlalchemy import and_, desc
+from sqlalchemy import and_, desc, text
 from sqlalchemy.orm import Session, joinedload
 
 from src.etl.soda_client import SODAClient
@@ -57,10 +59,13 @@ class JobService:
         created_jobs = []
 
         try:
+            session.execute(text("SELECT pg_advisory_xact_lock(784203616)"))
             default_jobs = get_default_jobs()
 
             for job_config in default_jobs:
-                existing = self._find_existing_default_job(session, job_config["job_type"])
+                existing = self._find_existing_default_job(
+                    session, job_config["job_type"]
+                )
 
                 if not existing:
                     next_run = None
@@ -156,7 +161,12 @@ class JobService:
         session = self.get_session()
 
         try:
-            job = session.query(ScheduledJob).filter_by(id=job_id).first()
+            job = (
+                session.query(ScheduledJob)
+                .filter_by(id=job_id)
+                .with_for_update()
+                .first()
+            )
             if not job:
                 return None
 
@@ -235,7 +245,7 @@ class JobService:
         """Get jobs that are due for execution."""
         session = self.get_session()
         try:
-            now = datetime.now()
+            now = datetime.utcnow()
             return (
                 session.query(ScheduledJob)
                 .filter(
@@ -251,15 +261,31 @@ class JobService:
             session.close()
 
     async def execute_job(
-        self, job_id: int, force: bool = False, override_config: dict[str, Any] = None
+        self,
+        job_id: int,
+        force: bool = False,
+        override_config: dict[str, Any] = None,
+        scheduled: bool = False,
     ) -> str:
         """Execute a job manually."""
         session = self.get_session()
 
         try:
-            job = session.query(ScheduledJob).filter_by(id=job_id).first()
+            job = (
+                session.query(ScheduledJob)
+                .filter_by(id=job_id)
+                .with_for_update()
+                .first()
+            )
             if not job:
                 raise ValueError(f"Job {job_id} not found")
+
+            if scheduled and (
+                not job.enabled
+                or job.next_run is None
+                or job.next_run > datetime.utcnow()
+            ):
+                raise ValueError("Scheduled occurrence is no longer due")
 
             # Check if job is already running
             running_execution = (
@@ -267,20 +293,22 @@ class JobService:
                 .filter(
                     and_(
                         JobExecution.job_id == job_id,
-                        JobExecution.status == JobStatus.RUNNING,
+                        JobExecution.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
                     )
                 )
                 .first()
             )
 
-            if running_execution and not force:
+            if running_execution:
                 raise ValueError(f"Job {job_id} is already running")
 
             # Create execution record
-            execution_id = f"exec_{job_id}_{int(datetime.now().timestamp())}"
-            config = override_config or job.config or {}
+            execution_id = f"exec_{job_id}_{uuid4().hex}"
+            config = (
+                override_config if override_config is not None else job.config or {}
+            )
 
-            trigger_type = "manual" if force or override_config else "scheduled"
+            trigger_type = "scheduled" if scheduled else "manual"
             execution_context = {
                 "trigger": {
                     "type": trigger_type,
@@ -301,6 +329,12 @@ class JobService:
             )
 
             session.add(execution)
+            # Move the schedule in the same transaction as enqueueing. A second
+            # scheduler cannot queue this occurrence after the row lock releases.
+            if job.enabled and job.recurrence_type != RecurrenceType.ONCE:
+                job.next_run = calculate_next_run(
+                    RecurrenceType(job.recurrence_type), job.cron_expression
+                )
             session.commit()
             session.refresh(execution)
 
@@ -311,8 +345,7 @@ class JobService:
                 f"Execution queued for job '{job.name}'",
             )
 
-            # Start background execution
-            asyncio.create_task(self._run_job_execution(execution.id, config))
+            # The dedicated worker claims this durable pending record.
 
             logger.info(f"Started execution {execution_id} for job {job.name}")
             return execution_id
@@ -324,7 +357,9 @@ class JobService:
         finally:
             session.close()
 
-    async def _run_job_execution(self, execution_id: int, config: dict[str, Any]):
+    async def _run_job_execution(
+        self, execution_id: int, config: dict[str, Any], lease_owner: str | None = None
+    ):
         """Run job execution in background."""
         session = self.get_session()
         execution: JobExecution | None = None
@@ -340,8 +375,15 @@ class JobService:
                 logger.error(f"Execution {execution_id} not found")
                 return
 
+            session.refresh(execution, with_for_update={"of": JobExecution})
+            if lease_owner is not None and (
+                execution.lease_owner != lease_owner
+                or execution.lease_expires_at is None
+                or execution.lease_expires_at <= datetime.utcnow()
+            ):
+                raise RuntimeError("Execution lease lost before start")
             job = execution.job
-            start_time = datetime.now()
+            start_time = datetime.utcnow()
 
             # Update execution status
             execution.status = JobStatus.RUNNING
@@ -387,10 +429,19 @@ class JobService:
                 database_service=self.db_service,
             )
 
+            def report_progress(progress):
+                self._merge_execution_context(
+                    session,
+                    execution,
+                    {"progress": {progress.name: asdict(progress)}},
+                )
+
             sync_result = await sync_service.sync(
                 endpoints=sync_params["endpoints"],
                 start_date=sync_params.get("start_date"),
                 end_date=sync_params.get("end_date"),
+                mode=sync_params.get("mode", "api"),
+                batch_callback=report_progress,
             )
 
             total_records = sync_result.total_records
@@ -408,8 +459,16 @@ class JobService:
                 )
                 self._append_execution_log(session, execution, message)
 
+            # Refuse to overwrite a replacement worker's execution record.
+            session.refresh(execution, with_for_update={"of": JobExecution})
+            if lease_owner is not None and (
+                execution.lease_owner != lease_owner
+                or execution.lease_expires_at is None
+                or execution.lease_expires_at <= datetime.utcnow()
+            ):
+                raise RuntimeError("Execution lease lost before completion")
             # Update execution as completed
-            end_time = datetime.now()
+            end_time = datetime.utcnow()
             duration = int((end_time - start_time).total_seconds())
 
             execution.status = JobStatus.COMPLETED
@@ -420,12 +479,7 @@ class JobService:
             execution.records_updated = total_updated
             execution.records_skipped = total_skipped
 
-            # Update job's last run and next run
             job.last_run = end_time
-            if job.enabled and job.recurrence_type != RecurrenceType.ONCE:
-                job.next_run = calculate_next_run(
-                    RecurrenceType(job.recurrence_type), job.cron_expression, end_time
-                )
 
             session.commit()
 
@@ -436,7 +490,11 @@ class JobService:
                     "result": {
                         "completed_at": end_time.isoformat() + "Z",
                         "duration_seconds": duration,
+                        "source_manifests": sync_result.source_manifests,
+                        "timing_seconds": sync_result.timing_seconds,
                         "totals": {
+                            "unchanged": sync_result.total_unchanged,
+                            "rejected": sync_result.total_rejected,
                             "processed": total_records,
                             "inserted": total_inserted,
                             "updated": total_updated,
@@ -461,15 +519,24 @@ class JobService:
             )
 
         except Exception as e:
+            session.rollback()
             if execution:
+                session.refresh(execution, with_for_update={"of": JobExecution})
+                if lease_owner is not None and (
+                    execution.lease_owner != lease_owner
+                    or execution.lease_expires_at is None
+                    or execution.lease_expires_at <= datetime.utcnow()
+                ):
+                    logger.error("Execution lease lost", execution_id=execution_id)
+                    return
                 execution.status = JobStatus.FAILED
-                execution.completed_at = datetime.now()
+                execution.completed_at = datetime.utcnow()
                 execution.error_message = str(e)
                 execution.error_details = {"exception": type(e).__name__}
 
                 if execution.started_at:
                     duration = int(
-                        (datetime.now() - execution.started_at).total_seconds()
+                        (datetime.utcnow() - execution.started_at).total_seconds()
                     )
                     execution.duration_seconds = duration
 
@@ -511,11 +578,7 @@ class JobService:
         level: str = "info",
     ) -> None:
         """Append a structured log entry to the execution context."""
-        context = (
-            execution.execution_context
-            if isinstance(execution.execution_context, dict)
-            else {}
-        )
+        context = deepcopy(execution.execution_context or {})
         logs = context.get("logs") if isinstance(context.get("logs"), list) else []
 
         logs.append(
@@ -526,7 +589,8 @@ class JobService:
             }
         )
 
-        context["logs"] = logs
+        context = dict(context)
+        context["logs"] = logs[-200:]
         execution.execution_context = context
         session.add(execution)
         session.commit()
@@ -570,21 +634,28 @@ class JobService:
         self, job_type: str, config: dict[str, Any]
     ) -> dict[str, Any]:
         """Build sync parameters based on job type and config."""
-        now = datetime.now()
+        now = datetime.utcnow()
 
         if job_type == JobType.FULL_REFRESH:
             return {
-                "endpoints": config.get(
-                    "endpoints", ["crashes", "people", "vehicles", "fatalities"]
-                ),
+                "mode": "full",
+                "endpoints": config.get("endpoints")
+                or ["crashes", "people", "vehicles", "fatalities"],
                 "start_date": None,
                 "end_date": None,
                 "force": True,
             }
+        elif job_type == JobType.INCREMENTAL or config.get("mode") == "incremental":
+            return {
+                "endpoints": config.get("endpoints")
+                or ["crashes", "people", "vehicles", "fatalities"],
+                "mode": "incremental",
+            }
         elif job_type in {JobType.LAST_30_DAYS_CORE_DATA, "last_30_days_crashes"}:
             start_date = (now - timedelta(days=30)).strftime("%Y-%m-%d")
             return {
-                "endpoints": config.get("endpoints", ["crashes", "people", "vehicles"]),
+                "endpoints": config.get("endpoints")
+                or ["crashes", "people", "vehicles"],
                 "start_date": start_date,
                 "end_date": now.strftime("%Y-%m-%d"),
                 "force": config.get("force", True),
@@ -614,7 +685,7 @@ class JobService:
                 "force": config.get("force", True),
             }
         elif job_type == JobType.CUSTOM:
-            endpoints = config.get("endpoints", ["crashes"])
+            endpoints = config.get("endpoints") or ["crashes"]
             params = {"endpoints": endpoints, "force": config.get("force", False)}
 
             # Handle date ranges
@@ -644,7 +715,7 @@ class JobService:
     def _find_existing_default_job(
         self, session: Session, job_type: str
     ) -> ScheduledJob | None:
-        """Find an existing job matching a default template, including legacy aliases."""
+        """Find a default job, including legacy aliases."""
         job_types = self.LEGACY_JOB_TYPE_ALIASES.get(job_type, {job_type})
         return (
             session.query(ScheduledJob)
@@ -656,7 +727,7 @@ class JobService:
     def _reconcile_default_job(
         self, job: ScheduledJob, template: dict[str, Any]
     ) -> None:
-        """Apply one-time migrations for legacy default jobs without resetting operator changes."""
+        """Migrate legacy defaults while preserving operator changes."""
         if (
             template["job_type"] == JobType.LAST_30_DAYS_CORE_DATA
             and job.job_type == self.LEGACY_CORE_JOB_TYPE
@@ -664,9 +735,30 @@ class JobService:
             self._migrate_legacy_core_job(job, template)
             return
 
+        previous_names = {
+            JobType.LAST_30_DAYS_CORE_DATA: "Last 30 Days - Core Crash Data",
+            JobType.LAST_6_MONTHS_FATALITIES: "Last 6 Months - Vision Zero Fatalities",
+        }
+        # Migrate only recognisable untouched defaults. Explicit modes and
+        # operator-created/customised jobs retain their date-window semantics.
         if (
-            template["job_type"] in self.LEGACY_JOB_TYPES_TO_DISABLE
-            and self._should_disable_legacy_child_job(job)
+            job.job_type in previous_names
+            and job.name == previous_names[job.job_type]
+            and (job.created_by or "system") == "system"
+            and "mode" not in (job.config or {})
+            and (job.config or {}).get("date_range_days")
+            == template["config"].get("date_range_days")
+            and (job.config or {}).get("endpoints")
+            == template["config"].get("endpoints")
+        ):
+            job.config = {**job.config, "mode": "incremental"}
+            job.name = template["name"]
+            job.description = template["description"]
+
+        if template[
+            "job_type"
+        ] in self.LEGACY_JOB_TYPES_TO_DISABLE and self._should_disable_legacy_child_job(
+            job
         ):
             self._disable_legacy_child_job(job)
 
@@ -702,7 +794,7 @@ class JobService:
             )
 
     def _should_disable_legacy_child_job(self, job: ScheduledJob) -> bool:
-        """Disable each legacy dependency job once, but preserve later operator edits."""
+        """Disable legacy dependencies once; preserve later operator edits."""
         return (
             job.job_type in self.LEGACY_JOB_TYPES_TO_DISABLE
             and job.enabled
@@ -766,7 +858,7 @@ class JobService:
     ) -> dict[str, Any]:
         """Delete all data from a table with optional date filtering."""
         session = self.get_session()
-        start_time = datetime.now()
+        start_time = datetime.utcnow()
 
         try:
             # Map table names to models
@@ -799,7 +891,7 @@ class JobService:
             session.commit()
 
             # Log deletion
-            end_time = datetime.now()
+            end_time = datetime.utcnow()
             execution_time = (end_time - start_time).total_seconds()
 
             deletion_log = DataDeletionLog(
@@ -841,7 +933,7 @@ class JobService:
             )
 
             # Failed jobs in last 24 hours
-            yesterday = datetime.now() - timedelta(hours=24)
+            yesterday = datetime.utcnow() - timedelta(hours=24)
             failed_jobs_24h = (
                 session.query(JobExecution)
                 .filter(

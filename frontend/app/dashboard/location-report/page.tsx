@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { LocationReportMap } from "./components/LocationReportMap";
 import { ReportStats } from "./components/ReportStats";
 import { CausesTable } from "./components/CausesTable";
+import { TimingHeatmap, RoadUserTable } from "./components/ReportPatterns";
 import { TrendSparklines } from "./components/TrendSparklines";
 import {
   fetchLocationReport,
@@ -66,6 +67,7 @@ export default function LocationReportPage() {
   const [report, setReport] = useState<LocationReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exportApiKey, setExportApiKey] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportOptions, setShowExportOptions] = useState(false);
@@ -314,19 +316,12 @@ export default function LocationReportPage() {
     setExportError(null);
 
     try {
-      const { blob, filename } = await exportLocationReport({
+      const url = await exportLocationReport({
         ...request,
         datasets: exportDatasets,
-      });
+      }, exportApiKey);
 
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      window.location.assign(url);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Failed to export data");
     } finally {
@@ -731,6 +726,11 @@ export default function LocationReportPage() {
                         </label>
                       ))}
                     </div>
+                    <label className="block mt-3 text-xs text-gray-600 dark:text-gray-300">
+                      API key (if required by this server)
+                      <input type="password" autoComplete="off" value={exportApiKey} onChange={(event) => setExportApiKey(event.target.value)} className="mt-1 w-full rounded border p-2 bg-white dark:bg-gray-900" />
+                      <span className="block mt-1">Kept only for this page session.</span>
+                    </label>
                     {exportError && (
                       <p className="mt-2 text-xs text-red-600 dark:text-red-400">
                         {exportError}
@@ -745,13 +745,14 @@ export default function LocationReportPage() {
                           : "bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
                       }`}
                     >
-                      {exporting ? "Exporting..." : "Download Export"}
+                      {exporting ? "Preparing export..." : "Download Export"}
                     </button>
                   </div>
                 )}
               </div>
             )}
           </div>
+          {report?.map_truncated && <p className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" role="status">Map shows the latest {report.crashes_geojson.features.length.toLocaleString()} of {report.stats.total_crashes.toLocaleString()} crashes. Statistics and charts include the full selection.</p>}
           <LocationReportMap
             mode={selectionMode}
             selectedCenter={selectedCenter}
@@ -771,13 +772,16 @@ export default function LocationReportPage() {
           <>
             {/* Stats Cards */}
             <ReportStats stats={report.stats} />
+            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Injury and fatality summaries use crash records. Road-user counts and cost estimates use linked person records, which can differ as the source datasets are revised.</p>
+            <TimingHeatmap data={report.hour_day_counts || []} />
+            <RoadUserTable data={report.road_user_severity || []} />
 
             {/* Two-column layout for trends and causes */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
               {/* Trend Sparklines */}
               <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-                  Monthly Trends (Last 12 Months)
+                  Monthly Trends — Selected Period
                 </h2>
                 <TrendSparklines data={report.monthly_trends} />
               </div>

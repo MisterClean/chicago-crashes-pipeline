@@ -1,0 +1,8 @@
+# Select this config file for the dedicated export worker service.
+[build]
+dockerfilePath = "docker/Dockerfile"
+
+[deploy]
+startCommand = "python -m src.worker --lane exports"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

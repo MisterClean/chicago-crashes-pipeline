@@ -1,0 +1,984 @@
+{
+  "crashes": {
+    "dataset_id": "85ca-t3if",
+    "metadata_url": "https://data.cityofchicago.org/api/views/85ca-t3if.json",
+    "columns": [
+      {
+        "csv_header": "CRASH_RECORD_ID",
+        "api_field": "crash_record_id",
+        "type": "text"
+      },
+      {
+        "csv_header": "CRASH_DATE_EST_I",
+        "api_field": "crash_date_est_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "CRASH_DATE",
+        "api_field": "crash_date",
+        "type": "calendar_date"
+      },
+      {
+        "csv_header": "POSTED_SPEED_LIMIT",
+        "api_field": "posted_speed_limit",
+        "type": "number"
+      },
+      {
+        "csv_header": "TRAFFIC_CONTROL_DEVICE",
+        "api_field": "traffic_control_device",
+        "type": "text"
+      },
+      {
+        "csv_header": "DEVICE_CONDITION",
+        "api_field": "device_condition",
+        "type": "text"
+      },
+      {
+        "csv_header": "WEATHER_CONDITION",
+        "api_field": "weather_condition",
+        "type": "text"
+      },
+      {
+        "csv_header": "LIGHTING_CONDITION",
+        "api_field": "lighting_condition",
+        "type": "text"
+      },
+      {
+        "csv_header": "FIRST_CRASH_TYPE",
+        "api_field": "first_crash_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "TRAFFICWAY_TYPE",
+        "api_field": "trafficway_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "LANE_CNT",
+        "api_field": "lane_cnt",
+        "type": "number"
+      },
+      {
+        "csv_header": "ALIGNMENT",
+        "api_field": "alignment",
+        "type": "text"
+      },
+      {
+        "csv_header": "ROADWAY_SURFACE_COND",
+        "api_field": "roadway_surface_cond",
+        "type": "text"
+      },
+      {
+        "csv_header": "ROAD_DEFECT",
+        "api_field": "road_defect",
+        "type": "text"
+      },
+      {
+        "csv_header": "REPORT_TYPE",
+        "api_field": "report_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "CRASH_TYPE",
+        "api_field": "crash_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "INTERSECTION_RELATED_I",
+        "api_field": "intersection_related_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "NOT_RIGHT_OF_WAY_I",
+        "api_field": "private_property_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "HIT_AND_RUN_I",
+        "api_field": "hit_and_run_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "DAMAGE",
+        "api_field": "damage",
+        "type": "text"
+      },
+      {
+        "csv_header": "DATE_POLICE_NOTIFIED",
+        "api_field": "date_police_notified",
+        "type": "calendar_date"
+      },
+      {
+        "csv_header": "PRIM_CONTRIBUTORY_CAUSE",
+        "api_field": "prim_contributory_cause",
+        "type": "text"
+      },
+      {
+        "csv_header": "SEC_CONTRIBUTORY_CAUSE",
+        "api_field": "sec_contributory_cause",
+        "type": "text"
+      },
+      {
+        "csv_header": "STREET_NO",
+        "api_field": "street_no",
+        "type": "number"
+      },
+      {
+        "csv_header": "STREET_DIRECTION",
+        "api_field": "street_direction",
+        "type": "text"
+      },
+      {
+        "csv_header": "STREET_NAME",
+        "api_field": "street_name",
+        "type": "text"
+      },
+      {
+        "csv_header": "BEAT_OF_OCCURRENCE",
+        "api_field": "beat_of_occurrence",
+        "type": "number"
+      },
+      {
+        "csv_header": "PHOTOS_TAKEN_I",
+        "api_field": "photos_taken_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "STATEMENTS_TAKEN_I",
+        "api_field": "statements_taken_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "DOORING_I",
+        "api_field": "dooring_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "WORK_ZONE_I",
+        "api_field": "work_zone_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "WORK_ZONE_TYPE",
+        "api_field": "work_zone_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "WORKERS_PRESENT_I",
+        "api_field": "workers_present_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "NUM_UNITS",
+        "api_field": "num_units",
+        "type": "number"
+      },
+      {
+        "csv_header": "CRASH_MONTH",
+        "api_field": "crash_month",
+        "type": "number"
+      },
+      {
+        "csv_header": "MOST_SEVERE_INJURY",
+        "api_field": "most_severe_injury",
+        "type": "text"
+      },
+      {
+        "csv_header": "INJURIES_TOTAL",
+        "api_field": "injuries_total",
+        "type": "number"
+      },
+      {
+        "csv_header": "INJURIES_FATAL",
+        "api_field": "injuries_fatal",
+        "type": "number"
+      },
+      {
+        "csv_header": "INJURIES_INCAPACITATING",
+        "api_field": "injuries_incapacitating",
+        "type": "number"
+      },
+      {
+        "csv_header": "INJURIES_NON_INCAPACITATING",
+        "api_field": "injuries_non_incapacitating",
+        "type": "number"
+      },
+      {
+        "csv_header": "INJURIES_REPORTED_NOT_EVIDENT",
+        "api_field": "injuries_reported_not_evident",
+        "type": "number"
+      },
+      {
+        "csv_header": "INJURIES_NO_INDICATION",
+        "api_field": "injuries_no_indication",
+        "type": "number"
+      },
+      {
+        "csv_header": "INJURIES_UNKNOWN",
+        "api_field": "injuries_unknown",
+        "type": "number"
+      },
+      {
+        "csv_header": "CRASH_HOUR",
+        "api_field": "crash_hour",
+        "type": "number"
+      },
+      {
+        "csv_header": "CRASH_DAY_OF_WEEK",
+        "api_field": "crash_day_of_week",
+        "type": "number"
+      },
+      {
+        "csv_header": "IDOT_CONTROL_NO",
+        "api_field": "idot_control_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "LATITUDE",
+        "api_field": "latitude",
+        "type": "number"
+      },
+      {
+        "csv_header": "LONGITUDE",
+        "api_field": "longitude",
+        "type": "number"
+      },
+      {
+        "csv_header": "LOCATION",
+        "api_field": "location",
+        "type": "point"
+      }
+    ],
+    "csv_download_url": "https://data.cityofchicago.org/api/views/85ca-t3if/rows.csv?accessType=DOWNLOAD",
+    "observed_csv_headers": [
+      "CRASH_RECORD_ID",
+      "CRASH_DATE_EST_I",
+      "CRASH_DATE",
+      "POSTED_SPEED_LIMIT",
+      "TRAFFIC_CONTROL_DEVICE",
+      "DEVICE_CONDITION",
+      "WEATHER_CONDITION",
+      "LIGHTING_CONDITION",
+      "FIRST_CRASH_TYPE",
+      "TRAFFICWAY_TYPE",
+      "LANE_CNT",
+      "ALIGNMENT",
+      "ROADWAY_SURFACE_COND",
+      "ROAD_DEFECT",
+      "REPORT_TYPE",
+      "CRASH_TYPE",
+      "INTERSECTION_RELATED_I",
+      "NOT_RIGHT_OF_WAY_I",
+      "HIT_AND_RUN_I",
+      "DAMAGE",
+      "DATE_POLICE_NOTIFIED",
+      "PRIM_CONTRIBUTORY_CAUSE",
+      "SEC_CONTRIBUTORY_CAUSE",
+      "STREET_NO",
+      "STREET_DIRECTION",
+      "STREET_NAME",
+      "BEAT_OF_OCCURRENCE",
+      "PHOTOS_TAKEN_I",
+      "STATEMENTS_TAKEN_I",
+      "DOORING_I",
+      "WORK_ZONE_I",
+      "WORK_ZONE_TYPE",
+      "WORKERS_PRESENT_I",
+      "NUM_UNITS",
+      "CRASH_MONTH",
+      "MOST_SEVERE_INJURY",
+      "INJURIES_TOTAL",
+      "INJURIES_FATAL",
+      "INJURIES_INCAPACITATING",
+      "INJURIES_NON_INCAPACITATING",
+      "INJURIES_REPORTED_NOT_EVIDENT",
+      "INJURIES_NO_INDICATION",
+      "INJURIES_UNKNOWN",
+      "CRASH_HOUR",
+      "CRASH_DAY_OF_WEEK",
+      "IDOT_CONTROL_NO",
+      "LATITUDE",
+      "LONGITUDE",
+      "LOCATION"
+    ],
+    "unmapped_csv_headers": []
+  },
+  "people": {
+    "dataset_id": "u6pd-qa9d",
+    "metadata_url": "https://data.cityofchicago.org/api/views/u6pd-qa9d.json",
+    "columns": [
+      {
+        "csv_header": "PERSON_ID",
+        "api_field": "person_id",
+        "type": "text"
+      },
+      {
+        "csv_header": "PERSON_TYPE",
+        "api_field": "person_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "CRASH_RECORD_ID",
+        "api_field": "crash_record_id",
+        "type": "text"
+      },
+      {
+        "csv_header": "VEHICLE_ID",
+        "api_field": "vehicle_id",
+        "type": "text"
+      },
+      {
+        "csv_header": "CRASH_DATE",
+        "api_field": "crash_date",
+        "type": "calendar_date"
+      },
+      {
+        "csv_header": "SEAT_NO",
+        "api_field": "seat_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "CITY",
+        "api_field": "city",
+        "type": "text"
+      },
+      {
+        "csv_header": "STATE",
+        "api_field": "state",
+        "type": "text"
+      },
+      {
+        "csv_header": "ZIPCODE",
+        "api_field": "zipcode",
+        "type": "text"
+      },
+      {
+        "csv_header": "SEX",
+        "api_field": "sex",
+        "type": "text"
+      },
+      {
+        "csv_header": "AGE",
+        "api_field": "age",
+        "type": "number"
+      },
+      {
+        "csv_header": "DRIVERS_LICENSE_STATE",
+        "api_field": "drivers_license_state",
+        "type": "text"
+      },
+      {
+        "csv_header": "DRIVERS_LICENSE_CLASS",
+        "api_field": "drivers_license_class",
+        "type": "text"
+      },
+      {
+        "csv_header": "SAFETY_EQUIPMENT",
+        "api_field": "safety_equipment",
+        "type": "text"
+      },
+      {
+        "csv_header": "AIRBAG_DEPLOYED",
+        "api_field": "airbag_deployed",
+        "type": "text"
+      },
+      {
+        "csv_header": "EJECTION",
+        "api_field": "ejection",
+        "type": "text"
+      },
+      {
+        "csv_header": "INJURY_CLASSIFICATION",
+        "api_field": "injury_classification",
+        "type": "text"
+      },
+      {
+        "csv_header": "HOSPITAL",
+        "api_field": "hospital",
+        "type": "text"
+      },
+      {
+        "csv_header": "EMS_AGENCY",
+        "api_field": "ems_agency",
+        "type": "text"
+      },
+      {
+        "csv_header": "EMS_RUN_NO",
+        "api_field": "ems_run_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "DRIVER_ACTION",
+        "api_field": "driver_action",
+        "type": "text"
+      },
+      {
+        "csv_header": "DRIVER_VISION",
+        "api_field": "driver_vision",
+        "type": "text"
+      },
+      {
+        "csv_header": "PHYSICAL_CONDITION",
+        "api_field": "physical_condition",
+        "type": "text"
+      },
+      {
+        "csv_header": "PEDPEDAL_ACTION",
+        "api_field": "pedpedal_action",
+        "type": "text"
+      },
+      {
+        "csv_header": "PEDPEDAL_VISIBILITY",
+        "api_field": "pedpedal_visibility",
+        "type": "text"
+      },
+      {
+        "csv_header": "PEDPEDAL_LOCATION",
+        "api_field": "pedpedal_location",
+        "type": "text"
+      },
+      {
+        "csv_header": "BAC_RESULT",
+        "api_field": "bac_result",
+        "type": "text"
+      },
+      {
+        "csv_header": "BAC_RESULT VALUE",
+        "api_field": "bac_result_value",
+        "type": "number"
+      },
+      {
+        "csv_header": "CELL_PHONE_USE",
+        "api_field": "cell_phone_use",
+        "type": "text"
+      }
+    ],
+    "csv_download_url": "https://data.cityofchicago.org/api/views/u6pd-qa9d/rows.csv?accessType=DOWNLOAD",
+    "observed_csv_headers": [
+      "PERSON_ID",
+      "PERSON_TYPE",
+      "CRASH_RECORD_ID",
+      "VEHICLE_ID",
+      "CRASH_DATE",
+      "SEAT_NO",
+      "CITY",
+      "STATE",
+      "ZIPCODE",
+      "SEX",
+      "AGE",
+      "DRIVERS_LICENSE_STATE",
+      "DRIVERS_LICENSE_CLASS",
+      "SAFETY_EQUIPMENT",
+      "AIRBAG_DEPLOYED",
+      "EJECTION",
+      "INJURY_CLASSIFICATION",
+      "HOSPITAL",
+      "EMS_AGENCY",
+      "EMS_RUN_NO",
+      "DRIVER_ACTION",
+      "DRIVER_VISION",
+      "PHYSICAL_CONDITION",
+      "PEDPEDAL_ACTION",
+      "PEDPEDAL_VISIBILITY",
+      "PEDPEDAL_LOCATION",
+      "BAC_RESULT",
+      "BAC_RESULT VALUE",
+      "CELL_PHONE_USE"
+    ],
+    "unmapped_csv_headers": []
+  },
+  "vehicles": {
+    "dataset_id": "68nd-jvt3",
+    "metadata_url": "https://data.cityofchicago.org/api/views/68nd-jvt3.json",
+    "columns": [
+      {
+        "csv_header": "CRASH_UNIT_ID",
+        "api_field": "crash_unit_id",
+        "type": "number"
+      },
+      {
+        "csv_header": "CRASH_RECORD_ID",
+        "api_field": "crash_record_id",
+        "type": "text"
+      },
+      {
+        "csv_header": "CRASH_DATE",
+        "api_field": "crash_date",
+        "type": "calendar_date"
+      },
+      {
+        "csv_header": "UNIT_NO",
+        "api_field": "unit_no",
+        "type": "number"
+      },
+      {
+        "csv_header": "UNIT_TYPE",
+        "api_field": "unit_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "NUM_PASSENGERS",
+        "api_field": "num_passengers",
+        "type": "number"
+      },
+      {
+        "csv_header": "VEHICLE_ID",
+        "api_field": "vehicle_id",
+        "type": "number"
+      },
+      {
+        "csv_header": "CMRC_VEH_I",
+        "api_field": "cmrc_veh_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "MAKE",
+        "api_field": "make",
+        "type": "text"
+      },
+      {
+        "csv_header": "MODEL",
+        "api_field": "model",
+        "type": "text"
+      },
+      {
+        "csv_header": "LIC_PLATE_STATE",
+        "api_field": "lic_plate_state",
+        "type": "text"
+      },
+      {
+        "csv_header": "VEHICLE_YEAR",
+        "api_field": "vehicle_year",
+        "type": "number"
+      },
+      {
+        "csv_header": "VEHICLE_DEFECT",
+        "api_field": "vehicle_defect",
+        "type": "text"
+      },
+      {
+        "csv_header": "VEHICLE_TYPE",
+        "api_field": "vehicle_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "VEHICLE_USE",
+        "api_field": "vehicle_use",
+        "type": "text"
+      },
+      {
+        "csv_header": "TRAVEL_DIRECTION",
+        "api_field": "travel_direction",
+        "type": "text"
+      },
+      {
+        "csv_header": "MANEUVER",
+        "api_field": "maneuver",
+        "type": "text"
+      },
+      {
+        "csv_header": "TOWED_I",
+        "api_field": "towed_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "FIRE_I",
+        "api_field": "fire_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "OCCUPANT_CNT",
+        "api_field": "occupant_cnt",
+        "type": "number"
+      },
+      {
+        "csv_header": "EXCEED_SPEED_LIMIT_I",
+        "api_field": "exceed_speed_limit_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "TOWED_BY",
+        "api_field": "towed_by",
+        "type": "text"
+      },
+      {
+        "csv_header": "TOWED_TO",
+        "api_field": "towed_to",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_00_I",
+        "api_field": "area_00_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_01_I",
+        "api_field": "area_01_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_02_I",
+        "api_field": "area_02_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_03_I",
+        "api_field": "area_03_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_04_I",
+        "api_field": "area_04_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_05_I",
+        "api_field": "area_05_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_06_I",
+        "api_field": "area_06_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_07_I",
+        "api_field": "area_07_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_08_I",
+        "api_field": "area_08_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_09_I",
+        "api_field": "area_09_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_10_I",
+        "api_field": "area_10_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_11_I",
+        "api_field": "area_11_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_12_I",
+        "api_field": "area_12_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "AREA_99_I",
+        "api_field": "area_99_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "FIRST_CONTACT_POINT",
+        "api_field": "first_contact_point",
+        "type": "text"
+      },
+      {
+        "csv_header": "CMV_ID",
+        "api_field": "cmv_id",
+        "type": "number"
+      },
+      {
+        "csv_header": "USDOT_NO",
+        "api_field": "usdot_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "CCMC_NO",
+        "api_field": "ccmc_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "ILCC_NO",
+        "api_field": "ilcc_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "COMMERCIAL_SRC",
+        "api_field": "commercial_src",
+        "type": "text"
+      },
+      {
+        "csv_header": "GVWR",
+        "api_field": "gvwr",
+        "type": "text"
+      },
+      {
+        "csv_header": "CARRIER_NAME",
+        "api_field": "carrier_name",
+        "type": "text"
+      },
+      {
+        "csv_header": "CARRIER_STATE",
+        "api_field": "carrier_state",
+        "type": "text"
+      },
+      {
+        "csv_header": "CARRIER_CITY",
+        "api_field": "carrier_city",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_PLACARDS_I",
+        "api_field": "hazmat_placards_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_NAME",
+        "api_field": "hazmat_name",
+        "type": "text"
+      },
+      {
+        "csv_header": "UN_NO",
+        "api_field": "un_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_PRESENT_I",
+        "api_field": "hazmat_present_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_REPORT_I",
+        "api_field": "hazmat_report_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_REPORT_NO",
+        "api_field": "hazmat_report_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "MCS_REPORT_I",
+        "api_field": "mcs_report_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "MCS_REPORT_NO",
+        "api_field": "mcs_report_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_VIO_CAUSE_CRASH_I",
+        "api_field": "hazmat_vio_cause_crash_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "MCS_VIO_CAUSE_CRASH_I",
+        "api_field": "mcs_vio_cause_crash_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "IDOT_PERMIT_NO",
+        "api_field": "idot_permit_no",
+        "type": "text"
+      },
+      {
+        "csv_header": "WIDE_LOAD_I",
+        "api_field": "wide_load_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "TRAILER1_WIDTH",
+        "api_field": "trailer1_width",
+        "type": "text"
+      },
+      {
+        "csv_header": "TRAILER2_WIDTH",
+        "api_field": "trailer2_width",
+        "type": "text"
+      },
+      {
+        "csv_header": "TRAILER1_LENGTH",
+        "api_field": "trailer1_length",
+        "type": "number"
+      },
+      {
+        "csv_header": "TRAILER2_LENGTH",
+        "api_field": "trailer2_length",
+        "type": "number"
+      },
+      {
+        "csv_header": "TOTAL_VEHICLE_LENGTH",
+        "api_field": "total_vehicle_length",
+        "type": "number"
+      },
+      {
+        "csv_header": "AXLE_CNT",
+        "api_field": "axle_cnt",
+        "type": "number"
+      },
+      {
+        "csv_header": "VEHICLE_CONFIG",
+        "api_field": "vehicle_config",
+        "type": "text"
+      },
+      {
+        "csv_header": "CARGO_BODY_TYPE",
+        "api_field": "cargo_body_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "LOAD_TYPE",
+        "api_field": "load_type",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_OUT_OF_SERVICE_I",
+        "api_field": "hazmat_out_of_service_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "MCS_OUT_OF_SERVICE_I",
+        "api_field": "mcs_out_of_service_i",
+        "type": "text"
+      },
+      {
+        "csv_header": "HAZMAT_CLASS",
+        "api_field": "hazmat_class",
+        "type": "text"
+      }
+    ],
+    "csv_download_url": "https://data.cityofchicago.org/api/views/68nd-jvt3/rows.csv?accessType=DOWNLOAD",
+    "observed_csv_headers": [
+      "CRASH_UNIT_ID",
+      "CRASH_RECORD_ID",
+      "CRASH_DATE",
+      "UNIT_NO",
+      "UNIT_TYPE",
+      "NUM_PASSENGERS",
+      "VEHICLE_ID",
+      "CMRC_VEH_I",
+      "MAKE",
+      "MODEL",
+      "LIC_PLATE_STATE",
+      "VEHICLE_YEAR",
+      "VEHICLE_DEFECT",
+      "VEHICLE_TYPE",
+      "VEHICLE_USE",
+      "TRAVEL_DIRECTION",
+      "MANEUVER",
+      "TOWED_I",
+      "FIRE_I",
+      "OCCUPANT_CNT",
+      "EXCEED_SPEED_LIMIT_I",
+      "TOWED_BY",
+      "TOWED_TO",
+      "AREA_00_I",
+      "AREA_01_I",
+      "AREA_02_I",
+      "AREA_03_I",
+      "AREA_04_I",
+      "AREA_05_I",
+      "AREA_06_I",
+      "AREA_07_I",
+      "AREA_08_I",
+      "AREA_09_I",
+      "AREA_10_I",
+      "AREA_11_I",
+      "AREA_12_I",
+      "AREA_99_I",
+      "FIRST_CONTACT_POINT",
+      "CMV_ID",
+      "USDOT_NO",
+      "CCMC_NO",
+      "ILCC_NO",
+      "COMMERCIAL_SRC",
+      "GVWR",
+      "CARRIER_NAME",
+      "CARRIER_STATE",
+      "CARRIER_CITY",
+      "HAZMAT_PLACARDS_I",
+      "HAZMAT_NAME",
+      "UN_NO",
+      "HAZMAT_PRESENT_I",
+      "HAZMAT_REPORT_I",
+      "HAZMAT_REPORT_NO",
+      "MCS_REPORT_I",
+      "MCS_REPORT_NO",
+      "HAZMAT_VIO_CAUSE_CRASH_I",
+      "MCS_VIO_CAUSE_CRASH_I",
+      "IDOT_PERMIT_NO",
+      "WIDE_LOAD_I",
+      "TRAILER1_WIDTH",
+      "TRAILER2_WIDTH",
+      "TRAILER1_LENGTH",
+      "TRAILER2_LENGTH",
+      "TOTAL_VEHICLE_LENGTH",
+      "AXLE_CNT",
+      "VEHICLE_CONFIG",
+      "CARGO_BODY_TYPE",
+      "LOAD_TYPE",
+      "HAZMAT_OUT_OF_SERVICE_I",
+      "MCS_OUT_OF_SERVICE_I",
+      "HAZMAT_CLASS"
+    ],
+    "unmapped_csv_headers": []
+  },
+  "fatalities": {
+    "dataset_id": "gzaz-isa6",
+    "metadata_url": "https://data.cityofchicago.org/api/views/gzaz-isa6.json",
+    "columns": [
+      {
+        "csv_header": "Person_ID",
+        "api_field": "person_id",
+        "type": "text"
+      },
+      {
+        "csv_header": "Crash_Date",
+        "api_field": "crash_date",
+        "type": "calendar_date"
+      },
+      {
+        "csv_header": "Crash_Location",
+        "api_field": "crash_location",
+        "type": "text"
+      },
+      {
+        "csv_header": "Victim",
+        "api_field": "victim",
+        "type": "text"
+      },
+      {
+        "csv_header": "Crash_Circumstances",
+        "api_field": "crash_circumstances",
+        "type": "text"
+      },
+      {
+        "csv_header": "Longitude",
+        "api_field": "longitude",
+        "type": "number"
+      },
+      {
+        "csv_header": "Latitude",
+        "api_field": "latitude",
+        "type": "number"
+      },
+      {
+        "csv_header": "Location",
+        "api_field": "geocoded_column",
+        "type": "point"
+      }
+    ],
+    "csv_download_url": "https://data.cityofchicago.org/api/views/gzaz-isa6/rows.csv?accessType=DOWNLOAD",
+    "observed_csv_headers": [
+      "Person_ID",
+      "Crash_Date",
+      "Crash_Location",
+      "Victim",
+      "Crash_Circumstances",
+      "Longitude",
+      "Latitude",
+      "Location"
+    ],
+    "unmapped_csv_headers": []
+  }
+}

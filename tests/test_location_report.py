@@ -123,7 +123,9 @@ class TestLocationReportChildrenInjured:
         mock_session.execute = mock_execute
 
         # Make request with radius query
-        with patch("api.routers.dashboard.get_db", return_value=mock_session):
+        from src.api.routers.dashboard import get_db
+        app.dependency_overrides[get_db] = lambda: mock_session
+        try:
             response = client.post(
                 "/dashboard/location-report",
                 json={
@@ -133,13 +135,14 @@ class TestLocationReportChildrenInjured:
                 }
             )
 
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+
         # The endpoint should return 200 and include children_injured
         # Note: This may fail with actual DB connection issues in test environment
         # The important thing is that the schema includes the field
-        if response.status_code == 200:
-            data = response.json()
-            assert "stats" in data
-            assert "children_injured" in data["stats"]
+        assert response.status_code == 200
+        assert response.json()["stats"]["children_injured"] == 7
 
 
 class TestChildrenInjuredDataIntegrity:
@@ -209,3 +212,66 @@ class TestChildrenInjuredDataIntegrity:
 
         # children_injured should default to 0
         assert stats.children_injured == 0
+
+
+class TestReportMonthlyRange:
+    def test_historical_range_zero_fills_missing_months(self):
+        from datetime import datetime
+        from types import SimpleNamespace
+        from api.routers.dashboard import _fill_report_months
+
+        points = _fill_report_months(
+            [SimpleNamespace(month="2020-02", crashes=4, injuries=2, fatalities=1)],
+            datetime(2020, 1, 1), datetime(2020, 3, 31, 23, 59, 59, 999999),
+            now=datetime(2026, 9, 1),
+        )
+        assert [point.month for point in points] == ["2020-01", "2020-02", "2020-03"]
+        assert [point.crashes for point in points] == [0, 4, 0]
+        assert not any(point.partial for point in points)
+
+    def test_partial_boundaries_and_current_month(self):
+        from datetime import datetime
+        from api.routers.dashboard import _fill_report_months
+
+        points = _fill_report_months([], datetime(2026, 7, 15), datetime(2026, 9, 30), now=datetime(2026, 9, 4))
+        assert [point.partial for point in points] == [True, False, True]
+        assert sum(point.crashes for point in points) == 0
+
+    def test_empty_unbounded_selection(self):
+        from api.routers.dashboard import _fill_report_months
+        assert _fill_report_months([], None, None) == []
+
+
+@pytest.mark.asyncio
+async def test_report_patterns_use_full_filtered_selection():
+    from types import SimpleNamespace
+    from api.routers.dashboard import LocationReportRequest, get_location_report
+
+    queries = []
+    db = MagicMock()
+    def execute(query, params=None):
+        sql = str(query)
+        queries.append((sql, params))
+        result = MagicMock()
+        result.fetchall.return_value = []
+        if "AS total_crashes" in sql:
+            result.fetchone.return_value = SimpleNamespace(total_crashes=6000, total_injuries=2, total_fatalities=0, incapacitating_injuries=1, crashes_with_injuries=2, crashes_with_fatalities=0, hit_and_run_count=0)
+        elif "AS children_injured" in sql:
+            result.fetchone.return_value = SimpleNamespace(pedestrians=0, cyclists=0, fatal_count=0, incapacitating_count=1, nonincapacitating_count=1, reported_not_evident_count=0, no_indication_count=0, unknown_count=0, children_injured=0)
+        elif "AS total_vehicle_count" in sql:
+            result.fetchone.return_value = SimpleNamespace(total_vehicle_count=0, pdo_vehicle_count=0)
+        elif "EXTRACT(ISODOW" in sql:
+            result.fetchall.return_value = [SimpleNamespace(day=6, hour=23, crashes=6000, injury_crashes=2, severe_crashes=1)]
+        return result
+    db.execute.side_effect = execute
+    with patch("api.routers.dashboard._build_location_report_filters", return_value=("ST_Intersects({geometry_column}, :area)", {"area": "test"}, {})):
+        response = await get_location_report(LocationReportRequest(start_date="2020-01-01", end_date="2020-03-31"), db)
+    assert len(response.hour_day_counts) == 168
+    assert sum(cell.crashes for cell in response.hour_day_counts) == 6000
+    assert response.hour_day_counts[-1].severe_crashes == 1
+    assert response.map_truncated
+    for sql, params in queries:
+        if "EXTRACT(ISODOW" in sql or "AS road_user" in sql or "TO_CHAR(DATE_TRUNC" in sql:
+            assert "LIMIT" not in sql
+            assert ":start_date" in sql and ":end_date" in sql
+            assert "12 months" not in sql

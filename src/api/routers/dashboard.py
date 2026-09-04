@@ -1,23 +1,17 @@
 """Dashboard API endpoints for the Chicago Crash Dashboard frontend."""
 
-import csv
-import io
 import json
-import os
-import tempfile
-import zipfile
 from datetime import datetime, time, timedelta
-from typing import Any, Iterable, List, Optional
+from typing import Any, List, Optional
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from src.models.base import get_db
-from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
+from src.models.crashes import Crash, CrashPerson
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -215,30 +209,6 @@ def _build_date_filter(
         return ""
     return " AND " + " AND ".join(date_filters)
 
-
-def _stream_csv(result) -> Iterable[str]:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow(result.keys())
-    yield buffer.getvalue()
-    buffer.seek(0)
-    buffer.truncate(0)
-    for row in result:
-        writer.writerow(row)
-        yield buffer.getvalue()
-        buffer.seek(0)
-        buffer.truncate(0)
-
-
-def _build_select_list(model, alias: str, geometry_column: str | None = None) -> str:
-    columns = []
-    for column in model.__table__.columns:
-        if geometry_column and column.name == geometry_column:
-            continue
-        columns.append(f"{alias}.{column.name}")
-    if geometry_column:
-        columns.append(f"ST_AsText({alias}.{geometry_column}) AS {geometry_column}")
-    return ", ".join(columns)
 
 
 class DashboardStats(BaseModel):
@@ -737,9 +707,55 @@ class MonthlyTrendPoint(BaseModel):
     """Monthly trend data point for sparklines."""
 
     month: str
+    partial: bool = False
     crashes: int
     injuries: int
     fatalities: int
+
+
+class HourDayCount(BaseModel):
+    day: int = Field(ge=0, le=6, description="Monday=0; Chicago local crash time")
+    hour: int = Field(ge=0, le=23)
+    crashes: int
+    injury_crashes: int
+    severe_crashes: int
+
+
+class RoadUserSeverity(BaseModel):
+    road_user: str
+    people: int
+    fatal: int
+    incapacitating: int
+    other_injury: int
+    no_injury: int
+    unknown: int
+
+
+def _fill_report_months(rows, start, end, now=None):
+    """Fill missing months inside the requested range; flag incomplete months."""
+    now = now or datetime.now(CHICAGO_TZ).replace(tzinfo=None)
+    by_month = {row.month: row for row in rows}
+    first = start or (datetime.strptime(min(by_month), "%Y-%m") if by_month else None)
+    last = end or (datetime.strptime(max(by_month), "%Y-%m") if by_month else None)
+    if first is None or last is None:
+        return []
+    first = first.replace(tzinfo=None)
+    last = last.replace(tzinfo=None)
+    cursor = first.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    points = []
+    while cursor <= last:
+        following = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+        key = cursor.strftime("%Y-%m")
+        row = by_month.get(key)
+        partial = first > cursor or (end is not None and last < following - timedelta(microseconds=1)) or now < following
+        points.append(MonthlyTrendPoint(
+            month=key, partial=partial,
+            crashes=int(row.crashes) if row is not None else 0,
+            injuries=int(row.injuries) if row is not None else 0,
+            fatalities=int(row.fatalities) if row is not None else 0,
+        ))
+        cursor = following
+    return points
 
 
 class LocationReportResponse(BaseModel):
@@ -750,6 +766,10 @@ class LocationReportResponse(BaseModel):
     monthly_trends: List[MonthlyTrendPoint]
     crashes_geojson: dict
     query_area_geojson: dict
+    hour_day_counts: list[HourDayCount] = Field(default_factory=list)
+    road_user_severity: list[RoadUserSeverity] = Field(default_factory=list)
+    map_limit: int = 5000
+    map_truncated: bool = False
 
 
 # Native place type configuration for location report queries
@@ -1060,7 +1080,6 @@ async def get_location_report(
                 COALESCE(SUM(injuries_fatal), 0) AS fatalities
             FROM crashes
             WHERE geometry IS NOT NULL
-                AND crash_date >= NOW() - INTERVAL '12 months'
                 AND {spatial_filter}
                 {date_filter}
             GROUP BY DATE_TRUNC('month', crash_date)
@@ -1069,15 +1088,45 @@ async def get_location_report(
 
         trends_result = db.execute(trends_query, spatial_params).fetchall()
 
-        monthly_trends = [
-            MonthlyTrendPoint(
-                month=row.month,
-                crashes=row.crashes,
-                injuries=int(row.injuries),
-                fatalities=int(row.fatalities),
-            )
-            for row in trends_result
-        ]
+        monthly_trends = _fill_report_months(
+            trends_result, request.start_date, normalize_end_date(request.end_date)
+        )
+        # Aggregate the entire selection, independent of the map point limit.
+        hour_rows = db.execute(text(f"""
+            SELECT EXTRACT(ISODOW FROM crash_date)::int - 1 AS day,
+                EXTRACT(HOUR FROM crash_date)::int AS hour,
+                COUNT(*) AS crashes,
+                COUNT(*) FILTER (WHERE injuries_total > 0) AS injury_crashes,
+                COUNT(*) FILTER (WHERE injuries_fatal > 0 OR injuries_incapacitating > 0) AS severe_crashes
+            FROM crashes WHERE geometry IS NOT NULL AND {spatial_filter} {date_filter}
+            GROUP BY 1, 2
+        """), spatial_params).fetchall()
+        hours = {(row.day, row.hour): row for row in hour_rows}
+        hour_day_counts = [HourDayCount(
+            day=day, hour=hour,
+            crashes=hours[(day, hour)].crashes if (day, hour) in hours else 0,
+            injury_crashes=hours[(day, hour)].injury_crashes if (day, hour) in hours else 0,
+            severe_crashes=hours[(day, hour)].severe_crashes if (day, hour) in hours else 0,
+        ) for day in range(7) for hour in range(24)]
+        road_rows = db.execute(text(f"""
+            SELECT CASE
+                WHEN cp.person_type ILIKE '%PEDESTRIAN%' THEN 'Pedestrian'
+                WHEN cp.person_type ILIKE '%BICYCLE%' OR cp.person_type ILIKE '%CYCLIST%' THEN 'Cyclist'
+                WHEN cp.person_type = 'DRIVER' THEN 'Driver'
+                WHEN cp.person_type = 'PASSENGER' THEN 'Passenger'
+                ELSE 'Other / unknown' END AS road_user,
+                COUNT(*) AS people,
+                COUNT(*) FILTER (WHERE injury_classification = 'FATAL') AS fatal,
+                COUNT(*) FILTER (WHERE injury_classification = 'INCAPACITATING INJURY') AS incapacitating,
+                COUNT(*) FILTER (WHERE injury_classification IN ('NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT')) AS other_injury,
+                COUNT(*) FILTER (WHERE injury_classification = 'NO INDICATION OF INJURY') AS no_injury,
+                COUNT(*) FILTER (WHERE injury_classification IS NULL OR injury_classification NOT IN
+                    ('FATAL', 'INCAPACITATING INJURY', 'NONINCAPACITATING INJURY', 'REPORTED, NOT EVIDENT', 'NO INDICATION OF INJURY')) AS unknown
+            FROM crash_people cp JOIN crashes c ON cp.crash_record_id = c.crash_record_id
+            WHERE c.geometry IS NOT NULL AND {spatial_filter_aliased} {date_filter_aliased}
+            GROUP BY 1 ORDER BY people DESC
+        """), spatial_params).fetchall()
+        road_user_severity = [RoadUserSeverity(**dict(row._mapping)) for row in road_rows]
 
         # 4. Get crashes as GeoJSON for map display
         crashes_query = text(f"""
@@ -1134,6 +1183,9 @@ async def get_location_report(
             stats=stats,
             causes=causes,
             monthly_trends=monthly_trends,
+            hour_day_counts=hour_day_counts,
+            road_user_severity=road_user_severity,
+            map_truncated=stats.total_crashes > len(features),
             crashes_geojson=crashes_geojson,
             query_area_geojson=query_area_geojson,
         )
@@ -1143,101 +1195,10 @@ async def get_location_report(
         raise
 
 
-@router.post("/location-report/export")
-async def export_location_report(
-    request: LocationReportExportRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-) -> StreamingResponse:
-    """Export location report data as CSV or ZIP using the same spatial filters."""
-    try:
-        allowed_datasets = {"crashes", "people", "vehicles", "vision_zero"}
-        invalid_datasets = [dataset for dataset in request.datasets if dataset not in allowed_datasets]
-        if invalid_datasets:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid datasets: {', '.join(invalid_datasets)}",
-            )
-
-        spatial_filter_template, spatial_params, _ = _build_location_report_filters(
-            request, db
-        )
-
-        def spatial_filter_for(geometry_column: str) -> str:
-            return spatial_filter_template.format(geometry_column=geometry_column)
-
-        crashes_select = _build_select_list(Crash, "c", geometry_column="geometry")
-        people_select = _build_select_list(CrashPerson, "cp")
-        vehicles_select = _build_select_list(CrashVehicle, "cv")
-        vision_zero_select = _build_select_list(
-            VisionZeroFatality, "vz", geometry_column="geometry"
-        )
-
-        dataset_queries = {
-            "crashes": text(f"""
-                SELECT {crashes_select}
-                FROM crashes c
-                WHERE c.geometry IS NOT NULL
-                    AND {spatial_filter_for("c.geometry")}
-                    {_build_date_filter(request, spatial_params, "c.crash_date")}
-            """),
-            "people": text(f"""
-                SELECT {people_select}
-                FROM crash_people cp
-                INNER JOIN crashes c ON cp.crash_record_id = c.crash_record_id
-                WHERE c.geometry IS NOT NULL
-                    AND {spatial_filter_for("c.geometry")}
-                    {_build_date_filter(request, spatial_params, "c.crash_date")}
-            """),
-            "vehicles": text(f"""
-                SELECT {vehicles_select}
-                FROM crash_vehicles cv
-                INNER JOIN crashes c ON cv.crash_record_id = c.crash_record_id
-                WHERE c.geometry IS NOT NULL
-                    AND {spatial_filter_for("c.geometry")}
-                    {_build_date_filter(request, spatial_params, "c.crash_date")}
-            """),
-            "vision_zero": text(f"""
-                SELECT {vision_zero_select}
-                FROM vision_zero_fatalities vz
-                WHERE vz.geometry IS NOT NULL
-                    AND {spatial_filter_for("vz.geometry")}
-                    {_build_date_filter(request, spatial_params, "vz.crash_date")}
-            """),
-        }
-
-        if len(request.datasets) == 1:
-            dataset = request.datasets[0]
-            result = db.execute(dataset_queries[dataset], spatial_params)
-            filename = f"location-report-{dataset}.csv"
-            headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-            return StreamingResponse(
-                _stream_csv(result),
-                media_type="text/csv",
-                headers=headers,
-            )
-
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-        temp_file.close()
-        with zipfile.ZipFile(temp_file.name, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for dataset in request.datasets:
-                result = db.execute(dataset_queries[dataset], spatial_params)
-                csv_name = f"location-report-{dataset}.csv"
-                with zipf.open(csv_name, "w") as buffer:
-                    text_buffer = io.TextIOWrapper(buffer, encoding="utf-8", newline="")
-                    writer = csv.writer(text_buffer)
-                    writer.writerow(result.keys())
-                    for row in result:
-                        writer.writerow(row)
-                    text_buffer.flush()
-
-        background_tasks.add_task(os.unlink, temp_file.name)
-        headers = {"Content-Disposition": 'attachment; filename="location-report-export.zip"'}
-        return StreamingResponse(
-            open(temp_file.name, "rb"),
-            media_type="application/zip",
-            headers=headers,
-        )
-    except Exception as e:
-        logger.error("Failed to export location report", error=str(e))
-        raise
+@router.post("/location-report/export", deprecated=True)
+def export_location_report():
+    """The old blocking download path is replaced by durable /exports jobs."""
+    raise HTTPException(
+        status_code=410,
+        detail="Use POST /exports to queue an export, then poll its status and download URL.",
+    )

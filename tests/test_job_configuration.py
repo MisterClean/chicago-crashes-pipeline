@@ -7,10 +7,10 @@ from src.services.job_service import JobService
 from src.utils.config import Settings
 
 
-def test_settings_enable_scheduler_by_default():
-    """Scheduler ownership should default to enabled for local/dev runs."""
+def test_settings_disable_api_scheduler_by_default():
+    """The dedicated worker owns scheduling; API processes default to serving only."""
     runtime_settings = Settings()
-    assert runtime_settings.job_scheduler_enabled is True
+    assert runtime_settings.job_scheduler_enabled is False
 
 
 def test_default_jobs_disable_legacy_child_jobs():

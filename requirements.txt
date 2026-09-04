@@ -9,6 +9,9 @@ psycopg2-binary==2.9.10
 alembic==1.12.1
 geoalchemy2==0.18.0
 
+# Object storage
+boto3>=1.35,<2
+
 # HTTP Client
 httpx==0.28.1
 requests==2.32.5

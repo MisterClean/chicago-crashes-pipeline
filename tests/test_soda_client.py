@@ -112,7 +112,7 @@ class TestSODAClient:
 
             assert len(all_records) == 1500
             assert call_count == 2  # Should have made 2 calls (1000 + 500)
-            mock_count.assert_called_once()
+            mock_count.assert_not_called()  # A failed count cannot truncate paging.
 
     @pytest.mark.asyncio
     async def test_http_error_handling(self, client):

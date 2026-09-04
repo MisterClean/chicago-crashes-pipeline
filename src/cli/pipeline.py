@@ -33,6 +33,9 @@ async def _run_sync_command(args: argparse.Namespace) -> None:
         start_date=args.start_date,
         end_date=args.end_date,
         batch_size=args.batch_size,
+        mode={"full-refresh": "full", "incremental": "incremental"}.get(
+            args.mode, "api"
+        ),
     )
 
     logger.info(
@@ -86,13 +89,24 @@ def build_parser() -> argparse.ArgumentParser:
     base_parser.add_argument(
         "--end-date",
         type=_parse_date,
-        help="Exclusive end date (YYYY-MM-DD)",
+        help="Inclusive end date (YYYY-MM-DD)",
     )
     base_parser.add_argument(
         "--batch-size",
         type=int,
         default=50000,
         help="Batch size for SODA API requests",
+    )
+
+    subparsers.add_parser(
+        "full-refresh",
+        parents=[base_parser],
+        help="Verified full CSV snapshot followed by SODA catch-up",
+    )
+    subparsers.add_parser(
+        "incremental",
+        parents=[base_parser],
+        help="New and modified records since the committed watermark",
     )
 
     initial = subparsers.add_parser(
@@ -138,6 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.mode in {"full-refresh", "incremental"}:
+        if args.start_date or args.end_date:
+            parser.error("Full/incremental commands cannot use event-date filters")
+        asyncio.run(_run_sync_command(args))
+        return
     if args.mode in {"initial-load", "delta"}:
         _resolve_start_date(args)
         asyncio.run(_run_sync_command(args))

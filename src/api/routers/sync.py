@@ -5,12 +5,17 @@ import inspect
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import func
+from sqlalchemy.exc import SQLAlchemyError
 
 from src.api.dependencies import get_sync_lock, get_sync_state
 from src.api.models import StatusResponse, SyncRequest, SyncResponse, TestSyncResponse
 from src.etl.soda_client import SODAClient
+from src.models.base import SessionLocal
+from src.models.jobs import JobExecution, JobStatus, JobType, RecurrenceType
 from src.services.database_service import DatabaseService as _DatabaseService
+from src.services.job_service import JobService
 from src.services.sync_service import SyncService
 from src.utils.config import settings
 from src.utils.logging import get_logger
@@ -43,57 +48,90 @@ async def _maybe_await(result):
 @router.get("/status", response_model=StatusResponse)
 async def get_sync_status(sync_state: dict = Depends(get_sync_state)):
     """Get current sync status and statistics."""
-    started_at = sync_state.get("started_at", datetime.now())
-    uptime = str(datetime.now() - started_at)
+    try:
+        with SessionLocal() as session:
+            latest = (
+                session.query(JobExecution).order_by(JobExecution.id.desc()).first()
+            )
+            last_success = (
+                session.query(func.max(JobExecution.completed_at))
+                .filter(JobExecution.status == JobStatus.COMPLETED)
+                .scalar()
+            )
+            active = (
+                session.query(JobExecution)
+                .filter(JobExecution.status.in_([JobStatus.PENDING, JobStatus.RUNNING]))
+                .order_by(JobExecution.id)
+                .first()
+            )
+            counts = dict(
+                session.query(JobExecution.status, func.count())
+                .group_by(JobExecution.status)
+                .all()
+            )
+            return StatusResponse(
+                status=active.status if active else "idle",
+                last_sync=last_success,
+                current_operation=active.execution_id if active else None,
+                stats={
+                    "total_syncs": sum(counts.values()),
+                    "successful_syncs": counts.get(JobStatus.COMPLETED, 0),
+                    "failed_syncs": counts.get(JobStatus.FAILED, 0),
+                    "last_error": latest.error_message if latest else None,
+                    "last_execution_id": latest.execution_id if latest else None,
+                },
+                uptime=str(
+                    datetime.now() - sync_state.get("started_at", datetime.now())
+                ),
+            )
+    except SQLAlchemyError as exc:
+        logger.error("Sync status database unavailable", error=type(exc).__name__)
+        raise HTTPException(503, "Sync status is temporarily unavailable") from exc
 
-    return StatusResponse(
-        status="idle"
-        if sync_state["status"] == "running" and sync_state["current_operation"] is None
-        else sync_state["status"],
-        last_sync=sync_state["last_sync"],
-        current_operation=sync_state["current_operation"],
-        stats=sync_state["stats"],
-        uptime=uptime,
-    )
 
-
-@router.post("/trigger", response_model=SyncResponse)
-async def trigger_sync(
-    request: SyncRequest,
-    background_tasks: BackgroundTasks,
-    sync_state: dict = Depends(get_sync_state),
-):
-    """Trigger a manual sync operation."""
-    # Prevent concurrent syncs using shared lock state
-    sync_lock = get_sync_lock()
-
-    if sync_state["status"] == "running" or sync_lock.locked():
+@router.post("/trigger", response_model=SyncResponse, status_code=202)
+async def trigger_sync(request: SyncRequest):
+    """Persist manual work for the same worker used by scheduled executions."""
+    if request.endpoint is not None and request.endpoint not in settings.api.endpoints:
+        raise HTTPException(status_code=422, detail="Unknown endpoint")
+    if request.mode == "full" and (request.start_date or request.end_date):
         raise HTTPException(
-            status_code=409, detail="Sync operation already in progress"
+            status_code=422, detail="Full refresh cannot have date filters"
         )
-
-    # Generate sync ID
-    sync_id = f"sync_{int(datetime.now().timestamp())}"
-
-    # Update sync state
-    sync_state["status"] = "running"
-    sync_state["current_operation"] = f"Manual sync {sync_id}"
-
-    # Add background task
-    background_tasks.add_task(
-        guarded_run_sync_operation,
-        sync_id,
-        request,
-        sync_state,
-    )
-
-    logger.info("Triggered manual sync", sync_id=sync_id, request=request.dict())
-
+    mode = "api" if request.start_date or request.end_date else request.mode
+    service = JobService()
+    try:
+        job = service.create_job(
+            {
+                "name": "Manual sync",
+                "job_type": JobType.FULL_REFRESH
+                if mode == "full"
+                else (JobType.INCREMENTAL if mode == "incremental" else JobType.CUSTOM),
+                "enabled": False,
+                "recurrence_type": RecurrenceType.ONCE,
+                "timeout_minutes": 480 if mode == "full" else 60,
+                "config": {
+                    "endpoints": [request.endpoint]
+                    if request.endpoint
+                    else list(settings.api.endpoints),
+                    "start_date": request.start_date,
+                    "end_date": request.end_date,
+                    "mode": mode,
+                },
+            },
+            created_by="manual-sync",
+        )
+        identifier = await service.execute_job(job.id, force=request.force)
+    except SQLAlchemyError as exc:
+        logger.error("Unable to queue sync", error=type(exc).__name__)
+        raise HTTPException(503, "Sync queue is temporarily unavailable") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
     return SyncResponse(
-        message="Sync operation started",
-        sync_id=sync_id,
-        status="running",
-        started_at=datetime.now(),
+        message="Sync queued for worker",
+        sync_id=identifier,
+        status="pending",
+        started_at=datetime.utcnow(),
     )
 
 

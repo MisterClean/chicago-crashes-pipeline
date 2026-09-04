@@ -34,6 +34,7 @@ DEFAULT_PUBLIC_ROUTES = [
 
 # Routes that always require authentication (even if path matches a public prefix)
 PROTECTED_ROUTES = [
+    "/exports",
     "/sync/trigger",
     "/sync/test",
     "/jobs",

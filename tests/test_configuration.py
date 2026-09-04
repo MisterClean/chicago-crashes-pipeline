@@ -6,8 +6,17 @@ from utils.config import APISettings, DatabaseSettings, ValidationSettings, sett
 class TestConfiguration:
     """Test configuration loading and validation."""
 
-    def test_database_settings_defaults(self):
+    def test_database_settings_defaults(self, monkeypatch):
         """Test database settings have correct defaults."""
+        for key in (
+            "DB_HOST",
+            "DB_PORT",
+            "DB_DATABASE",
+            "DB_USERNAME",
+            "DB_POOL_SIZE",
+            "DB_USE_COPY",
+        ):
+            monkeypatch.delenv(key, raising=False)
         db_settings = DatabaseSettings()
 
         assert db_settings.host == "localhost"

@@ -1,282 +1,209 @@
-"""Test for last 7 days data refresh functionality."""
+"""Manual refresh requests persist work; execution belongs to the durable worker."""
 
-import time
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
-from api.main import app
-from src.api.dependencies import sync_state as global_sync_state
+from src.api.routers import sync
+from src.models.jobs import JobStatus, JobType, RecurrenceType
 from src.services.sync_service import EndpointSyncResult, SyncResult
 from src.utils.config import settings
 
-BASE_SYNC_STATS = {
-    "total_syncs": 0,
-    "successful_syncs": 0,
-    "failed_syncs": 0,
-    "last_error": None,
-    "total_records_processed": 0,
-    "last_sync_duration": None,
-}
+
+@pytest.fixture
+def job_service(monkeypatch):
+    service = MagicMock()
+    service.create_job.return_value = SimpleNamespace(id=17)
+    service.execute_job = AsyncMock(return_value="exec_17_queued")
+    factory = MagicMock(return_value=service)
+    monkeypatch.setattr(sync, "JobService", factory)
+    # Any accidental immediate execution would fail this test suite.
+    monkeypatch.setattr(
+        sync,
+        "SyncService",
+        MagicMock(side_effect=AssertionError("The API must enqueue, not ingest")),
+    )
+    return service
 
 
-def make_sync_result(endpoint_counts: dict) -> SyncResult:
-    """Construct a SyncResult populated with endpoint metrics."""
-    result = SyncResult(started_at=datetime.utcnow())
-    for name, counts in endpoint_counts.items():
-        result.endpoint_results[name] = EndpointSyncResult(
-            name=name,
-            batches_processed=counts.get("batches", 1),
-            records_fetched=counts.get("fetched", 0),
-            records_inserted=counts.get("inserted", 0),
-            records_updated=counts.get("updated", 0),
-            records_skipped=counts.get("skipped", 0),
-        )
-    result.completed_at = datetime.utcnow()
-    return result
+@pytest.fixture
+def client(job_service):
+    app = FastAPI()
+    app.include_router(sync.router)
+    return TestClient(app, raise_server_exceptions=False)
 
 
-class TestLast7DaysRefresh:
-    """Test the functionality to refresh the last 7 days of data."""
+def test_last_seven_days_preserves_dates_and_queues_api_mode(client, job_service):
+    response = client.post(
+        "/sync/trigger",
+        json={
+            "start_date": "2026-08-28",
+            "end_date": "2026-09-04",
+            "endpoint": "crashes",
+            "force": True,
+        },
+    )
+    assert response.status_code == 202
+    assert response.json()["status"] == "pending"
+    assert response.json()["sync_id"] == "exec_17_queued"
+    assert response.json()["started_at"]
+    job_service.create_job.assert_called_once()
+    data = job_service.create_job.call_args.args[0]
+    assert data["config"] == {
+        "endpoints": ["crashes"],
+        "start_date": "2026-08-28",
+        "end_date": "2026-09-04",
+        "mode": "api",
+    }
+    assert data["job_type"] == JobType.CUSTOM
+    assert data["enabled"] is False
+    assert data["recurrence_type"] == RecurrenceType.ONCE
+    assert job_service.create_job.call_args.kwargs == {"created_by": "manual-sync"}
+    job_service.execute_job.assert_awaited_once_with(17, force=True)
 
-    @pytest.fixture(autouse=True)
-    def reset_sync_state(self):
-        """Ensure shared sync state starts clean for every test."""
-        global_sync_state["status"] = "idle"
-        global_sync_state["last_sync"] = None
-        global_sync_state["current_operation"] = None
-        global_sync_state["stats"].update(BASE_SYNC_STATS)
-        yield
-        global_sync_state["status"] = "idle"
-        global_sync_state["current_operation"] = None
 
-    @pytest.fixture
-    def client(self):
-        """Create a test client."""
-        return TestClient(app)
+@pytest.mark.parametrize(
+    "dates",
+    [
+        {"start_date": "2024-01-01"},
+        {"end_date": "2024-01-07"},
+        {"start_date": "2024-01-01", "end_date": "2024-01-07"},
+    ],
+)
+def test_all_endpoints_and_partial_date_bounds_preserved(client, job_service, dates):
+    response = client.post("/sync/trigger", json=dates)
+    assert response.status_code == 202
+    config = job_service.create_job.call_args.args[0]["config"]
+    assert config["endpoints"] == list(settings.api.endpoints)
+    assert config["start_date"] == dates.get("start_date")
+    assert config["end_date"] == dates.get("end_date")
+    assert config["mode"] == "api"
+    job_service.execute_job.assert_awaited_once_with(17, force=False)
 
-    @pytest.fixture
-    def seven_days_ago_date(self):
-        """Get the date 7 days ago in YYYY-MM-DD format."""
-        return (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
 
-    @pytest.fixture
-    def today_date(self):
-        """Get today's date in YYYY-MM-DD format."""
-        return datetime.now().strftime("%Y-%m-%d")
+@pytest.mark.parametrize(
+    "mode,job_type",
+    [
+        (None, JobType.INCREMENTAL),
+        ("incremental", JobType.INCREMENTAL),
+        ("full", JobType.FULL_REFRESH),
+        ("api", JobType.CUSTOM),
+    ],
+)
+def test_undated_refresh_mode(client, job_service, mode, job_type):
+    response = client.post("/sync/trigger", json={} if mode is None else {"mode": mode})
+    assert response.status_code == 202
+    data = job_service.create_job.call_args.args[0]
+    assert data["job_type"] == job_type
+    assert data["config"]["mode"] == (mode or "incremental")
+    assert data["timeout_minutes"] == (480 if mode == "full" else 60)
 
-    @pytest.fixture
-    def sample_recent_crashes(self):
-        """Sample crash records from the last 7 days."""
-        base_date = datetime.now() - timedelta(days=7)
-        return [
-            {
-                "crash_record_id": f"RECENT{i}",
-                "crash_date": (base_date + timedelta(days=i)).isoformat(),
-                "latitude": "41.8781",
-                "longitude": "-87.6298",
-                "injuries_total": "1",
-                "street_name": "MICHIGAN AVE",
-            }
-            for i in range(7)
-        ]
 
-    @patch("src.api.routers.sync.SyncService")
-    def test_trigger_last_7_days_sync(
-        self,
-        mock_sync_service_cls,
-        client,
-        seven_days_ago_date,
-        today_date,
-        sample_recent_crashes,
-    ):
-        """Test triggering a sync for the last 7 days of data."""
-        sync_result = make_sync_result(
-            {
-                "crashes": {
-                    "fetched": len(sample_recent_crashes),
-                    "inserted": len(sample_recent_crashes),
-                }
-            }
-        )
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"start_date": "2024-01-15", "end_date": "2024-01-01"},
+        {"start_date": "not-a-date"},
+        {"end_date": "2024-02-30"},
+        {"start_date": "2024-01-01T00:00:00"},
+        {"start_date": ""},
+        {"mode": "full", "start_date": "2024-01-01"},
+        {"mode": "full", "end_date": "2024-01-07"},
+        {"endpoint": "unknown"},
+        {"mode": "unknown"},
+    ],
+)
+def test_invalid_requests_do_not_enqueue(client, job_service, payload):
+    response = client.post("/sync/trigger", json=payload)
+    assert response.status_code == 422
+    job_service.create_job.assert_not_called()
+    job_service.execute_job.assert_not_awaited()
 
-        mock_service = mock_sync_service_cls.return_value
-        mock_service.sync = AsyncMock(return_value=sync_result)
 
-        response = client.post(
-            "/sync/trigger",
-            json={
-                "start_date": seven_days_ago_date,
-                "end_date": today_date,
-                "endpoint": "crashes",
-                "force": True,
-            },
-        )
+@pytest.mark.parametrize("method", ["create_job", "execute_job"])
+def test_enqueue_database_failure_is_service_unavailable(client, job_service, method):
+    getattr(job_service, method).side_effect = OperationalError(
+        "SELECT private_credentials", {}, Exception("internal-host-secret")
+    )
+    response = client.post("/sync/trigger", json={})
+    assert response.status_code == 503
+    assert "internal-host-secret" not in response.text
+    assert "private_credentials" not in response.text
+    if method == "create_job":
+        job_service.execute_job.assert_not_awaited()
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "running"
-        assert "sync_id" in data
-        assert "started_at" in data
 
-        time.sleep(0.05)
+@pytest.mark.parametrize("active_status", [JobStatus.PENDING, JobStatus.RUNNING])
+def test_status_reads_durable_execution(client, monkeypatch, active_status):
+    session = MagicMock()
+    latest_query, successful_query, active_query = MagicMock(), MagicMock(), MagicMock()
+    counts_query = MagicMock()
+    counts_query.group_by.return_value.all.return_value = [(JobStatus.COMPLETED, 1)]
+    session.query.side_effect = [
+        latest_query,
+        successful_query,
+        active_query,
+        counts_query,
+    ]
+    latest_query.order_by.return_value.first.return_value = SimpleNamespace(
+        error_message=None, execution_id="exec_latest"
+    )
+    successful_query.filter.return_value.scalar.return_value = datetime(2026, 9, 3)
+    active_query.filter.return_value.order_by.return_value.first.return_value = (
+        SimpleNamespace(status=active_status, execution_id="exec_active")
+    )
+    factory = MagicMock()
+    factory.return_value.__enter__.return_value = session
+    monkeypatch.setattr(sync, "SessionLocal", factory)
+    response = client.get("/sync/status")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == active_status.value
+    assert data["current_operation"] == "exec_active"
+    assert data["last_sync"].startswith("2026-09-03")
+    assert data["stats"]["last_execution_id"] == "exec_latest"
 
-        mock_service.sync.assert_awaited_once_with(
-            endpoints=["crashes"],
-            start_date=seven_days_ago_date,
-            end_date=today_date,
-        )
 
-    @patch("src.api.routers.sync.SyncService")
-    def test_last_7_days_data_processing(
-        self,
-        mock_sync_service_cls,
-        client,
-        seven_days_ago_date,
-        today_date,
-    ):
-        """Test that sync results update aggregated stats."""
-        sync_result = make_sync_result(
-            {
-                "crashes": {
-                    "fetched": 42,
-                    "inserted": 30,
-                    "updated": 10,
-                    "skipped": 2,
-                }
-            }
-        )
+def test_status_database_failure_is_service_unavailable(client, monkeypatch):
+    monkeypatch.setattr(
+        sync,
+        "SessionLocal",
+        MagicMock(
+            side_effect=OperationalError(
+                "SELECT private_credentials", {}, Exception("internal-host-secret")
+            )
+        ),
+    )
+    response = client.get("/sync/status")
+    assert response.status_code == 503
+    assert "internal-host-secret" not in response.text
+    assert "private_credentials" not in response.text
 
-        mock_service = mock_sync_service_cls.return_value
-        mock_service.sync = AsyncMock(return_value=sync_result)
 
-        base_processed = global_sync_state["stats"]["total_records_processed"]
-
-        response = client.post(
-            "/sync/trigger",
-            json={
-                "start_date": seven_days_ago_date,
-                "end_date": today_date,
-                "endpoint": "crashes",
-                "force": True,
-            },
-        )
-
-        assert response.status_code == 200
-
-        time.sleep(0.05)
-
-        assert (
-            global_sync_state["stats"]["total_records_processed"]
-            == base_processed + sync_result.total_records
-        )
-        assert global_sync_state["stats"]["successful_syncs"] == 1
-        assert global_sync_state["status"] == "idle"
-
-    def test_sync_status_during_last_7_days_refresh(self, client):
-        """Test sync status endpoint reflects running state."""
-        global_sync_state["status"] = "running"
-        global_sync_state["current_operation"] = "Manual sync test"
-
-        status_response = client.get("/sync/status")
-        assert status_response.status_code == 200
-        data = status_response.json()
-        assert data["status"] == "running"
-        assert "Manual sync" in data["current_operation"]
-
-    @patch("src.api.routers.sync.SyncService")
-    def test_invalid_date_range_for_refresh(self, mock_sync_service_cls, client):
-        """Test sync with invalid date range."""
-        mock_service = mock_sync_service_cls.return_value
-        all_endpoints_result = make_sync_result(
-            {name: {"fetched": 0} for name in settings.api.endpoints}
-        )
-        mock_service.sync = AsyncMock(return_value=all_endpoints_result)
-
-        response = client.post(
-            "/sync/trigger",
-            json={
-                "start_date": "2024-01-15",
-                "end_date": "2024-01-01",
-                "endpoint": "crashes",
-            },
-        )
-
-        assert response.status_code == 200
-        time.sleep(0.05)
-
-    def test_concurrent_sync_prevention(self, client, seven_days_ago_date):
-        """Test that a running sync rejects new trigger requests."""
-        global_sync_state["status"] = "running"
-        global_sync_state["current_operation"] = "Manual sync 123"
-
-        response = client.post(
-            "/sync/trigger",
-            json={"start_date": seven_days_ago_date, "endpoint": "crashes"},
-        )
-
-        assert response.status_code == 409
-        assert "already in progress" in response.json()["detail"]
-
-    @patch("src.api.routers.sync.SyncService")
-    def test_empty_result_handling(
-        self,
-        mock_sync_service_cls,
-        client,
-        seven_days_ago_date,
-        today_date,
-    ):
-        """Test handling when no records are found in the last 7 days."""
-        mock_service = mock_sync_service_cls.return_value
-        mock_service.sync = AsyncMock(
-            return_value=make_sync_result({"crashes": {"fetched": 0}})
-        )
-
-        response = client.post(
-            "/sync/trigger",
-            json={
-                "start_date": seven_days_ago_date,
-                "end_date": today_date,
-                "endpoint": "crashes",
-            },
-        )
-
-        assert response.status_code == 200
-        time.sleep(0.05)
-
-    @patch("src.api.routers.sync.SyncService")
-    def test_multiple_endpoint_sync_last_7_days(
-        self,
-        mock_sync_service_cls,
-        client,
-        seven_days_ago_date,
-        today_date,
-    ):
-        """Test syncing multiple endpoints for the last 7 days."""
-        mock_service = mock_sync_service_cls.return_value
-        mock_service.sync = AsyncMock(
-            return_value=make_sync_result({"crashes": {"fetched": 0}})
-        )
-
-        response = client.post(
-            "/sync/trigger",
-            json={
-                "start_date": seven_days_ago_date,
-                "end_date": today_date,
-                "force": True,
-            },
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "running"
-
-        time.sleep(0.05)
-
-        mock_service.sync.assert_awaited_once_with(
-            endpoints=list(settings.api.endpoints.keys()),
-            start_date=seven_days_ago_date,
-            end_date=today_date,
-        )
+def test_sync_result_processing_counts_remain_distinct():
+    result = SyncResult(started_at=datetime(2026, 9, 4))
+    result.endpoint_results["crashes"] = EndpointSyncResult(
+        name="crashes",
+        records_fetched=42,
+        records_inserted=30,
+        records_updated=10,
+        records_skipped=2,
+    )
+    result.endpoint_results["people"] = EndpointSyncResult(
+        name="people",
+        records_fetched=7,
+        records_inserted=5,
+        records_updated=1,
+        records_skipped=1,
+    )
+    assert result.total_records == 49
+    assert result.total_inserted == 35
+    assert result.total_updated == 11
+    assert result.total_skipped == 3
+    empty = SyncResult(started_at=datetime(2026, 9, 4))
+    assert empty.total_records == empty.total_inserted == empty.total_updated == 0

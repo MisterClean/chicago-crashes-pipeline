@@ -116,6 +116,7 @@ class JobScheduler:
             execution_id = await self.job_service.execute_job(
                 job_id=job.id,
                 force=False,  # Don't force scheduled executions
+                scheduled=True,
             )
 
             logger.info(

@@ -1,0 +1,90 @@
+{
+  "rows_per_phase": 5000,
+  "created_at": "2026-09-04T21:11:30.193275+00:00",
+  "results": {
+    "legacy_orm": {
+      "initial": {
+        "seconds": 26.489639500156045,
+        "rows_per_second": 188.75304059802497,
+        "metrics": {
+          "inserted": 5000,
+          "updated": 0
+        },
+        "stored_data": {
+          "rows": 5000,
+          "sha256": "5da3ad2e8fbda6249e15acfcdcdca87f84231e01ff0d8ba7eff84ba576c0e025"
+        }
+      },
+      "unchanged": {
+        "seconds": 39.91330341715366,
+        "rows_per_second": 125.27151530762887,
+        "metrics": {
+          "inserted": 0,
+          "updated": 5000
+        },
+        "stored_data": {
+          "rows": 5000,
+          "sha256": "5da3ad2e8fbda6249e15acfcdcdca87f84231e01ff0d8ba7eff84ba576c0e025"
+        }
+      },
+      "changed": {
+        "seconds": 32.51980575011112,
+        "rows_per_second": 153.75245591628158,
+        "metrics": {
+          "inserted": 0,
+          "updated": 5000
+        },
+        "stored_data": {
+          "rows": 5000,
+          "sha256": "2396b678429187e72934655883fc93f99554d4b473518280313ad29a5e546a35"
+        }
+      }
+    },
+    "copy_staging": {
+      "initial": {
+        "seconds": 1.072316916892305,
+        "rows_per_second": 4662.800634061208,
+        "metrics": {
+          "inserted": 5000,
+          "updated": 0,
+          "skipped": 0
+        },
+        "stored_data": {
+          "rows": 5000,
+          "sha256": "5da3ad2e8fbda6249e15acfcdcdca87f84231e01ff0d8ba7eff84ba576c0e025"
+        },
+        "speedup_vs_legacy": 24.703181571476087
+      },
+      "unchanged": {
+        "seconds": 0.5346915000118315,
+        "rows_per_second": 9351.186618619075,
+        "metrics": {
+          "inserted": 0,
+          "updated": 0,
+          "skipped": 5000
+        },
+        "stored_data": {
+          "rows": 5000,
+          "sha256": "5da3ad2e8fbda6249e15acfcdcdca87f84231e01ff0d8ba7eff84ba576c0e025"
+        },
+        "speedup_vs_legacy": 74.64734976387406
+      },
+      "changed": {
+        "seconds": 1.2859265829902142,
+        "rows_per_second": 3888.24686116474,
+        "metrics": {
+          "inserted": 0,
+          "updated": 5000,
+          "skipped": 0
+        },
+        "stored_data": {
+          "rows": 5000,
+          "sha256": "2396b678429187e72934655883fc93f99554d4b473518280313ad29a5e546a35"
+        },
+        "speedup_vs_legacy": 25.289006526711322
+      }
+    }
+  },
+  "notes": "Single local synthetic trial; timings exclude common input sanitization, include DB prepare/COPY or ORM operations and commit. Not a portal download or production speed forecast.",
+  "equivalence_verified": true
+}

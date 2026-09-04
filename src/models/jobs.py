@@ -36,6 +36,7 @@ class JobType(str, Enum):
     """Type of job to execute."""
 
     FULL_REFRESH = "full_refresh"
+    INCREMENTAL = "incremental"
     LAST_30_DAYS_CORE_DATA = "last_30_days_core_data"
     LAST_30_DAYS_PEOPLE = "last_30_days_people"
     LAST_30_DAYS_VEHICLES = "last_30_days_vehicles"
@@ -129,6 +130,11 @@ class JobExecution(Base, TimestampMixin):
     error_details = Column(JSON)  # Stack trace, additional error context
     retry_count = Column(Integer, default=0)
 
+    # Durable worker ownership. Naive timestamps are UTC throughout the queue.
+    lease_owner = Column(String(128))
+    lease_expires_at = Column(DateTime, index=True)
+    available_at = Column(DateTime, default=datetime.utcnow, index=True)
+
     # Execution context
     execution_context = Column(JSON)  # Store request parameters, system state, etc.
 
@@ -189,10 +195,10 @@ def get_default_jobs():
             "max_retries": 1,
         },
         {
-            "name": "Last 30 Days - Core Crash Data",
+            "name": "Incremental Core Crash Data",
             "description": (
-                "Refresh crash, people, and vehicle data from the last 30 days "
-                "in dependency order"
+                "Fetch new and modified crash, people, and vehicle records "
+                "using committed source watermarks (run full refresh first)"
             ),
             "job_type": JobType.LAST_30_DAYS_CORE_DATA,
             "enabled": True,
@@ -200,6 +206,7 @@ def get_default_jobs():
             "config": {
                 "endpoints": ["crashes", "people", "vehicles"],
                 "date_range_days": 30,
+                "mode": "incremental",
                 "force": True,
             },
             "timeout_minutes": 60,
@@ -226,14 +233,18 @@ def get_default_jobs():
             "max_retries": 3,
         },
         {
-            "name": "Last 6 Months - Vision Zero Fatalities",
-            "description": "Refresh Vision Zero fatality data from the last 6 months",
+            "name": "Incremental Vision Zero Fatalities",
+            "description": (
+                "Fetch new and modified Vision Zero records "
+                "(run full refresh first)"
+            ),
             "job_type": JobType.LAST_6_MONTHS_FATALITIES,
             "enabled": True,
             "recurrence_type": RecurrenceType.WEEKLY,
             "config": {
                 "endpoints": ["fatalities"],
-                "date_range_days": 180,  # ~6 months
+                "mode": "incremental",
+                "date_range_days": 180,  # retained for manual window-mode overrides
                 "force": True,
             },
             "timeout_minutes": 30,
@@ -248,7 +259,7 @@ def calculate_next_run(
     last_run: datetime = None,
 ) -> datetime:
     """Calculate the next run time based on recurrence type."""
-    now = datetime.now()
+    now = datetime.utcnow()
 
     if recurrence_type == RecurrenceType.ONCE:
         return None  # Run once, no next run

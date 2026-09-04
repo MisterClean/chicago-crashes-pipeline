@@ -204,12 +204,20 @@ export interface CrashCauseSummary {
 
 export interface MonthlyTrendPoint {
   month: string;
+  partial: boolean;
   crashes: number;
   injuries: number;
   fatalities: number;
 }
 
+export interface HourDayCount { day: number; hour: number; crashes: number; injury_crashes: number; severe_crashes: number; }
+export interface RoadUserSeverity { road_user: string; people: number; fatal: number; incapacitating: number; other_injury: number; no_injury: number; unknown: number; }
+
 export interface LocationReportResponse {
+  hour_day_counts: HourDayCount[];
+  road_user_severity: RoadUserSeverity[];
+  map_limit: number;
+  map_truncated: boolean;
   stats: LocationReportStats;
   causes: CrashCauseSummary[];
   monthly_trends: MonthlyTrendPoint[];
@@ -245,33 +253,31 @@ export interface LocationReportExportRequest extends LocationReportRequest {
   datasets: LocationReportDataset[];
 }
 
-function parseFilenameFromDisposition(disposition: string | null): string | null {
-  if (!disposition) return null;
-  const match = disposition.match(/filename="?([^"]+)"?/i);
-  return match ? match[1] : null;
-}
-
 export async function exportLocationReport(
-  request: LocationReportExportRequest
-): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${API_BASE}/dashboard/location-report/export`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+  request: LocationReportExportRequest,
+  apiKey = ""
+): Promise<string> {
+  const headers: HeadersInit = apiKey ? { [API_KEY_HEADER]: apiKey } : getAuthHeaders();
+  const create = await fetch(`${API_BASE}/exports`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(request),
   });
-
-  if (!res.ok) {
-    throw new Error(`Failed to export location report: ${res.statusText}`);
+  if (create.status === 401 || create.status === 403) throw new Error("This server requires a valid API key for exports.");
+  if (!create.ok) throw new Error(`Unable to queue export (${create.status}).`);
+  let job = await create.json();
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (job.status === "queued" || job.status === "running") {
+    if (Date.now() > deadline) throw new Error(`Export ${job.id} is still processing. Please check again later.`);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const status = await fetch(`${API_BASE}/exports/${job.id}`, { headers, cache: "no-store" });
+    if (!status.ok) throw new Error(`Unable to check export ${job.id}.`);
+    job = await status.json();
   }
-
-  const blob = await res.blob();
-  const filename =
-    parseFilenameFromDisposition(res.headers.get("Content-Disposition")) ||
-    (request.datasets.length > 1
-      ? "location-report-export.zip"
-      : `location-report-${request.datasets[0]}.csv`);
-
-  return { blob, filename };
+  if (job.status !== "completed") throw new Error(job.error || `Export ${job.status}. Please try again.`);
+  const download = await fetch(`${API_BASE}/exports/${job.id}/download`, { headers, cache: "no-store" });
+  if (!download.ok) throw new Error("Unable to retrieve the export download link.");
+  const { url } = await download.json();
+  return url;
 }
 
 // Places API Types

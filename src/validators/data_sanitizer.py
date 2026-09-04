@@ -181,8 +181,7 @@ class DataSanitizer:
         for field in integer_fields:
             sanitized[field] = self._clean_integer(record.get(field))
 
-        # Date fields - pass through as-is since they're already in ISO format
-        sanitized["crash_date"] = record.get("crash_date")
+        sanitized["crash_date"] = self._parse_datetime(record.get("crash_date"))
 
         # String fields
         string_fields = [
@@ -400,7 +399,7 @@ class DataSanitizer:
             "%Y-%m-%dT%H:%M:%S",  # ISO without microseconds
             "%Y-%m-%d %H:%M:%S",  # Space separated
             "%Y-%m-%d",  # Date only
-            "%m/%d/%Y %H:%M:%S %p",  # US format with AM/PM
+            "%m/%d/%Y %I:%M:%S %p",  # CSV uses a 12-hour clock
             "%m/%d/%Y",  # US date only
         ]
 

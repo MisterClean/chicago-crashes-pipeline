@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import csv
 from collections.abc import Callable, Sequence
+from contextlib import contextmanager
 from datetime import datetime
+from io import StringIO
+from time import perf_counter
 from typing import Any
+from uuid import uuid4
 
 from geoalchemy2.elements import WKTElement
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.base import SessionLocal, get_db
-from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
+from src.models.crashes import (Crash, CrashPerson, CrashVehicle,
+                                VisionZeroFatality)
+from src.models.ingestion import IngestionCheckpoint
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -151,6 +158,12 @@ class DatabaseService:
         session = self.session_factory()
 
         try:
+            if session.bind is not None and session.bind.dialect.name == "postgresql":
+                loader = StagedPublication(session)
+                loader.stage(model, records, prepare)
+                result = loader.publish()[model.__tablename__]
+                session.commit()
+                return {key: result[key] for key in ("inserted", "updated", "skipped")}
             for raw_record in records:
                 prepared = prepare(raw_record)
                 if not prepared:
@@ -191,6 +204,31 @@ class DatabaseService:
         )
 
         return {"inserted": inserted, "updated": updated, "skipped": skipped}
+
+    @contextmanager
+    def publication(self):
+        """Serialize ingestion across workers and publish all endpoints atomically.
+
+        A failed download, schema check, COPY, or merge rolls everything back.
+        The advisory lock is transaction-scoped and automatically released after
+        a crash or rollback. Callers retry a busy publisher as a job, not in-web.
+        """
+        session = self.session_factory()
+        try:
+            acquired = session.execute(
+                text("SELECT pg_try_advisory_xact_lock(784203615)")
+            ).scalar_one()
+            if not acquired:
+                raise RuntimeError(
+                    "Another ingestion publication is running; retry this job"
+                )
+            yield StagedPublication(session)
+            session.commit()
+        except BaseException:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     # ------------------------------------------------------------------
     # Record preparation helpers
@@ -340,6 +378,162 @@ class DatabaseService:
         self, records: Sequence[dict[str, Any]]
     ) -> dict[str, int]:
         return self.upsert_fatality_records(records)
+
+
+class StagedPublication:
+    """COPY bounded batches, then perform set-based, changed-only merges."""
+
+    def __init__(self, session) -> None:
+        self.session = session
+        self.tables: dict[str, dict[str, Any]] = {}
+
+    def checkpoint(self, endpoint: str) -> datetime | None:
+        checkpoint = self.session.get(IngestionCheckpoint, endpoint)
+        return checkpoint.source_updated_before if checkpoint is not None else None
+
+    def set_checkpoint(self, endpoint: str, upper_bound: datetime) -> None:
+        checkpoint = self.session.get(IngestionCheckpoint, endpoint)
+        if checkpoint is None:
+            self.session.add(
+                IngestionCheckpoint(
+                    endpoint=endpoint, source_updated_before=upper_bound
+                )
+            )
+        else:
+            checkpoint.source_updated_before = upper_bound
+
+    def stage_endpoint(
+        self, endpoint: str, records: Sequence[dict[str, Any]], service: DatabaseService
+    ) -> None:
+        models = {
+            "crashes": (Crash, service._prepare_crash_record),
+            "people": (CrashPerson, service._prepare_person_record),
+            "vehicles": (CrashVehicle, service._prepare_vehicle_record),
+            "fatalities": (VisionZeroFatality, service._prepare_fatality_record),
+        }
+        model, prepare = models[endpoint]
+        self.stage(model, records, prepare)
+
+    def stage(
+        self, model: type, records: Sequence[dict[str, Any]], prepare: Callable
+    ) -> None:
+        if not records:
+            return
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        prepared = [prepare(record) for record in records]
+        if any(record is None for record in prepared):
+            raise ValueError(
+                f"Invalid required fields in {model.__tablename__}; snapshot not published"
+            )
+        columns = sorted(prepared[0])
+        if any(sorted(record) != columns for record in prepared):
+            raise ValueError("Inconsistent canonical fields in ingestion batch")
+        target = model.__tablename__
+        if target not in self.tables:
+            stage = "ingest_" + uuid4().hex
+            selection = ", ".join(map(quote, columns))
+            self.session.execute(
+                text(
+                    f"CREATE TEMP TABLE {quote(stage)} ON COMMIT DROP AS "
+                    f"SELECT {selection} FROM {quote(target)} WITH NO DATA"
+                )
+            )
+            self.tables[target] = {
+                "stage": stage,
+                "model": model,
+                "columns": columns,
+                "rows": 0,
+            }
+        info = self.tables[target]
+        if info["columns"] != columns:
+            raise ValueError("Canonical schema changed between ingestion batches")
+        buffer = StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        for record in prepared:
+            values = []
+            for column in columns:
+                value = record[column]
+                if isinstance(value, WKTElement):
+                    value = f"SRID={value.srid};{value.data}"
+                if value == "\\N":
+                    raise ValueError("Reserved COPY null marker in source data")
+                values.append("\\N" if value is None else value)
+            writer.writerow(values)
+        buffer.seek(0)
+        column_sql = ", ".join(map(quote, columns))
+        sql = f"COPY {quote(info['stage'])} ({column_sql}) FROM STDIN WITH (FORMAT CSV, NULL '\\N')"
+        connection = self.session.connection().connection.driver_connection
+        with connection.cursor() as cursor:
+            cursor.copy_expert(sql, buffer)
+        info["rows"] += len(prepared)
+
+    def publish(self) -> dict[str, dict[str, Any]]:
+        """Validate unique source keys before changing any destination rows."""
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        for info in self.tables.values():
+            keys = [column.name for column in info["model"].__table__.primary_key]
+            key_sql = ", ".join(map(quote, keys))
+            self.session.execute(
+                text(f"CREATE UNIQUE INDEX ON {quote(info['stage'])} ({key_sql})")
+            )
+        results = {}
+        # Parent crashes must merge before related people and vehicles regardless
+        # of caller selection order; foreign keys stay enabled throughout.
+        order = {
+            "crashes": 0,
+            "crash_people": 1,
+            "crash_vehicles": 2,
+            "vision_zero_fatalities": 3,
+        }
+        for target, info in sorted(
+            self.tables.items(), key=lambda item: order[item[0]]
+        ):
+            merge_started = perf_counter()
+            stage = quote(info["stage"])
+            destination = quote(target)
+            keys = [column.name for column in info["model"].__table__.primary_key]
+            columns = info["columns"]
+            join = " AND ".join(f"d.{quote(key)} = s.{quote(key)}" for key in keys)
+            existing = self.session.execute(
+                text(f"SELECT count(*) FROM {stage} s JOIN {destination} d ON {join}")
+            ).scalar_one()
+            mutable = [column for column in columns if column not in keys]
+            changed = " OR ".join(
+                f"d.{quote(column)} IS DISTINCT FROM EXCLUDED.{quote(column)}"
+                for column in mutable
+            )
+            updates = ", ".join(
+                f"{quote(column)} = EXCLUDED.{quote(column)}" for column in mutable
+            )
+            if "updated_at" in info["model"].__table__.columns:
+                updates += ", updated_at = CURRENT_TIMESTAMP"
+            names = ", ".join(map(quote, columns))
+            selection = names
+            for timestamp_column in ("created_at", "updated_at"):
+                if (
+                    timestamp_column in info["model"].__table__.columns
+                    and timestamp_column not in columns
+                ):
+                    names += ", " + quote(timestamp_column)
+                    selection += ", CURRENT_TIMESTAMP"
+            conflict = ", ".join(map(quote, keys))
+            result = self.session.execute(
+                text(
+                    f"INSERT INTO {destination} AS d ({names}) SELECT {selection} FROM {stage} "
+                    f"ON CONFLICT ({conflict}) DO UPDATE SET {updates} WHERE {changed}"
+                )
+            )
+            inserted = info["rows"] - existing
+            updated = result.rowcount - inserted
+            results[target] = {
+                "inserted": inserted,
+                "updated": updated,
+                "skipped": existing - updated,
+                "unchanged": existing - updated,
+                "rejected": 0,
+                "merge_seconds": perf_counter() - merge_started,
+            }
+        return results
 
 
 __all__ = ["DatabaseService", "get_db"]

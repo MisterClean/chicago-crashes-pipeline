@@ -1,9 +1,9 @@
 """Pydantic models for API requests and responses."""
 
-from datetime import datetime
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SyncRequest(BaseModel):
@@ -15,11 +15,24 @@ class SyncRequest(BaseModel):
     end_date: str | None = Field(
         None, description="End date for sync in YYYY-MM-DD format"
     )
+    mode: Literal["api", "full", "incremental"] = "incremental"
     force: bool = Field(False, description="Force sync even if recently completed")
     endpoint: str | None = Field(
         None,
         description="Specific endpoint to sync (crashes, people, vehicles, fatalities)",
     )
+
+    @model_validator(mode="after")
+    def validate_date_range(self):
+        for value in (self.start_date, self.end_date):
+            if value is not None:
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError("Dates must use YYYY-MM-DD")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("Start date must not be after end date")
+        if self.mode == "full" and (self.start_date or self.end_date):
+            raise ValueError("Full refresh cannot have date filters")
+        return self
 
 
 class SyncResponse(BaseModel):
@@ -94,6 +107,7 @@ class EndpointInfo(BaseModel):
 class JobConfig(BaseModel):
     """Job configuration parameters."""
 
+    mode: Literal["api", "full", "incremental"] | None = None
     endpoints: list[str] | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -249,7 +263,10 @@ class SpatialLayerResponse(BaseModel):
     original_filename: str | None
     is_active: bool
     label_field: str | None = None
-    sort_type: str = Field(default='alphabetic', description="Sorting method: 'alphabetic', 'numeric', or 'natural'")
+    sort_type: str = Field(
+        default="alphabetic",
+        description="Sorting method: 'alphabetic', 'numeric', or 'natural'",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -268,7 +285,9 @@ class SpatialLayerUpdateRequest(BaseModel):
     description: str | None = None
     is_active: bool | None = None
     label_field: str | None = None
-    sort_type: str | None = Field(None, description="Sorting method: 'alphabetic', 'numeric', or 'natural'")
+    sort_type: str | None = Field(
+        None, description="Sorting method: 'alphabetic', 'numeric', or 'natural'"
+    )
 
 
 class FieldPreviewResponse(BaseModel):

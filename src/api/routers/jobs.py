@@ -318,7 +318,7 @@ async def execute_job(job_id: int, request: ExecuteJobRequest):
         )
 
         return ExecuteJobResponse(
-            message=f"Job {job_id} execution started",
+            message=f"Job {job_id} execution queued",
             execution_id=execution_id,
             job_id=job_id,
             status=JobStatus.PENDING,

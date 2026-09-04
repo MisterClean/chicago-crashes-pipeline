@@ -5,7 +5,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from src.models.base import Base
+from src.models import Base
 from src.utils.config import settings
 
 # Import all models to ensure they're registered with Base

@@ -1,0 +1,57 @@
+{
+  "checked_at": "2026-09-04T21:08:32.757779+00:00",
+  "datasets": {
+    "crashes": {
+      "ok": true,
+      "cursor_rows": [
+        {
+          "source_row_id": "row-zit5~ggwg~b6yh",
+          "source_updated_at": "2026-05-20T23:20:59.018Z"
+        },
+        {
+          "source_row_id": "row-zd3c-cej7~mi25",
+          "source_updated_at": "2026-05-20T23:20:59.018Z"
+        }
+      ]
+    },
+    "people": {
+      "ok": true,
+      "cursor_rows": [
+        {
+          "source_row_id": "row-9gy5~jthn~e6vc",
+          "source_updated_at": "2020-02-11T22:22:32.457Z"
+        },
+        {
+          "source_row_id": "row-rjme_v5w5.7qm3",
+          "source_updated_at": "2020-02-11T22:22:32.457Z"
+        }
+      ]
+    },
+    "vehicles": {
+      "ok": true,
+      "cursor_rows": [
+        {
+          "source_row_id": "row-t97h_et7g_9szj",
+          "source_updated_at": "2024-01-30T18:51:44.226Z"
+        },
+        {
+          "source_row_id": "row-7d8p-vm92~43mj",
+          "source_updated_at": "2024-01-30T18:51:44.226Z"
+        }
+      ]
+    },
+    "fatalities": {
+      "ok": true,
+      "cursor_rows": [
+        {
+          "source_row_id": "row-2mnn-78wj-j497",
+          "source_updated_at": "2026-09-02T17:27:56.298Z"
+        },
+        {
+          "source_row_id": "row-sc2z-98ng~e7rv",
+          "source_updated_at": "2026-09-02T17:27:56.298Z"
+        }
+      ]
+    }
+  }
+}
