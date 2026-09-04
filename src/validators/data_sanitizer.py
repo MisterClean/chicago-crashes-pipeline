@@ -2,6 +2,7 @@
 
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.utils.config import settings
@@ -238,14 +239,50 @@ class DataSanitizer:
         )
 
         # Text fields
-        text_fields = ["crash_location", "crash_circumstances", "geocoded_column"]
+        text_fields = ["crash_location", "crash_circumstances"]
         for field in text_fields:
             sanitized[field] = self._clean_text(record.get(field))
+        sanitized["geocoded_column"] = self._canonical_source_point(
+            record.get("geocoded_column")
+        )
 
         # Victim type
         sanitized["victim"] = self._clean_string(record.get("victim"))
 
         return sanitized
+
+    @staticmethod
+    def _canonical_source_point(value: Any) -> str | None:
+        """Normalize CSV WKT and SODA GeoJSON without altering source coordinates.
+
+        This archival field is independent of the separately validated latitude,
+        longitude, and derived PostGIS geometry used by location queries.
+        """
+        if value is None or value == "":
+            return None
+        if isinstance(value, dict) and value.get("type") == "Point":
+            coordinates = value.get("coordinates")
+            if not isinstance(coordinates, (list, tuple)) or len(coordinates) != 2:
+                raise ValueError("Source point must have two coordinates")
+        elif isinstance(value, str):
+            match = re.fullmatch(
+                r"POINT\s*\(\s*([^\s,]+)\s+([^\s,]+)\s*\)", value.strip(), re.IGNORECASE
+            )
+            if match is None:
+                raise ValueError("Source point must be WKT POINT or GeoJSON Point")
+            coordinates = match.groups()
+        else:
+            raise ValueError("Source point must be WKT POINT or GeoJSON Point")
+        try:
+            numbers = [Decimal(str(coordinate)) for coordinate in coordinates]
+        except InvalidOperation as error:
+            raise ValueError("Invalid source point coordinate") from error
+        if not all(number.is_finite() for number in numbers):
+            raise ValueError("Source point coordinates must be finite")
+        normalized = [
+            format(number.normalize(), "f") if number else "0" for number in numbers
+        ]
+        return f"POINT ({normalized[0]} {normalized[1]})"
 
     def remove_duplicates(
         self, records: list[dict[str, Any]], key_field: str

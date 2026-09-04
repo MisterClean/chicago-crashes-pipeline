@@ -18,6 +18,16 @@ from src.validators.data_sanitizer import DataSanitizer
 
 logger = get_logger(__name__)
 
+# The curated fatalities source currently includes records with no Person_ID.
+# Some nonempty IDs also identify conflicting records. Their identity cannot be
+# safely reconstructed. Exclude them explicitly while
+# retaining the complete downloaded file when archival is enabled. Tight bounds
+# prevent a mapping regression from silently discarding a large source segment.
+MAX_FATALITY_IDENTITY_EXCLUSIONS = 100
+MAX_FULL_FATALITY_REJECTION_FRACTION = 0.05
+MAX_REJECTION_SAMPLES = 20
+MAX_FATALITY_SOURCE_ROWS = 100000
+
 
 @dataclass
 class EndpointSyncResult:
@@ -32,6 +42,8 @@ class EndpointSyncResult:
     records_unchanged: int = 0
     records_rejected: int = 0
     timing_seconds: dict[str, float] = field(default_factory=dict)
+    rejection_reasons: dict[str, int] = field(default_factory=dict)
+    rejection_samples: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -148,6 +160,16 @@ class SyncService:
                         snapshot.timing_seconds[stage] = (
                             snapshot.timing_seconds.get(stage, 0) + seconds
                         )
+                    for reason, count in delta.rejection_reasons.items():
+                        snapshot.rejection_reasons[reason] = (
+                            snapshot.rejection_reasons.get(reason, 0) + count
+                        )
+                    snapshot.rejection_samples = (
+                        snapshot.rejection_samples + delta.rejection_samples
+                    )[:MAX_REJECTION_SAMPLES]
+                    result.source_manifests[endpoint]["catchup_validation"] = (
+                        catchup.source_manifests[endpoint]["validation"]
+                    )
                 for stage, seconds in catchup.timing_seconds.items():
                     result.timing_seconds[stage] = (
                         result.timing_seconds.get(stage, 0) + seconds
@@ -201,6 +223,8 @@ class SyncService:
                         "merge": 0.0,
                     }
                     endpoint_started = perf_counter()
+                    fatality_raw = []
+                    fatality_cleaned = []
                     result.endpoint_results[endpoint] = progress
                     if mode == "full":
                         batches = self.csv_client.iter_batches(
@@ -212,12 +236,21 @@ class SyncService:
                             raise ValueError(
                                 f"No source checkpoint for {endpoint}; run a full refresh first"
                             )
-                        batches = client.iter_incremental_batches(
-                            settings.api.endpoints[endpoint],
-                            checkpoint - timedelta(minutes=5),
-                            upper_bound,
-                            self.batch_size,
-                        )
+                        if endpoint == "fatalities":
+                            # A delta can hide another source row with the same
+                            # Person_ID. Revalidate this small source in full.
+                            batches = client.iter_batches(
+                                endpoint=settings.api.endpoints[endpoint],
+                                batch_size=self.batch_size,
+                                date_field=self._resolve_date_field(endpoint),
+                            )
+                        else:
+                            batches = client.iter_incremental_batches(
+                                settings.api.endpoints[endpoint],
+                                checkpoint - timedelta(minutes=5),
+                                upper_bound,
+                                self.batch_size,
+                            )
                     else:
                         batches = client.iter_batches(
                             endpoint=settings.api.endpoints[endpoint],
@@ -235,18 +268,49 @@ class SyncService:
                         progress.records_fetched += len(batch)
                         normalize_started = perf_counter()
                         cleaned = self._sanitize_batch(endpoint, batch)
+                        if endpoint == "fatalities":
+                            fatality_raw.extend(batch)
+                            fatality_cleaned.extend(cleaned)
+                            if len(fatality_raw) > MAX_FATALITY_SOURCE_ROWS:
+                                raise ValueError(
+                                    "Fatalities source exceeded bounded validation capacity"
+                                )
                         progress.timing_seconds["normalize"] += (
                             perf_counter() - normalize_started
                         )
                         copy_started = perf_counter()
-                        publication.stage_endpoint(
-                            endpoint, cleaned, self.database_service
-                        )
+                        if endpoint != "fatalities":
+                            publication.stage_endpoint(
+                                endpoint, cleaned, self.database_service
+                            )
                         progress.timing_seconds["copy"] += perf_counter() - copy_started
                         if batch_callback is not None:
                             batch_callback(progress)
                         fetch_started = perf_counter()
                     progress.timing_seconds["fetch"] += perf_counter() - fetch_started
+                    progress.timing_seconds["total"] = perf_counter() - endpoint_started
+                    if endpoint == "fatalities":
+                        validation_started = perf_counter()
+                        identified = self._reject_unidentified_fatalities(
+                            endpoint, fatality_raw, fatality_cleaned, progress
+                        )
+                        accepted = self._deduplicate_fatalities(identified, progress)
+                        progress.timing_seconds["normalize"] += (
+                            perf_counter() - validation_started
+                        )
+                        copy_started = perf_counter()
+                        publication.stage_endpoint(
+                            endpoint, accepted, self.database_service
+                        )
+                        progress.timing_seconds["copy"] += perf_counter() - copy_started
+                    self._validate_rejections(
+                        progress,
+                        (
+                            "full"
+                            if endpoint == "fatalities" and mode == "incremental"
+                            else mode
+                        ),
+                    )
                     progress.timing_seconds["total"] = perf_counter() - endpoint_started
                     if mode in {"full", "incremental"}:
                         publication.set_checkpoint(endpoint, upper_bound)
@@ -265,14 +329,26 @@ class SyncService:
                 )
                 progress.records_inserted = stats["inserted"]
                 progress.records_updated = stats["updated"]
-                progress.records_skipped = stats["skipped"]
+                progress.records_skipped = stats["skipped"] + progress.records_rejected
                 progress.records_unchanged = stats.get("unchanged", 0)
-                progress.records_rejected = stats.get("rejected", 0)
+                progress.records_rejected += stats.get("rejected", 0)
                 progress.timing_seconds["merge"] = stats.get("merge_seconds", 0)
                 progress.timing_seconds["total"] += stats.get("merge_seconds", 0)
         result.source_manifests = (
             dict(self.csv_client.manifests) if mode == "full" else {}
         )
+        for endpoint, progress in result.endpoint_results.items():
+            manifest = result.source_manifests.setdefault(
+                endpoint, {"transport": "soda"}
+            )
+            manifest["validation"] = {
+                "source_rows": progress.records_fetched,
+                "accepted_rows": progress.records_fetched - progress.records_rejected,
+                "rejected_rows": progress.records_rejected,
+                "rejection_reasons": dict(progress.rejection_reasons),
+                "rejection_samples": list(progress.rejection_samples),
+                "policy": "Fatalities missing IDs and all conflicting duplicate IDs excluded; identical copies coalesced; existing ambiguous destination rows retained; other invalid fields fail publication",
+            }
         result.completed_at = datetime.now(timezone.utc)
         result.timing_seconds["total"] = perf_counter() - started
         for stage in ("fetch", "normalize", "copy"):
@@ -285,6 +361,110 @@ class SyncService:
                 "download_seconds", 0
             )
         return result
+
+    @staticmethod
+    def _reject_unidentified_fatalities(
+        endpoint, raw_records, cleaned_records, progress
+    ):
+        """Record the known source exception without inventing a person identity."""
+        if endpoint != "fatalities":
+            return cleaned_records
+        accepted = []
+        first_row = progress.records_fetched - len(raw_records) + 1
+        for offset, (raw, cleaned) in enumerate(
+            zip(raw_records, cleaned_records, strict=True)
+        ):
+            if cleaned.get("person_id"):
+                accepted.append(cleaned)
+                continue
+            progress.records_rejected += 1
+            reason = "missing_person_id"
+            progress.rejection_reasons[reason] = (
+                progress.rejection_reasons.get(reason, 0) + 1
+            )
+            if len(progress.rejection_samples) < MAX_REJECTION_SAMPLES:
+                progress.rejection_samples.append(
+                    {
+                        "row": first_row + offset,
+                        "reason": reason,
+                        "source_row_id": raw.get("source_row_id"),
+                        "crash_date": str(raw.get("crash_date", ""))[:64],
+                    }
+                )
+        return accepted
+
+    @staticmethod
+    def _deduplicate_fatalities(records, progress):
+        """Keep unique identities, coalesce identical copies, reject conflicts."""
+        groups = {}
+        for record in records:
+            groups.setdefault(record["person_id"], []).append(record)
+        accepted = []
+        for person_id, group in groups.items():
+            if len(group) == 1:
+                accepted.append(group[0])
+                continue
+            identical = all(record == group[0] for record in group[1:])
+            reason = (
+                "identical_duplicate_person_id"
+                if identical
+                else "conflicting_person_id"
+            )
+            excluded = len(group) - 1 if identical else len(group)
+            progress.records_rejected += excluded
+            progress.rejection_reasons[reason] = (
+                progress.rejection_reasons.get(reason, 0) + excluded
+            )
+            differing_fields = sorted(
+                field
+                for field in group[0]
+                if any(record.get(field) != group[0][field] for record in group[1:])
+            )
+            progress.rejection_samples = (
+                progress.rejection_samples
+                + [
+                    {
+                        "reason": reason,
+                        "person_id": person_id,
+                        "source_rows": len(group),
+                        "excluded_rows": excluded,
+                        "different_fields": differing_fields,
+                    }
+                ]
+            )[-MAX_REJECTION_SAMPLES:]
+            if identical:
+                accepted.append(group[0])
+        return accepted
+
+    @staticmethod
+    def _validate_rejections(progress, mode):
+        if (
+            progress.name == "fatalities"
+            and mode == "full"
+            and progress.records_fetched == 0
+        ):
+            raise ValueError("Empty fatalities source; publication rejected")
+        if progress.records_rejected == 0:
+            return
+        if progress.records_rejected > MAX_FATALITY_IDENTITY_EXCLUSIONS:
+            raise ValueError(
+                "Too many fatalities with invalid or duplicate identity; publication rejected"
+            )
+        if (
+            mode == "full"
+            and progress.records_rejected / progress.records_fetched
+            > MAX_FULL_FATALITY_REJECTION_FRACTION
+        ):
+            raise ValueError(
+                "More than 5% of fatalities have invalid or duplicate identity; publication rejected"
+            )
+        logger.warning(
+            "Excluded source fatalities with invalid or duplicate identity",
+            endpoint=progress.name,
+            rejected=progress.records_rejected,
+            source_rows=progress.records_fetched,
+            rejection_samples=progress.rejection_samples,
+        )
 
     async def _sync_single_endpoint(
         self,

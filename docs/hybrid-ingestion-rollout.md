@@ -12,8 +12,12 @@ parent-first publication across the requested datasets. Set-based upserts update
 only changed rows. It does not delete records absent from the source.
 
 Full refresh establishes a checkpoint and immediately catches up source changes
-through SODA. Incrementals use bounded `:updated_at, :id` keyset pagination with a
-five-minute overlap, rather than filtering on the crash event date. An initial full
+through SODA. The three large datasets use bounded `:updated_at, :id` keyset pagination with a
+five-minute overlap, rather than filtering on the crash event date. The small
+fatalities dataset is re-read through SODA to detect conflicting identities across
+the full source: 25 missing-ID rows and nine rows with four reused IDs were
+explicitly excluded from its 1,048-row rollout rehearsal. Existing ambiguous
+destination rows remain unchanged. The validation manifest records exclusions. An initial full
 refresh is required for each endpoint. If catch-up fails, the validated full
 publication remains available and the checkpoint supports a later retry. Historical
 window commands continue to use API mode. Inclusive end dates include the whole day.
@@ -43,8 +47,12 @@ zero months and partial-month indicators. Map truncation is explicitly labelled.
 2. Stop old ingestion execution and disable the API scheduler during the coordinated
    cutover. Set `JOB_SCHEDULER_ENABLED=false` on the API (also the new default).
    Do not run old inline workers concurrently with the new publisher.
-3. Deploy the API and two services from the same revision. Select
-   `railway.worker.toml` for ingestion and `railway.exports.toml` for exports.
+3. Deploy the API and two services from the same revision. Configure the ingestion service start command as
+   `python -m src.worker --lane ingestion` and the export service as
+   `python -m src.worker --lane exports`, both using `docker/Dockerfile`.
+   Railway now rejects opting new services into legacy TOML configuration; deploy
+   workers from a clean package without those files and retain these settings on
+   the services (or migrate the whole project to reviewed Railway IaC).
    Worker services have no HTTP health endpoint or public domain. Supply the same
    database configuration through Railway private networking. Start with one replica
    per lane. Separate lanes prevent a full refresh delaying exports.
@@ -70,7 +78,7 @@ has room for staging tables, indexes and WAL during full publication.
 
 ## Verification and performance
 
-The production Docker image passed 200 Python tests, including real PostGIS tests
+The production Docker image passed 209 Python tests, including real PostGIS tests
 for atomic rollback, spatial filtering, snapshot consistency, leases and migrations.
 Frontend production build and two export-client tests passed. Browser QA used a
 synthetic 500-crash dataset; no synthetic records were written to production.
@@ -87,8 +95,10 @@ Detailed evidence lives in `docs/research/2026-09-04-data-engineering-review/`.
 ## Remaining deliberate limits
 
 Source deletions are not propagated. Source revision changes during a CSV download
-abort rather than publish an uncertain snapshot. Invalid keys/schema changes abort
-rather than silently drop rows. Individual source datasets do not offer one shared
+abort rather than publish an uncertain snapshot. Schema changes and invalid keys in the main crash datasets abort publication.
+The small curated fatalities dataset has explicit missing/conflicting-identity
+rejection accounting; source limitations and retained legacy rows are recorded in
+its validation manifest. Individual source datasets do not offer one shared
 transactional snapshot, although local publication is atomic. Common-download caches
 and prebuilt citywide artifacts await an explicit immutable publication version.
 Measure production download, normalization, COPY and merge timings before setting

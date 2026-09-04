@@ -16,7 +16,7 @@ from src.etl.soda_client import SODAClient
 from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from src.models.ingestion import IngestionCheckpoint
 from src.services.database_service import DatabaseService
-from src.services.sync_service import SyncService
+from src.services.sync_service import EndpointSyncResult, SyncService
 from src.validators.data_sanitizer import DataSanitizer
 
 
@@ -50,6 +50,63 @@ def test_end_date_includes_final_second_and_csv_clock():
         ].hour
         == 13
     )
+
+
+def test_fatality_csv_api_source_point_parity_without_chicago_bounds():
+    sanitizer = DataSanitizer()
+    common = {"person_id": "parity", "latitude": "40.0", "longitude": "-88.0"}
+    csv_row = sanitizer.sanitize_fatality_record(
+        dict(
+            common,
+            crash_date="07/19/2025 11:19:00 PM",
+            geocoded_column="POINT (-88.0000 40.0000)",
+        )
+    )
+    api_row = sanitizer.sanitize_fatality_record(
+        dict(
+            common,
+            crash_date="2025-07-19T23:19:00.000",
+            geocoded_column={"type": "Point", "coordinates": [-88.0, 40.0]},
+        )
+    )
+    assert csv_row == api_row
+    assert csv_row["latitude"] is None
+    assert csv_row["longitude"] is None
+    assert csv_row["geocoded_column"] == "POINT (-88 40)"
+    assert sanitizer._canonical_source_point(
+        "POINT (-87.58095357 41.79898927)"
+    ) == sanitizer._canonical_source_point(
+        {"type": "Point", "coordinates": [-87.58095357, 41.79898927]}
+    )
+    assert sanitizer._canonical_source_point(None) is None
+
+
+def test_fatality_point_transport_change_is_unchanged_in_postgres(postgres_service):
+    sanitizer = DataSanitizer()
+    common = {
+        "person_id": "parity",
+        "crash_date": "2025-07-19T23:19:00",
+        "latitude": "41.79898927",
+        "longitude": "-87.58095357",
+    }
+    csv_row = sanitizer.sanitize_fatality_record(
+        dict(common, geocoded_column="POINT (-87.58095357 41.79898927)")
+    )
+    api_row = sanitizer.sanitize_fatality_record(
+        dict(
+            common,
+            geocoded_column={
+                "type": "Point",
+                "coordinates": [-87.58095357, 41.79898927],
+            },
+        )
+    )
+    assert postgres_service.upsert_fatality_records([csv_row])["inserted"] == 1
+    assert postgres_service.upsert_fatality_records([api_row]) == {
+        "inserted": 0,
+        "updated": 0,
+        "skipped": 1,
+    }
 
 
 @pytest.mark.asyncio
@@ -304,3 +361,149 @@ def test_publication_lock_rejects_concurrent_writer(postgres_service):
         with pytest.raises(RuntimeError, match="Another ingestion"):
             with postgres_service.publication():
                 pytest.fail("Second publisher acquired the global lock")
+
+
+def test_missing_fatality_ids_are_explicit_and_diagnostics_bounded():
+    raw = [{"person_id": "", "crash_date": "2020-01-01"}] * 25
+    raw += [{"person_id": str(index)} for index in range(975)]
+    progress = EndpointSyncResult(name="fatalities", records_fetched=len(raw))
+    accepted = SyncService._reject_unidentified_fatalities(
+        "fatalities", raw, raw, progress
+    )
+    SyncService._validate_rejections(progress, "full")
+    assert len(accepted) == 975
+    assert progress.records_rejected == 25
+    assert progress.rejection_reasons == {"missing_person_id": 25}
+    assert len(progress.rejection_samples) == 20
+    assert progress.rejection_samples[0]["row"] == 1
+    assert progress.rejection_samples[-1]["row"] == 20
+    other = SyncService._reject_unidentified_fatalities("people", raw, raw, progress)
+    assert other is raw  # No general relaxation of required identity fields.
+
+
+@pytest.mark.parametrize(
+    "total,rejected,mode",
+    [(20, 2, "full"), (1000, 101, "full"), (101, 101, "incremental")],
+)
+def test_missing_fatality_id_guards(total, rejected, mode):
+    progress = EndpointSyncResult(
+        name="fatalities", records_fetched=total, records_rejected=rejected
+    )
+    with pytest.raises(ValueError, match="publication rejected"):
+        SyncService._validate_rejections(progress, mode)
+
+
+@pytest.mark.asyncio
+async def test_full_fatalities_publish_valid_rows_and_account_for_rejects(
+    postgres_service,
+):
+    class Snapshot:
+        manifests = {"fatalities": {"rows": 20}}
+
+        async def iter_batches(self, endpoint, batch_size):
+            yield [{"person_id": "", "crash_date": "01/01/2020 01:00:00 PM"}]
+            yield [
+                {"person_id": f"valid-{index}", "crash_date": "01/01/2020 01:00:00 PM"}
+                for index in range(19)
+            ]
+
+    class Delta:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def iter_incremental_batches(self, *args):
+            pytest.fail("Fatalities must revalidate all source identities")
+
+        async def iter_batches(self, **kwargs):
+            assert "start_date" not in kwargs
+            async for batch in Snapshot().iter_batches("fatalities", 100):
+                yield batch
+
+    result = await SyncService(
+        database_service=postgres_service, csv_client=Snapshot(), client_factory=Delta
+    ).sync(["fatalities"], mode="full")
+    assert result.total_inserted == 19
+    assert result.total_rejected == 2  # One excluded in each source pass.
+    assert result.total_skipped == 21
+    assert result.total_unchanged == 19
+    assert result.total_records == 40
+    manifest = result.source_manifests["fatalities"]
+    assert manifest["validation"]["accepted_rows"] == 19
+    assert manifest["validation"]["rejected_rows"] == 1
+    assert manifest["catchup_validation"]["rejected_rows"] == 1
+    with postgres_service.session_factory() as session:
+        assert session.query(VisionZeroFatality).count() == 19
+        assert session.get(IngestionCheckpoint, "fatalities") is not None
+
+
+def test_fatality_duplicates_keep_identical_and_reject_entire_conflict():
+    progress = EndpointSyncResult(name="fatalities")
+    rows = [
+        {"person_id": "same", "crash_date": "2020-01-01"},
+        {"person_id": "conflict", "crash_date": "2020-01-01"},
+        {"person_id": "unique", "crash_date": "2020-01-01"},
+        {"person_id": "same", "crash_date": "2020-01-01"},
+        {"person_id": "conflict", "crash_date": "2021-01-01"},
+    ]
+    accepted = SyncService._deduplicate_fatalities(rows, progress)
+    assert {row["person_id"] for row in accepted} == {"same", "unique"}
+    assert progress.records_rejected == 3
+    assert progress.rejection_reasons == {
+        "identical_duplicate_person_id": 1,
+        "conflicting_person_id": 2,
+    }
+    assert progress.rejection_samples[-1]["different_fields"] == ["crash_date"]
+    reversed_progress = EndpointSyncResult(name="fatalities")
+    reversed_rows = SyncService._deduplicate_fatalities(
+        list(reversed(rows)), reversed_progress
+    )
+    assert sorted(accepted, key=lambda row: row["person_id"]) == sorted(
+        reversed_rows, key=lambda row: row["person_id"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_fatality_conflicts_across_batches_preserve_existing_ambiguous_row(
+    postgres_service,
+):
+    original = DataSanitizer().sanitize_fatality_record(
+        {"person_id": "conflict", "crash_date": "2019-01-01"}
+    )
+    postgres_service.upsert_fatality_records([original])
+
+    class Source:
+        manifests = {"fatalities": {"rows": 42}}
+
+        async def iter_batches(self, *args, **kwargs):
+            yield [{"person_id": "conflict", "crash_date": "2020-01-01"}]
+            yield [
+                {"person_id": f"valid-{index}", "crash_date": "2020-01-01"}
+                for index in range(40)
+            ]
+            yield [{"person_id": "conflict", "crash_date": "2021-01-01"}]
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def iter_incremental_batches(self, *args):
+            pytest.fail("Fatalities must not read an incomplete identity delta")
+
+    result = await SyncService(
+        database_service=postgres_service, csv_client=Source(), client_factory=Source
+    ).sync(["fatalities"], mode="full")
+    assert result.total_inserted == 40
+    assert result.total_rejected == 4
+    assert result.source_manifests["fatalities"]["validation"]["rejection_reasons"] == {
+        "conflicting_person_id": 2
+    }
+    with postgres_service.session_factory() as session:
+        assert session.query(VisionZeroFatality).count() == 41
+        assert session.get(VisionZeroFatality, "conflict").crash_date == datetime(
+            2019, 1, 1
+        )
