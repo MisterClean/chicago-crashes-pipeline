@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from src.models.base import SessionLocal
@@ -55,45 +56,48 @@ def run_execution(execution_id: int, owner: str) -> None:
 def supervise_execution(
     execution_id: int, timeout: int, owner: str, stopping: threading.Event
 ) -> None:
-    child = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "src.worker",
-            "--execution",
-            str(execution_id),
-            "--owner",
-            owner,
-        ],
-        start_new_session=True,
-    )
-    deadline = time.monotonic() + timeout
-    error = None
-    try:
-        while child.poll() is None:
-            if stopping.wait(5):
-                error = "Worker shutting down"
-                break
-            if time.monotonic() >= deadline:
-                error = "Execution exceeded configured timeout"
-                break
-            if not renew_execution(execution_id, owner):
-                # Completed jobs need no heartbeat; allow the child to finish
-                # its final logging before deciding ownership was lost.
-                child.wait(timeout=10)
-                break
-    except Exception as exc:
-        error = str(exc)
-        logger.exception("Execution supervision failed")
-    finally:
-        if child.poll() is None:
-            os.killpg(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait()
-        finish_attempt(execution_id, owner, error)
+    # Parent-owned scratch space is removed even when the child is killed.
+    with TemporaryDirectory(prefix="crash-job-") as workdir:
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "src.worker",
+                "--execution",
+                str(execution_id),
+                "--owner",
+                owner,
+            ],
+            start_new_session=True,
+            env={**os.environ, "TMPDIR": workdir},
+        )
+        deadline = time.monotonic() + timeout
+        error = None
+        try:
+            while child.poll() is None:
+                if stopping.wait(5):
+                    error = "Worker shutting down"
+                    break
+                if time.monotonic() >= deadline:
+                    error = "Execution exceeded configured timeout"
+                    break
+                if not renew_execution(execution_id, owner):
+                    # Completed jobs need no heartbeat; allow the child to finish
+                    # its final logging before deciding ownership was lost.
+                    child.wait(timeout=10)
+                    break
+        except Exception as exc:
+            error = str(exc)
+            logger.exception("Execution supervision failed")
+        finally:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGTERM)
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.wait()
+            finish_attempt(execution_id, owner, error)
 
 
 def run_worker(lane: str = "all", once: bool = False) -> None:

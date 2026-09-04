@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import csv
+import json
+import os
+import sqlite3
 from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -16,8 +21,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from src.models.base import SessionLocal, get_db
-from src.models.crashes import (Crash, CrashPerson, CrashVehicle,
-                                VisionZeroFatality)
+from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from src.models.ingestion import IngestionCheckpoint
 from src.utils.logging import get_logger
 
@@ -154,8 +158,11 @@ class DatabaseService:
         records: Sequence[dict[str, Any]],
         prepare: Callable[[dict[str, Any]], dict[str, Any] | None],
     ) -> dict[str, int]:
+        if not records:
+            return {"inserted": 0, "updated": 0, "skipped": 0}
         inserted = updated = skipped = 0
         session = self.session_factory()
+        loader = None
 
         try:
             if session.bind is not None and session.bind.dialect.name == "postgresql":
@@ -193,6 +200,8 @@ class DatabaseService:
             )
             raise
         finally:
+            if loader is not None:
+                loader.close()
             session.close()
 
         logger.info(
@@ -214,6 +223,7 @@ class DatabaseService:
         a crash or rollback. Callers retry a busy publisher as a job, not in-web.
         """
         session = self.session_factory()
+        loader = None
         try:
             acquired = session.execute(
                 text("SELECT pg_try_advisory_xact_lock(784203615)")
@@ -222,12 +232,15 @@ class DatabaseService:
                 raise RuntimeError(
                     "Another ingestion publication is running; retry this job"
                 )
-            yield StagedPublication(session)
+            loader = StagedPublication(session)
+            yield loader
             session.commit()
         except BaseException:
             session.rollback()
             raise
         finally:
+            if loader is not None:
+                loader.close()
             session.close()
 
     # ------------------------------------------------------------------
@@ -381,11 +394,43 @@ class DatabaseService:
 
 
 class StagedPublication:
-    """COPY bounded batches, then perform set-based, changed-only merges."""
+    """Validate on worker disk, then merge bounded PostgreSQL batches atomically.
 
-    def __init__(self, session) -> None:
+    Only the rebuildable SQLite spool contains the complete incoming snapshot.
+    PostgreSQL temporary tables are created during publication and reused for at
+    most ``batch_size`` rows. Destination writes still share the caller's single
+    transaction; this bounds staging, not destination MVCC/WAL disk requirements.
+    """
+
+    def __init__(self, session, batch_size: int = 5000) -> None:
+        if batch_size < 1 or batch_size > 5000:
+            raise ValueError("Publication batch size must be between 1 and 5000")
         self.session = session
+        self.batch_size = batch_size
+        configured_limit = os.getenv("INGESTION_MAX_CHANGED_ROWS")
+        self.max_changed_rows = int(configured_limit) if configured_limit else None
+        if self.max_changed_rows is not None and self.max_changed_rows < 0:
+            raise ValueError("INGESTION_MAX_CHANGED_ROWS must be nonnegative")
+        self.preflight_counts: dict[str, dict[str, int]] = {}
         self.tables: dict[str, dict[str, Any]] = {}
+        configured_directory = os.getenv("INGESTION_SPOOL_DIR")
+        if configured_directory:
+            Path(configured_directory).mkdir(parents=True, exist_ok=True)
+        self._directory = TemporaryDirectory(
+            prefix="ingestion-spool-", dir=configured_directory
+        )
+        self.spool_path = Path(self._directory.name) / "validated.sqlite"
+        self.spool = sqlite3.connect(self.spool_path)
+        self.spool.execute(
+            "CREATE TABLE source_rows (dataset TEXT NOT NULL, source_key TEXT NOT NULL, "
+            "csv_record TEXT NOT NULL, PRIMARY KEY (dataset, source_key)) WITHOUT ROWID"
+        )
+        self._published = False
+        self._failed = False
+
+    def close(self) -> None:
+        self.spool.close()
+        self._directory.cleanup()
 
     def checkpoint(self, endpoint: str) -> datetime | None:
         checkpoint = self.session.get(IngestionCheckpoint, endpoint)
@@ -417,65 +462,84 @@ class StagedPublication:
     def stage(
         self, model: type, records: Sequence[dict[str, Any]], prepare: Callable
     ) -> None:
+        if self._published or self._failed:
+            raise RuntimeError("Cannot stage into a finished or invalid publication")
         if not records:
             return
-        quote = self.session.bind.dialect.identifier_preparer.quote
         prepared = [prepare(record) for record in records]
         if any(record is None for record in prepared):
+            self._failed = True
             raise ValueError(
                 f"Invalid required fields in {model.__tablename__}; snapshot not published"
             )
         columns = sorted(prepared[0])
         if any(sorted(record) != columns for record in prepared):
+            self._failed = True
             raise ValueError("Inconsistent canonical fields in ingestion batch")
         target = model.__tablename__
         if target not in self.tables:
-            stage = "ingest_" + uuid4().hex
-            selection = ", ".join(map(quote, columns))
-            self.session.execute(
-                text(
-                    f"CREATE TEMP TABLE {quote(stage)} ON COMMIT DROP AS "
-                    f"SELECT {selection} FROM {quote(target)} WITH NO DATA"
-                )
-            )
             self.tables[target] = {
-                "stage": stage,
+                "stage": "ingest_" + uuid4().hex,
                 "model": model,
                 "columns": columns,
                 "rows": 0,
             }
         info = self.tables[target]
         if info["columns"] != columns:
+            self._failed = True
             raise ValueError("Canonical schema changed between ingestion batches")
-        buffer = StringIO()
-        writer = csv.writer(buffer, lineterminator="\n")
-        for record in prepared:
-            values = []
-            for column in columns:
-                value = record[column]
-                if isinstance(value, WKTElement):
-                    value = f"SRID={value.srid};{value.data}"
-                if value == "\\N":
-                    raise ValueError("Reserved COPY null marker in source data")
-                values.append("\\N" if value is None else value)
-            writer.writerow(values)
-        buffer.seek(0)
-        column_sql = ", ".join(map(quote, columns))
-        sql = f"COPY {quote(info['stage'])} ({column_sql}) FROM STDIN WITH (FORMAT CSV, NULL '\\N')"
-        connection = self.session.connection().connection.driver_connection
-        with connection.cursor() as cursor:
-            cursor.copy_expert(sql, buffer)
+        keys = [column.name for column in model.__table__.primary_key]
+
+        def spool_rows():
+            buffer = StringIO()
+            writer = csv.writer(buffer, lineterminator="\n")
+            for record in prepared:
+                key_values = [record.get(key) for key in keys]
+                if any(value is None for value in key_values):
+                    raise ValueError(f"Missing source primary key for {target}")
+                # These models use text primary keys. Match COPY/PostgreSQL's
+                # text identity even if a direct caller supplies a numeric ID.
+                key_values = [str(value) for value in key_values]
+                values = []
+                for column in columns:
+                    value = record[column]
+                    if isinstance(value, WKTElement):
+                        value = f"SRID={value.srid};{value.data}"
+                    if value == "\\N":
+                        raise ValueError("Reserved COPY null marker in source data")
+                    values.append("\\N" if value is None else value)
+                buffer.seek(0)
+                buffer.truncate(0)
+                writer.writerow(values)
+                yield target, json.dumps(
+                    key_values, separators=(",", ":")
+                ), buffer.getvalue()
+
+        try:
+            self.spool.executemany(
+                "INSERT INTO source_rows VALUES (?, ?, ?)", spool_rows()
+            )
+            self.spool.commit()
+        except sqlite3.IntegrityError as error:
+            self._failed = True
+            self.spool.rollback()
+            raise ValueError(
+                f"Duplicate source primary key in {target}; publication rejected"
+            ) from error
+        except BaseException:
+            self._failed = True
+            self.spool.rollback()
+            raise
         info["rows"] += len(prepared)
 
     def publish(self) -> dict[str, dict[str, Any]]:
-        """Validate unique source keys before changing any destination rows."""
+        """Replay validated rows through bounded temp tables without committing."""
+        if self._published or self._failed:
+            raise RuntimeError("Cannot publish a finished or invalid source spool")
+        self._published = True
         quote = self.session.bind.dialect.identifier_preparer.quote
-        for info in self.tables.values():
-            keys = [column.name for column in info["model"].__table__.primary_key]
-            key_sql = ", ".join(map(quote, keys))
-            self.session.execute(
-                text(f"CREATE UNIQUE INDEX ON {quote(info['stage'])} ({key_sql})")
-            )
+        if self.max_changed_rows is not None:
+            self._preflight()
         results = {}
         # Parent crashes must merge before related people and vehicles regardless
         # of caller selection order; foreign keys stay enabled throughout.
@@ -490,50 +554,174 @@ class StagedPublication:
         ):
             merge_started = perf_counter()
             stage = quote(info["stage"])
-            destination = quote(target)
             keys = [column.name for column in info["model"].__table__.primary_key]
-            columns = info["columns"]
-            join = " AND ".join(f"d.{quote(key)} = s.{quote(key)}" for key in keys)
-            existing = self.session.execute(
-                text(f"SELECT count(*) FROM {stage} s JOIN {destination} d ON {join}")
-            ).scalar_one()
-            mutable = [column for column in columns if column not in keys]
-            changed = " OR ".join(
-                f"d.{quote(column)} IS DISTINCT FROM EXCLUDED.{quote(column)}"
-                for column in mutable
-            )
-            updates = ", ".join(
-                f"{quote(column)} = EXCLUDED.{quote(column)}" for column in mutable
-            )
-            if "updated_at" in info["model"].__table__.columns:
-                updates += ", updated_at = CURRENT_TIMESTAMP"
-            names = ", ".join(map(quote, columns))
-            selection = names
-            for timestamp_column in ("created_at", "updated_at"):
-                if (
-                    timestamp_column in info["model"].__table__.columns
-                    and timestamp_column not in columns
-                ):
-                    names += ", " + quote(timestamp_column)
-                    selection += ", CURRENT_TIMESTAMP"
-            conflict = ", ".join(map(quote, keys))
-            result = self.session.execute(
-                text(
-                    f"INSERT INTO {destination} AS d ({names}) SELECT {selection} FROM {stage} "
-                    f"ON CONFLICT ({conflict}) DO UPDATE SET {updates} WHERE {changed}"
-                )
-            )
-            inserted = info["rows"] - existing
-            updated = result.rowcount - inserted
-            results[target] = {
-                "inserted": inserted,
-                "updated": updated,
-                "skipped": existing - updated,
-                "unchanged": existing - updated,
+            self._ensure_temp_table(target, info)
+            key_names = ", ".join(map(quote, keys))
+            stats = {
+                "inserted": 0,
+                "updated": 0,
+                "skipped": 0,
+                "unchanged": 0,
                 "rejected": 0,
-                "merge_seconds": perf_counter() - merge_started,
             }
+            cursor = self.spool.execute(
+                "SELECT csv_record FROM source_rows WHERE dataset = ? ORDER BY source_key",
+                (target,),
+            )
+            while rows := cursor.fetchmany(self.batch_size):
+                self._copy_batch(info, rows)
+                # Fresh statistics keep joins focused on the small source batch.
+                self.session.execute(text(f"ANALYZE {stage} ({key_names})"))
+                batch_stats = self._merge_batch(target, info, len(rows))
+                for key in stats:
+                    stats[key] += batch_stats[key]
+                # Created in this transaction: PostgreSQL truncates in-place,
+                # without retaining old temp relfilenodes until final commit.
+                self.session.execute(text(f"TRUNCATE {stage}"))
+            stats["merge_seconds"] = perf_counter() - merge_started
+            results[target] = stats
         return results
+
+    def _ensure_temp_table(self, target: str, info: dict[str, Any]) -> None:
+        if info.get("temp_created"):
+            return
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        stage = quote(info["stage"])
+        columns = ", ".join(map(quote, info["columns"]))
+        keys = ", ".join(
+            quote(column.name) for column in info["model"].__table__.primary_key
+        )
+        self.session.execute(
+            text(
+                f"CREATE TEMP TABLE {stage} ON COMMIT DROP AS SELECT {columns} FROM {quote(target)} WITH NO DATA"
+            )
+        )
+        self.session.execute(text(f"CREATE UNIQUE INDEX ON {stage} ({keys})"))
+        info["temp_created"] = True
+
+    def _preflight(self) -> None:
+        """Count target mutations before any writes, bounded by the same temp size.
+
+        This is a conservative operational row guard, not a byte/free-space
+        guarantee: row widths, indexes, WAL, and MVCC versions still vary.
+        """
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        for target, info in self.tables.items():
+            self._ensure_temp_table(target, info)
+            stage = quote(info["stage"])
+            keys = ", ".join(
+                quote(column.name) for column in info["model"].__table__.primary_key
+            )
+            totals = {"inserted": 0, "updated": 0}
+            cursor = self.spool.execute(
+                "SELECT csv_record FROM source_rows WHERE dataset = ? ORDER BY source_key",
+                (target,),
+            )
+            while rows := cursor.fetchmany(self.batch_size):
+                self._copy_batch(info, rows)
+                self.session.execute(text(f"ANALYZE {stage} ({keys})"))
+                counts = self._batch_change_counts(target, info)
+                for key in totals:
+                    totals[key] += counts[key]
+                self.session.execute(text(f"TRUNCATE {stage}"))
+            self.preflight_counts[target] = totals
+        changed = sum(sum(counts.values()) for counts in self.preflight_counts.values())
+        logger.info(
+            "Ingestion change preflight",
+            changed_rows=changed,
+            max_changed_rows=self.max_changed_rows,
+            tables=self.preflight_counts,
+        )
+        if changed > self.max_changed_rows:
+            raise ValueError(
+                f"Publication would change {changed} rows, exceeding INGESTION_MAX_CHANGED_ROWS={self.max_changed_rows}; "
+                f"no destination rows written. Counts: {json.dumps(self.preflight_counts, sort_keys=True)}. "
+                "Review database disk headroom and source changes before raising this operational guard."
+            )
+
+    def _batch_change_counts(self, target: str, info: dict[str, Any]) -> dict[str, int]:
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        keys = [column.name for column in info["model"].__table__.primary_key]
+        join = " AND ".join(f"existing.{quote(key)} = s.{quote(key)}" for key in keys)
+        source_changed = " OR ".join(
+            f"existing.{quote(column)} IS DISTINCT FROM s.{quote(column)}"
+            for column in info["columns"]
+            if column not in keys
+        )
+        absent = f"existing.{quote(keys[0])} IS NULL"
+        row = self.session.execute(
+            text(
+                f"SELECT count(*) FILTER (WHERE {absent}) AS inserted, "
+                f"count(*) FILTER (WHERE NOT ({absent}) AND ({source_changed})) AS updated "
+                f"FROM {quote(info['stage'])} s LEFT JOIN {quote(target)} existing ON {join}"
+            )
+        ).one()
+        return {"inserted": row.inserted, "updated": row.updated}
+
+    def _copy_batch(self, info: dict[str, Any], rows: list[tuple[str]]) -> None:
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        buffer = StringIO("".join(row[0] for row in rows))
+        columns = ", ".join(map(quote, info["columns"]))
+        sql = f"COPY {quote(info['stage'])} ({columns}) FROM STDIN WITH (FORMAT CSV, NULL '\\N')"
+        connection = self.session.connection().connection.driver_connection
+        with connection.cursor() as cursor:
+            cursor.copy_expert(sql, buffer)
+
+    def _merge_batch(
+        self, target: str, info: dict[str, Any], row_count: int
+    ) -> dict[str, int]:
+        quote = self.session.bind.dialect.identifier_preparer.quote
+        stage = quote(info["stage"])
+        destination = quote(target)
+        keys = [column.name for column in info["model"].__table__.primary_key]
+        columns = info["columns"]
+        join = " AND ".join(f"existing.{quote(key)} = s.{quote(key)}" for key in keys)
+        existing_count = self.session.execute(
+            text(
+                f"SELECT count(*) FROM {stage} s JOIN {destination} existing ON {join}"
+            )
+        ).scalar_one()
+        mutable = [column for column in columns if column not in keys]
+        changed = " OR ".join(
+            f"d.{quote(column)} IS DISTINCT FROM EXCLUDED.{quote(column)}"
+            for column in mutable
+        )
+        source_changed = " OR ".join(
+            f"existing.{quote(column)} IS DISTINCT FROM s.{quote(column)}"
+            for column in mutable
+        )
+        updates = ", ".join(
+            f"{quote(column)} = EXCLUDED.{quote(column)}" for column in mutable
+        )
+        if "updated_at" in info["model"].__table__.columns:
+            updates += ", updated_at = CURRENT_TIMESTAMP"
+        names = ", ".join(map(quote, columns))
+        selection = ", ".join(f"s.{quote(column)}" for column in columns)
+        for timestamp_column in ("created_at", "updated_at"):
+            if (
+                timestamp_column in info["model"].__table__.columns
+                and timestamp_column not in columns
+            ):
+                names += ", " + quote(timestamp_column)
+                selection += ", CURRENT_TIMESTAMP"
+        conflict = ", ".join(map(quote, keys))
+        result = self.session.execute(
+            text(
+                f"INSERT INTO {destination} AS d ({names}) SELECT {selection} FROM {stage} s "
+                f"LEFT JOIN {destination} existing ON {join} "
+                f"WHERE existing.{quote(keys[0])} IS NULL OR ({source_changed}) "
+                f"ON CONFLICT ({conflict}) DO UPDATE SET {updates} WHERE {changed}"
+            )
+        )
+        inserted = row_count - existing_count
+        updated = result.rowcount - inserted
+        return {
+            "inserted": inserted,
+            "updated": updated,
+            "skipped": existing_count - updated,
+            "unchanged": existing_count - updated,
+            "rejected": 0,
+        }
 
 
 __all__ = ["DatabaseService", "get_db"]

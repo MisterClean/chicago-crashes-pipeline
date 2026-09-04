@@ -42,8 +42,8 @@ class Crash(Base, TimestampMixin):
     crash_date_original = Column(DateTime)
 
     # Location coordinates
-    latitude = Column(Float, index=True)
-    longitude = Column(Float, index=True)
+    latitude = Column(Float)
+    longitude = Column(Float)
     geometry = Column(Geometry("POINT", srid=4326), index=True)
 
     # Beat and location codes

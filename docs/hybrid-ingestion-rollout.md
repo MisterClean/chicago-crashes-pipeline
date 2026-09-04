@@ -1,12 +1,12 @@
 # Hybrid ingestion and durable workers
 
 Branch: `codex/hybrid-ingestion-worker-exports`. These changes are implemented and
-locally verified; they have not been deployed to production.
+deployed to production for the API, export worker and frontend. Ingestion activation is in progress on the existing 5 GB Hobby volume.
 
 ## What changes
 
 Full refreshes stream the portal CSV exports, apply the checked-in display-header
-to API-field mapping, normalize records, and COPY into PostgreSQL staging tables.
+to API-field mapping, normalize records, and validate them in a worker-local SQLite spool. Publication uses COPY through reusable PostgreSQL temporary tables capped at 5,000 rows.
 The loader verifies source revision/count, headers and primary keys before atomic,
 parent-first publication across the requested datasets. Set-based upserts update
 only changed rows. It does not delete records absent from the source.
@@ -74,7 +74,7 @@ run directly. Prefer queued jobs in production for leases and durable execution
 history. Optional `INGESTION_ARCHIVE_DIR` retains validated CSVs and provenance on
 a mounted volume; without it downloads are temporary. Set a retention policy for
 that volume. Ensure workers have disk for staging CSVs plus ZIPs, and PostgreSQL
-has room for staging tables, indexes and WAL during full publication.
+has room for changed rows, indexes and WAL during full publication. Set `INGESTION_MAX_CHANGED_ROWS=25000` on the constrained production ingestion worker: a complete insert/update count runs before destination mutation. This is a row guard, not a byte guarantee. Unchanged rows are filtered before conflict handling to avoid unnecessary tuple locks and WAL. Worker scratch files are removed when supervised jobs exit. The existing `copy` timing currently measures spool serialization; PostgreSQL COPY is included in publication timing.
 
 ## Verification and performance
 
@@ -104,3 +104,21 @@ and prebuilt citywide artifacts await an explicit immutable publication version.
 Measure production download, normalization, COPY and merge timings before setting
 refresh targets or increasing concurrency. No Dagster or additional queue broker is
 required for this implementation.
+
+## Production storage maintenance (2026-09-04)
+
+The three main tables contain 5,719,379 rows. Before maintenance they occupied
+3,801 MiB including 1,593 MiB of indexes. A verified 453,526,232-byte custom
+backup was saved in the private bucket at `backups/2026-09-04/pre-hybrid-rollout.dump`
+(SHA-256 `ee599bda2792b8934677b573939bee3635ca825b76a2dd0bf80c77a7fb505741`).
+Migration `c94f5a271d08` removes unused latitude/longitude B-tree indexes while
+retaining the spatial GiST index, and lowers autovacuum/analyze thresholds.
+Production migration and VACUUM ANALYZE reclaimed 85 MiB of files and made dead
+row space reusable; database size became 3,804 MiB. No plan upgrade was made.
+The 128-character source crash identifier repeated across parent and child
+records and their indexes is a substantial remaining cost. Replacing internal
+join keys with bigint IDs is a future migration, not part of this release.
+
+Production export queue/worker/bucket/signed-download smoke passed with a ZIP
+containing one crash, two people, two vehicles and a manifest. Browser QA of
+the Loop report reconciled the heatmap total to the summary (3,652 crashes).

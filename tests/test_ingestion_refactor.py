@@ -15,7 +15,7 @@ from src.etl.csv_client import CSVClient
 from src.etl.soda_client import SODAClient
 from src.models.crashes import Crash, CrashPerson, CrashVehicle, VisionZeroFatality
 from src.models.ingestion import IngestionCheckpoint
-from src.services.database_service import DatabaseService
+from src.services.database_service import DatabaseService, StagedPublication
 from src.services.sync_service import EndpointSyncResult, SyncService
 from src.validators.data_sanitizer import DataSanitizer
 
@@ -298,9 +298,7 @@ def test_duplicate_snapshot_keys_fail_before_publication(postgres_service):
     record = DataSanitizer().sanitize_crash_record(
         {"crash_record_id": "dup", "crash_date": "2026-01-01"}
     )
-    from sqlalchemy.exc import IntegrityError
-
-    with pytest.raises(IntegrityError):
+    with pytest.raises(ValueError, match="Duplicate source primary key"):
         with postgres_service.publication() as publication:
             publication.stage_endpoint("crashes", [record, record], postgres_service)
             publication.publish()
@@ -507,3 +505,168 @@ async def test_fatality_conflicts_across_batches_preserve_existing_ambiguous_row
         assert session.get(VisionZeroFatality, "conflict").crash_date == datetime(
             2019, 1, 1
         )
+
+
+def test_worker_spool_validates_composite_keys_without_postgres(tmp_path, monkeypatch):
+    monkeypatch.setenv("INGESTION_SPOOL_DIR", str(tmp_path))
+    service = DatabaseService()
+    loader = StagedPublication(None)
+    spool_path = loader.spool_path
+    try:
+        loader.stage(
+            CrashPerson,
+            [{"crash_record_id": "A", "person_id": "same"}],
+            service._prepare_person_record,
+        )
+        loader.stage(
+            CrashPerson,
+            [{"crash_record_id": "B", "person_id": "same"}],
+            service._prepare_person_record,
+        )
+        assert (
+            loader.spool.execute("SELECT count(*) FROM source_rows").fetchone()[0] == 2
+        )
+        assert spool_path.exists()
+        with pytest.raises(ValueError, match="Duplicate source primary key"):
+            loader.stage(
+                CrashPerson,
+                [{"crash_record_id": "A", "person_id": "same"}],
+                service._prepare_person_record,
+            )
+        with pytest.raises(RuntimeError, match="invalid source spool"):
+            loader.publish()
+    finally:
+        loader.close()
+    assert not spool_path.exists()
+
+
+def test_cross_batch_duplicate_rejected_before_any_target_write(postgres_service):
+    record = DataSanitizer().sanitize_crash_record(
+        {"crash_record_id": "duplicate", "crash_date": "2026-01-01"}
+    )
+    with pytest.raises(ValueError, match="Duplicate source primary key"):
+        with postgres_service.publication() as publication:
+            publication.stage_endpoint("crashes", [record], postgres_service)
+            assert publication.session.query(Crash).count() == 0
+            assert (
+                publication.session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_class WHERE relnamespace = pg_my_temp_schema() AND relname LIKE 'ingest_%'"
+                    )
+                ).scalar_one()
+                == 0
+            )
+            publication.stage_endpoint("crashes", [record], postgres_service)
+    with postgres_service.session_factory() as session:
+        assert session.query(Crash).count() == 0
+
+
+def test_later_merge_failure_rolls_back_earlier_batches_and_checkpoint(
+    postgres_service, monkeypatch
+):
+    records = [
+        DataSanitizer().sanitize_crash_record(
+            {"crash_record_id": str(index), "crash_date": "2026-01-01"}
+        )
+        for index in range(5)
+    ]
+    observed = []
+    with pytest.raises(ValueError, match="late batch failure"):
+        with postgres_service.publication() as publication:
+            publication.batch_size = 2
+            publication.stage_endpoint("crashes", records, postgres_service)
+            publication.set_checkpoint("crashes", datetime.now(timezone.utc))
+            merge = publication._merge_batch
+
+            def failing_merge(*args):
+                stats = merge(*args)
+                observed.append(publication.session.query(Crash).count())
+                if len(observed) == 2:
+                    raise ValueError("late batch failure")
+                return stats
+
+            monkeypatch.setattr(publication, "_merge_batch", failing_merge)
+            publication.publish()
+    assert observed == [2, 4]
+    with postgres_service.session_factory() as session:
+        assert session.query(Crash).count() == 0
+        assert session.query(IngestionCheckpoint).count() == 0
+
+
+def test_postgres_stage_is_reused_and_bounded(postgres_service, monkeypatch):
+    records = [
+        DataSanitizer().sanitize_crash_record(
+            {"crash_record_id": str(index), "crash_date": "2026-01-01"}
+        )
+        for index in range(11)
+    ]
+    loaded_counts = []
+    stage_names = set()
+    with postgres_service.publication() as publication:
+        publication.batch_size = 2
+        publication.stage_endpoint("crashes", records, postgres_service)
+        original_copy = publication._copy_batch
+
+        def measured_copy(info, rows):
+            stage_names.add(info["stage"])
+            original_copy(info, rows)
+            loaded_counts.append(
+                publication.session.execute(
+                    text(f'SELECT count(*) FROM "{info["stage"]}"')
+                ).scalar_one()
+            )
+
+        monkeypatch.setattr(publication, "_copy_batch", measured_copy)
+        assert publication.publish()["crashes"]["inserted"] == 11
+        assert (
+            publication.session.execute(
+                text(f'SELECT count(*) FROM "{next(iter(stage_names))}"')
+            ).scalar_one()
+            == 0
+        )
+    assert loaded_counts == [2, 2, 2, 2, 2, 1]
+    assert len(stage_names) == 1
+
+
+def test_unchanged_prefilter_preserves_tuple_lock_and_audit_metadata(postgres_service):
+    record = DataSanitizer().sanitize_crash_record(
+        {"crash_record_id": "unchanged", "crash_date": "2026-01-01"}
+    )
+    postgres_service.upsert_crash_records([record])
+    query = text(
+        "SELECT xmin::text, xmax::text, ctid::text, updated_at FROM crashes WHERE crash_record_id = 'unchanged'"
+    )
+    with postgres_service.session_factory() as session:
+        before = tuple(session.execute(query).one())
+    assert postgres_service.upsert_crash_records([record])["skipped"] == 1
+    with postgres_service.session_factory() as session:
+        assert tuple(session.execute(query).one()) == before
+
+
+def test_change_budget_refuses_before_writes_and_allows_unchanged(
+    postgres_service, monkeypatch
+):
+    original = DataSanitizer().sanitize_crash_record(
+        {"crash_record_id": "original", "crash_date": "2026-01-01"}
+    )
+    postgres_service.upsert_crash_records([original])
+    monkeypatch.setenv("INGESTION_MAX_CHANGED_ROWS", "1")
+    with pytest.raises(ValueError, match="would change 2 rows"):
+        with postgres_service.publication() as publication:
+            publication.batch_size = 1
+            publication.stage_endpoint(
+                "crashes",
+                [
+                    dict(original, street_name="CHANGED"),
+                    dict(original, crash_record_id="new"),
+                ],
+                postgres_service,
+            )
+            publication.set_checkpoint("crashes", datetime.now(timezone.utc))
+            publication.publish()
+    with postgres_service.session_factory() as session:
+        assert session.query(Crash).count() == 1
+        assert session.get(Crash, "original").street_name is None
+        assert session.query(IngestionCheckpoint).count() == 0
+    monkeypatch.setenv("INGESTION_MAX_CHANGED_ROWS", "0")
+    assert postgres_service.upsert_crash_records([original])["skipped"] == 1
