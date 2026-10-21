@@ -35,7 +35,7 @@ Set backend service variables through the platform's secret/configuration manage
 | `DAILY_SYNC` | `false` until source publication, boundaries and backup are verified |
 | `DUCKDB_MEMORY_LIMIT`, `DUCKDB_THREADS` | `192MB`, `2` |
 | `PUBLIC_CACHE_BYTES` | `16777216` |
-| `API_KEY` | Existing authorized server/admin secret, at least 32 bytes |
+| `API_KEY` | New cryptographically random server/admin secret, at least 32 bytes |
 | `EXPORT_ENDPOINT`, `EXPORT_BUCKET` | Private S3-compatible endpoint and bucket |
 | `EXPORT_ACCESS_KEY_ID`, `EXPORT_SECRET_ACCESS_KEY` | Private bucket credentials |
 | `EXPORT_REGION` | Provider region; `auto` when supported |
@@ -75,6 +75,8 @@ gosu 10001:10001 /usr/local/bin/crashes-server backup \
 
 Inspect every command's exit status and durable receipt before proceeding. Downloads must pass schema, content hash, row-count and stable source-revision checks. The seed must publish all four datasets with `production_complete=true` and `profiling_only=false`; do not pass `--profiling`. Complete CSV exports are acquired independently and do not establish one cross-dataset snapshot. Reusing the same operation ID is only appropriate for replaying the same verified inputs.
 
+If a portal CSV lags behind the API and fails the count proof, keep that attempt quarantined for review. Use `download --api --directory /data/bootstrap/sources-api --datasets crashes,people,vehicles,fatalities` to acquire complete datasets in a new directory, then seed from that directory. This ordered API fallback still requires exact counts and a stable revision; never use a partial CSV as production data. Allow sufficient volume capacity for a rejected bulk attempt and its replacement.
+
 Seed initializes an empty spatial catalog. Boundary import accepts that empty initialized catalog and refuses to overwrite populated catalog tables. Verify the imported layer/feature counts against the capture, including exact IDs, WKB geometries, properties, labels, active flags, sort order and timestamps. A previously populated or partially failed candidate needs explicit recovery; do not delete its catalog to make an import pass.
 
 The backup command checkpoints and verifies paired DuckDB/SQLite files and publishes a manifest only after successful verification. With the configured private storage, require a successful remote backup receipt under the separate `backups/` object prefix. Retain the verified boundary archive and source receipts through cutover. Only clean up the dedicated source staging directory after successful publication, boundary verification and backup.
@@ -94,12 +96,12 @@ After private checks pass, switch the frontend/backend routing and verify the pu
 
    ```sh
    BASE_URL="http://127.0.0.1:${PORT:-8000}"
-   curl --fail-with-body --silent --show-error \
-     --header "X-API-Key: $API_KEY" --request POST \
-     "$BASE_URL/jobs/scheduler/start"
-   curl --fail-with-body --silent --show-error \
-     --header "X-API-Key: $API_KEY" \
-     "$BASE_URL/jobs/scheduler/status"
+   printf 'X-API-Key: %s\n' "$API_KEY" | \
+     curl --fail-with-body --silent --show-error --header @- --request POST \
+       "$BASE_URL/jobs/scheduler/start"
+   printf 'X-API-Key: %s\n' "$API_KEY" | \
+     curl --fail-with-body --silent --show-error --header @- \
+       "$BASE_URL/jobs/scheduler/status"
    ```
 
    Require `scheduler_enabled=true`, `is_running=true` and `status="running"`. A successful start enables checking due jobs on the next worker tick; it does not require a job to be running immediately.

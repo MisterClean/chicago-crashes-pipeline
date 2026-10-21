@@ -75,7 +75,7 @@ target/release/crashes-server download --api --directory .local/sources-api \
 target/release/crashes-server seed --source-dir .local/sources-api
 ```
 
-A new seed initializes an empty spatial catalog. Upload your own boundaries through `/admin` after starting the application. Custom boundaries and database files are not bundled with the repository. A fresh portal population should not replace an existing deployment's historical data; use the [snapshot migration procedure](docs/rust-migration.md#preserve-an-existing-deployment) for that.
+A new seed initializes an empty spatial catalog. Upload your own boundaries through `/admin` after starting the application. Custom boundaries and database files are not bundled with the repository. For an existing deployment, choose deliberately: [clean portal facts with preserved boundaries](docs/railway-bootstrap.md), or a [snapshot migration](docs/rust-migration.md#preserve-an-existing-deployment) that retains historical facts and operations.
 
 ### Run the application
 
