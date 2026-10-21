@@ -9,6 +9,7 @@ import Map, {
   type MapLayerMouseEvent,
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { setWorkerUrl } from "maplibre-gl";
 import {
   DEFAULT_VIEW_STATE,
   MIN_ZOOM,
@@ -18,19 +19,20 @@ import {
 } from "@/lib/mapStyles";
 import { fetchCrashesGeoJSON, type CrashGeoJSON, type CrashFeature } from "@/lib/api";
 
+setWorkerUrl(new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).toString());
+
 interface CrashMapProps {
   startDate?: string;
   endDate?: string;
 }
 
-// Basemap style URL - requires NEXT_PUBLIC_PROTOMAPS_KEY env var
-// Get a free key at: https://protomaps.com/
+// A public style works without credentials; deployments can supply another style.
 const PROTOMAPS_KEY = process.env.NEXT_PUBLIC_PROTOMAPS_KEY;
 const BASEMAP_STYLE_URL =
   process.env.NEXT_PUBLIC_BASEMAP_URL ||
   (PROTOMAPS_KEY
     ? `https://api.protomaps.com/styles/v4/light/en.json?key=${PROTOMAPS_KEY}`
-    : "");
+    : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json");
 
 export function CrashMap({ startDate, endDate }: CrashMapProps) {
   const [crashes, setCrashes] = useState<CrashGeoJSON | null>(null);

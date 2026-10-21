@@ -7,31 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- Initial open source release preparation
-- Comprehensive Docusaurus documentation site with 20+ guides
-- GitHub Actions workflows for CI/CD (tests, linting, security scans, Docker builds)
-- Security best practices guide in docs/operations/security.md
-- Enhanced testing documentation with mocking patterns and integration test examples
-- Configuration validation with security warnings
-- Issue and pull request templates for GitHub
-- CONTRIBUTING.md with contributor guidelines
-- SECURITY.md with vulnerability reporting process
-- README badges for build status and code quality
-
 ### Changed
-- CORS configuration now uses environment variables (no more wildcards by default)
-- Docker Compose credentials use environment variables instead of hardcoded values
-- README documentation links updated to match actual file structure
-- All documentation sanitized to remove user-specific paths
-- Enhanced .env.example with comprehensive security warnings and examples
 
-### Security
-- Removed hardcoded database credentials from docker-compose.yml
-- Fixed wildcard CORS configuration to use specific allowed origins
-- Added configuration validation that blocks insecure production deployments
-- Enhanced password requirements and security warnings
-- Documented security best practices for production deployments
+- Replace the application backend, ingestion, scheduler, spatial processing, exports and recovery with Rust, DuckDB 2.0.0 and SQLite.
+- Retain the Next.js dashboard and embed a safe administration UI with a shared proxy path.
+- Consolidate background work into one backend owner and replica, with bounded SQL, queue, source, export and conversion resources.
+- Add transactional publication receipts, preserved migration history and paired recovery snapshots.
+- Revamp installation, configuration, API, security and contributor documentation for the Rust application.
+- Run native tests on Linux/macOS and build the production backend/frontend images without workstation configuration.
+
+### Removed
+
+- Retired Python application, prototype, dependencies, tests and Alembic migrations. Earlier implementations remain in Git history.
+- PostGIS/worker/tile-server development stack, generated Docusaurus site and stale application documentation.
+- Bundled database files and workstation-specific notes from the publishable source tree.
 
 ## [1.0.0] - 2025-01-XX
 

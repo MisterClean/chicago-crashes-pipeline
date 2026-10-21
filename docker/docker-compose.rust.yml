@@ -1,0 +1,30 @@
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.rust
+    environment:
+      APP_ENV: development
+      BIND_ADDRESS: 0.0.0.0
+      PORT: 8000
+      DAILY_SYNC: "false"
+      DUCKDB_MEMORY_LIMIT: 192MB
+      API_KEY: ${API_KEY:-}
+    ports: ["127.0.0.1:8003:8000"]
+    volumes: ["${CRASHES_DATA_DIR:-../.local/data}:/data"]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 2
+    restart: unless-stopped
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        BACKEND_URL: http://backend:8000
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports: ["127.0.0.1:3001:3001"]
+    depends_on: [backend]
+    mem_limit: 256m
+    memswap_limit: 256m
+    restart: unless-stopped

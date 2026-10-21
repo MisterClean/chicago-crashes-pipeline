@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { LocationReportMap } from "./components/LocationReportMap";
 import { ReportStats } from "./components/ReportStats";
 import { CausesTable } from "./components/CausesTable";
+import { TimingHeatmap, RoadUserTable } from "./components/ReportPatterns";
 import { TrendSparklines } from "./components/TrendSparklines";
 import {
   fetchLocationReport,
@@ -66,6 +67,7 @@ export default function LocationReportPage() {
   const [report, setReport] = useState<LocationReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exportApiKey, setExportApiKey] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [showExportOptions, setShowExportOptions] = useState(false);
@@ -99,120 +101,105 @@ export default function LocationReportPage() {
   const [loadingPlaceTypes, setLoadingPlaceTypes] = useState(false);
   const [loadingPlaceItems, setLoadingPlaceItems] = useState(false);
 
-  // Track if we've done the initial auto-load
   const hasAutoLoadedRef = useRef(false);
+  const reportRequestRef = useRef<AbortController | null>(null);
 
-  // Load place types on mount
-  useEffect(() => {
-    const loadPlaceTypes = async () => {
-      setLoadingPlaceTypes(true);
-      try {
-        const types = await fetchPlaceTypes();
-        setPlaceTypes(types);
-      } catch (err) {
-        console.error("Failed to load place types:", err);
-      } finally {
-        setLoadingPlaceTypes(false);
-      }
-    };
-    loadPlaceTypes();
+  const clearReport = useCallback(() => {
+    reportRequestRef.current?.abort();
+    setLoading(false);
+    setReport(null);
+    setReportDateRange(null);
+    setError(null);
+    setExportError(null);
   }, []);
 
-  // Track if this is the initial load (for preserving default place ID)
-  const isInitialPlaceLoadRef = useRef(true);
-
-  // Load place items when place type changes
-  useEffect(() => {
-    if (!selectedPlaceType) {
-      setPlaceItems([]);
-      setSelectedPlaceId(null);
-      setSelectedPlaceGeometry(null);
-      return;
+  const generateReport = useCallback(async (
+    request: LocationReportRequest,
+    dateRange: { start: string; end: string }
+  ) => {
+    reportRequestRef.current?.abort();
+    const controller = new AbortController();
+    reportRequestRef.current = controller;
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchLocationReport(request, controller.signal);
+      if (!controller.signal.aborted) {
+        setReport(result);
+        setReportDateRange(dateRange);
+      }
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setError(err instanceof Error ? err.message : "Failed to generate report");
+      }
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
     }
+  }, []);
 
-    // Capture whether we should preserve the default before async operation
-    const shouldPreserveDefault =
-      isInitialPlaceLoadRef.current &&
-      selectedPlaceType === DEFAULT_PLACE_TYPE;
+  useEffect(() => () => reportRequestRef.current?.abort(), []);
 
-    const loadPlaceItems = async () => {
-      setLoadingPlaceItems(true);
-      setPlaceItems([]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoadingPlaceTypes(true);
+    fetchPlaceTypes(controller.signal)
+      .then((types) => { if (!controller.signal.aborted) setPlaceTypes(types); })
+      .catch((err) => { if (!controller.signal.aborted) console.error("Failed to load place types:", err); })
+      .finally(() => { if (!controller.signal.aborted) setLoadingPlaceTypes(false); });
+    return () => controller.abort();
+  }, []);
 
-      // Only clear the place ID if this isn't the initial load with default place type
-      if (!shouldPreserveDefault) {
-        setSelectedPlaceId(null);
-        setSelectedPlaceGeometry(null);
-      }
-      isInitialPlaceLoadRef.current = false;
-
-      try {
-        const items = await fetchPlaceItems(selectedPlaceType);
-        setPlaceItems(items);
-      } catch (err) {
-        console.error("Failed to load place items:", err);
-      } finally {
-        setLoadingPlaceItems(false);
-      }
-    };
-    loadPlaceItems();
+  // The type-change handler clears the ID in the same render. Effects only load
+  // their own type, so Strict Mode replay cannot clear the initial Loop default.
+  useEffect(() => {
+    const controller = new AbortController();
+    setPlaceItems([]);
+    if (!selectedPlaceType) {
+      setLoadingPlaceItems(false);
+      return () => controller.abort();
+    }
+    setLoadingPlaceItems(true);
+    fetchPlaceItems(selectedPlaceType, controller.signal)
+      .then((items) => { if (!controller.signal.aborted) setPlaceItems(items); })
+      .catch((err) => { if (!controller.signal.aborted) console.error("Failed to load place items:", err); })
+      .finally(() => { if (!controller.signal.aborted) setLoadingPlaceItems(false); });
+    return () => controller.abort();
   }, [selectedPlaceType]);
 
-  // Load place geometry when place is selected
   useEffect(() => {
-    if (!selectedPlaceType || !selectedPlaceId) {
-      setSelectedPlaceGeometry(null);
-      return;
-    }
-
-    const loadPlaceGeometry = async () => {
-      try {
-        const result = await fetchPlaceGeometry(selectedPlaceType, selectedPlaceId);
-        setSelectedPlaceGeometry(result.geometry);
-        // Only clear report on user-initiated changes, not initial load
-        if (hasAutoLoadedRef.current) {
-          setReport(null);
-        }
-      } catch (err) {
-        console.error("Failed to load place geometry:", err);
-        setSelectedPlaceGeometry(null);
-      }
-    };
-    loadPlaceGeometry();
+    const controller = new AbortController();
+    setSelectedPlaceGeometry(null);
+    if (!selectedPlaceType || !selectedPlaceId) return () => controller.abort();
+    fetchPlaceGeometry(selectedPlaceType, selectedPlaceId, controller.signal)
+      .then((result) => { if (!controller.signal.aborted) setSelectedPlaceGeometry(result.geometry); })
+      .catch((err) => { if (!controller.signal.aborted) console.error("Failed to load place geometry:", err); });
+    return () => controller.abort();
   }, [selectedPlaceType, selectedPlaceId]);
 
-  // Auto-generate report on initial page load when geometry is ready
   useEffect(() => {
-    if (
-      !hasAutoLoadedRef.current &&
-      selectedPlaceGeometry &&
-      selectedPlaceType === DEFAULT_PLACE_TYPE &&
-      selectedPlaceId === DEFAULT_PLACE_ID
-    ) {
+    if (!hasAutoLoadedRef.current && selectedPlaceGeometry &&
+        selectedPlaceType === DEFAULT_PLACE_TYPE && selectedPlaceId === DEFAULT_PLACE_ID) {
       hasAutoLoadedRef.current = true;
-      // Trigger report generation
-      const autoGenerateReport = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-          const request: LocationReportRequest = {
-            place_type: selectedPlaceType,
-            place_id: selectedPlaceId,
-            start_date: startDate,
-            end_date: endDate,
-          };
-          const result = await fetchLocationReport(request);
-          setReport(result);
-          setReportDateRange({ start: startDate, end: endDate });
-        } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to generate report");
-        } finally {
-          setLoading(false);
-        }
-      };
-      autoGenerateReport();
+      void generateReport({
+        place_type: selectedPlaceType, place_id: selectedPlaceId,
+        start_date: startDate, end_date: endDate,
+      }, { start: startDate, end: endDate });
     }
-  }, [selectedPlaceGeometry, selectedPlaceType, selectedPlaceId, startDate, endDate]);
+  }, [selectedPlaceGeometry, selectedPlaceType, selectedPlaceId, startDate, endDate, generateReport]);
+
+  const handlePlaceTypeChange = (placeType: string | null) => {
+    setSelectedPlaceType(placeType);
+    setSelectedPlaceId(null);
+    setPlaceItems([]);
+    setSelectedPlaceGeometry(null);
+    clearReport();
+  };
+
+  const handlePlaceChange = (placeId: string | null) => {
+    setSelectedPlaceId(placeId);
+    setSelectedPlaceGeometry(null);
+    clearReport();
+  };
 
   // Date preset handler
   const setDatePreset = useCallback((days: number, label: string) => {
@@ -232,15 +219,20 @@ export default function LocationReportPage() {
   // Handle center selection - clear report when user clicks new location
   const handleCenterSelect = useCallback((center: [number, number]) => {
     setSelectedCenter(center);
-    setReport(null);  // Clear old report so new circle renders
-    setError(null);
-  }, []);
+    clearReport();
+  }, [clearReport]);
+
+  const handlePolygonComplete = useCallback((polygon: [number, number][]) => {
+    clearReport();
+    setSelectedPolygon(polygon);
+  }, [clearReport]);
 
   // Handle custom radius input
   const handleCustomRadiusChange = (value: string) => {
     setCustomRadiusInput(value);
     const numValue = parseInt(value, 10);
     if (!isNaN(numValue) && numValue > 0 && numValue <= 26400) {
+      clearReport();
       setSelectedRadius(numValue);
     }
   };
@@ -269,24 +261,8 @@ export default function LocationReportPage() {
   };
 
   const handleGenerateReport = async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const request = buildLocationRequest();
-      if (!request) {
-        setLoading(false);
-        return;
-      }
-
-      const result = await fetchLocationReport(request);
-      setReport(result);
-      setReportDateRange({ start: startDate, end: endDate });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate report");
-    } finally {
-      setLoading(false);
-    }
+    const request = buildLocationRequest();
+    if (request) await generateReport(request, { start: startDate, end: endDate });
   };
 
   const handleExport = async () => {
@@ -314,19 +290,12 @@ export default function LocationReportPage() {
     setExportError(null);
 
     try {
-      const { blob, filename } = await exportLocationReport({
+      const url = await exportLocationReport({
         ...request,
         datasets: exportDatasets,
-      });
+      }, exportApiKey);
 
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      window.location.assign(url);
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Failed to export data");
     } finally {
@@ -335,6 +304,7 @@ export default function LocationReportPage() {
   };
 
   const handleClearSelection = () => {
+    clearReport();
     setSelectedCenter(null);
     setSelectedPolygon(null);
     setSelectedPlaceType(null);
@@ -376,6 +346,7 @@ export default function LocationReportPage() {
               <div className="flex gap-2">
                 <button
                   onClick={() => {
+                    clearReport();
                     setSelectionMode("radius");
                     setSelectedPolygon(null);
                     setSelectedPlaceType(null);
@@ -392,6 +363,7 @@ export default function LocationReportPage() {
                 </button>
                 <button
                   onClick={() => {
+                    clearReport();
                     setSelectionMode("polygon");
                     setSelectedCenter(null);
                     setSelectedPlaceType(null);
@@ -408,6 +380,7 @@ export default function LocationReportPage() {
                 </button>
                 <button
                   onClick={() => {
+                    clearReport();
                     setSelectionMode("place");
                     setSelectedCenter(null);
                     setSelectedPolygon(null);
@@ -439,6 +412,7 @@ export default function LocationReportPage() {
                     value={radiusToSlider(selectedRadius)}
                     onChange={(e) => {
                       const newRadius = sliderToRadius(Number(e.target.value));
+                      clearReport();
                       setSelectedRadius(newRadius);
                       setCustomRadiusInput(""); // Clear custom input when using slider
                     }}
@@ -480,7 +454,7 @@ export default function LocationReportPage() {
                 <div className="space-y-2">
                   <select
                     value={selectedPlaceType || ""}
-                    onChange={(e) => setSelectedPlaceType(e.target.value || null)}
+                    onChange={(e) => handlePlaceTypeChange(e.target.value || null)}
                     disabled={loadingPlaceTypes}
                     className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm"
                   >
@@ -495,7 +469,7 @@ export default function LocationReportPage() {
                   </select>
                   <select
                     value={selectedPlaceId || ""}
-                    onChange={(e) => setSelectedPlaceId(e.target.value || null)}
+                    onChange={(e) => handlePlaceChange(e.target.value || null)}
                     disabled={!selectedPlaceType || loadingPlaceItems}
                     className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm disabled:opacity-50"
                   >
@@ -731,6 +705,11 @@ export default function LocationReportPage() {
                         </label>
                       ))}
                     </div>
+                    <label className="block mt-3 text-xs text-gray-600 dark:text-gray-300">
+                      API key (if required by this server)
+                      <input type="password" autoComplete="off" value={exportApiKey} onChange={(event) => setExportApiKey(event.target.value)} className="mt-1 w-full rounded border p-2 bg-white dark:bg-gray-900" />
+                      <span className="block mt-1">Kept only for this page session.</span>
+                    </label>
                     {exportError && (
                       <p className="mt-2 text-xs text-red-600 dark:text-red-400">
                         {exportError}
@@ -745,13 +724,14 @@ export default function LocationReportPage() {
                           : "bg-gray-300 text-gray-500 dark:bg-gray-700 dark:text-gray-400"
                       }`}
                     >
-                      {exporting ? "Exporting..." : "Download Export"}
+                      {exporting ? "Preparing export..." : "Download Export"}
                     </button>
                   </div>
                 )}
               </div>
             )}
           </div>
+          {report?.map_truncated && <p className="px-4 py-2 text-sm text-amber-800 dark:text-amber-300" role="status">Map shows the latest {report.crashes_geojson.features.length.toLocaleString()} of {report.stats.total_crashes.toLocaleString()} crashes. Statistics and charts include the full selection.</p>}
           <LocationReportMap
             mode={selectionMode}
             selectedCenter={selectedCenter}
@@ -759,7 +739,7 @@ export default function LocationReportPage() {
             selectedPolygon={selectedPolygon}
             selectedPlaceGeometry={selectedPlaceGeometry}
             onCenterSelect={handleCenterSelect}
-            onPolygonComplete={setSelectedPolygon}
+            onPolygonComplete={handlePolygonComplete}
             reportData={report}
             startDate={reportDateRange?.start ?? ""}
             endDate={reportDateRange?.end ?? ""}
@@ -771,13 +751,16 @@ export default function LocationReportPage() {
           <>
             {/* Stats Cards */}
             <ReportStats stats={report.stats} />
+            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Injury and fatality summaries use crash records. Road-user counts and cost estimates use linked person records, which can differ as the source datasets are revised.</p>
+            <TimingHeatmap data={report.hour_day_counts || []} />
+            <RoadUserTable data={report.road_user_severity || []} />
 
             {/* Two-column layout for trends and causes */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
               {/* Trend Sparklines */}
               <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6">
                 <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-                  Monthly Trends (Last 12 Months)
+                  Monthly Trends — Selected Period
                 </h2>
                 <TrendSparklines data={report.monthly_trends} />
               </div>

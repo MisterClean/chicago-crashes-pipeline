@@ -1,106 +1,23 @@
-# Chicago Crash Dashboard
+# Chicago crashes dashboard
 
-Public dashboard for visualizing Chicago traffic crash data. Built by [Lakeview Urbanists](https://lakeviewurbanists.org).
+Next.js, React, TypeScript and MapLibre frontend for the Rust/DuckDB API. Use Node 22 (or a newer supported Node release) and run these commands from this directory:
 
-## Features
-
-- **Interactive Map**: Visualize crash locations with severity-based color coding
-- **Trend Charts**: Weekly crash trends with injury and fatality data
-- **Filtering**: Filter by date range to analyze specific time periods
-- **Real-time Data**: Updated daily from the Chicago Open Data Portal
-
-## Tech Stack
-
-- **Framework**: Next.js 15 (App Router)
-- **Mapping**: react-map-gl + MapLibre GL JS
-- **Charts**: Recharts
-- **Styling**: Tailwind CSS
-- **Backend**: FastAPI (data API) + Martin (vector tiles)
-- **Database**: PostgreSQL + PostGIS
-
-## Development
-
-### Prerequisites
-
-- Node.js 22+
-- Docker and Docker Compose
-- Backend services running (see main project README)
-
-### Local Development
-
-```bash
-# Install dependencies
-npm install
-
-# Start development server (port 3001)
+```sh
+npm ci
 npm run dev
+```
 
-# Build for production
+The dashboard runs on port 3001. `BACKEND_URL` defaults to `http://127.0.0.1:8003`. Browser requests use `/api`; Next.js rewrites them to the Rust backend. `/admin` proxies the embedded admin UI. Set `BACKEND_URL` at build time and runtime, and rebuild after changing it.
+
+The default basemap is CARTO Positron and needs no key. `NEXT_PUBLIC_BASEMAP_URL` can select another MapLibre style at build time. MapLibre requires WebGL 2 and access to the style's tiles/glyphs. Never place a server secret in a `NEXT_PUBLIC_*` variable.
+
+```sh
+npm run typecheck
+npm test
 npm run build
-
-# Run production build
-npm start
+npm run start
 ```
 
-### Environment Variables
+The production Dockerfile uses Next.js standalone output, copies static assets and runs as the unprivileged Node user. Docker builds accept `BACKEND_URL` and `NEXT_PUBLIC_BASEMAP_URL` arguments. Railway's service configuration uses the same build/runtime backend address requirement.
 
-Create `.env.local` for development:
-
-```env
-# API endpoints (defaults work with docker-compose)
-NEXT_PUBLIC_API_URL=/api/backend
-BACKEND_URL=http://localhost:8000
-TILES_URL=http://localhost:3000
-```
-
-## Full Stack Deployment
-
-See the main project's `docker/` directory for complete deployment:
-
-```bash
-# Download Chicago basemap tiles (one-time setup)
-./docker/tiles/download-basemap.sh
-
-# Start all services
-docker-compose -f docker/docker-compose.fullstack.yml up -d
-
-# Access the dashboard
-open http://localhost
-```
-
-### Services
-
-| Service  | Port | Description                |
-|----------|------|----------------------------|
-| nginx    | 80   | Reverse proxy (main entry) |
-| frontend | 3000 | Next.js dashboard          |
-| backend  | 8000 | FastAPI data API           |
-| martin   | 3000 | Vector tile server         |
-| postgres | 5432 | PostGIS database           |
-
-## API Endpoints
-
-The dashboard consumes these backend endpoints:
-
-- `GET /api/dashboard/stats` - Aggregate statistics
-- `GET /api/dashboard/trends/weekly` - Weekly trend data
-- `GET /api/dashboard/crashes/geojson` - Crash locations as GeoJSON
-- `GET /tiles/{layer}/{z}/{x}/{y}` - Vector tiles from Martin
-
-## Contributing
-
-This project is open source! Contributions welcome.
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file in the main repository.
-
-## Credits
-
-- Data: [Chicago Open Data Portal](https://data.cityofchicago.org)
-- Organization: [Lakeview Urbanists](https://lakeviewurbanists.org)
+See the root [README](../README.md), [operations guide](../docs/rust-migration.md), and [API contracts](../docs/research/rust-api-compatibility-2026-10-21.md).

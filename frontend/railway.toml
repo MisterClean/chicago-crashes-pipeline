@@ -1,12 +1,11 @@
 # =============================================================================
 # Railway Configuration - Chicago Crash Dashboard (Frontend)
 # =============================================================================
-# Next.js frontend service - using Nixpacks for simpler builds
+# Next.js frontend service
 # =============================================================================
 
 [build]
-# Let Nixpacks auto-detect Next.js
-builder = "NIXPACKS"
+builder = "RAILPACK"
 
 [deploy]
 # Start command

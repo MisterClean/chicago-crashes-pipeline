@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chicago Crashes Pipeline - Admin Portal</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
+    <link href="/admin/styles.css" rel="stylesheet">
+</head>
+<body class="admin-modern">
+    <div class="admin-background"></div>
+
+    <!-- Top Navigation Bar -->
+    <nav class="app-nav">
+        <div class="app-nav-container">
+            <a href="/" class="app-nav-brand">
+                <i class="bi bi-database-fill me-2"></i>
+                Chicago Crashes Pipeline
+            </a>
+            <ul class="app-nav-links">
+                <li><a href="/admin" class="app-nav-link" data-nav="admin">
+                    <i class="bi bi-gear-wide-connected me-1"></i>Admin Portal
+                </a></li>
+                <li><a href="https://github.com/MisterClean/chicago-crashes-pipeline#readme" class="app-nav-link" data-nav="docs">
+                    <i class="bi bi-book me-1"></i>Documentation
+                </a></li>
+                <li><a href="https://github.com/MisterClean/chicago-crashes-pipeline/blob/main/docs/research/rust-api-compatibility-2026-10-21.md" class="app-nav-link" data-nav="api">
+                    <i class="bi bi-code-square me-1"></i>API Docs
+                </a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <div class="container-xxl py-4 app-shell">
+        <!-- Header -->
+        <header class="app-header glass-surface p-4 mb-4 rounded-4">
+            <div class="d-flex align-items-start justify-content-between flex-wrap gap-3">
+                <div>
+                    <span class="eyebrow text-uppercase text-muted fw-semibold">Chicago Crash Data</span>
+                    <h1 class="app-title mb-1"><i class="bi bi-gear-wide-connected me-2"></i>System Settings</h1>
+                    <p class="lead text-muted mb-0">Monitor jobs, spatial assets, and pipeline health.</p>
+                </div>
+                <div class="d-flex align-items-center gap-3 flex-wrap">
+                    <span class="status-chip">
+                        <span class="status-dot pulse"></span>
+                        <span id="api-status">API Connected</span>
+                    </span>
+                    <button class="btn btn-outline-dark btn-sm px-3" onclick="refreshData()">
+                        <i class="bi bi-arrow-clockwise me-1"></i> Refresh
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <div class="glass-surface nav-surface rounded-4 p-2 mb-4">
+            <ul class="nav nav-pills modern-tabs flex-nowrap overflow-auto" id="mainTabs" role="tablist">
+                <li class="nav-item flex-grow-1 flex-md-grow-0" role="presentation">
+                    <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard" type="button" role="tab">
+                        <span class="icon-circle me-2"><i class="bi bi-speedometer2"></i></span>
+                        Dashboard
+                    </button>
+                </li>
+                <li class="nav-item flex-grow-1 flex-md-grow-0" role="presentation">
+                    <button class="nav-link" id="jobs-tab" data-bs-toggle="tab" data-bs-target="#jobs" type="button" role="tab">
+                        <span class="icon-circle me-2"><i class="bi bi-calendar-check"></i></span>
+                        Scheduled Jobs
+                    </button>
+                </li>
+                <li class="nav-item flex-grow-1 flex-md-grow-0" role="presentation">
+                    <button class="nav-link" id="executions-tab" data-bs-toggle="tab" data-bs-target="#executions" type="button" role="tab">
+                        <span class="icon-circle me-2"><i class="bi bi-clock-history"></i></span>
+                        Execution History
+                    </button>
+                </li>
+                <li class="nav-item flex-grow-1 flex-md-grow-0" role="presentation">
+                    <button class="nav-link" id="data-management-tab" data-bs-toggle="tab" data-bs-target="#data-management" type="button" role="tab">
+                        <span class="icon-circle me-2"><i class="bi bi-database"></i></span>
+                        Data Management
+                    </button>
+                </li>
+                <li class="nav-item flex-grow-1 flex-md-grow-0" role="presentation">
+                    <button class="nav-link" id="spatial-layers-tab" data-bs-toggle="tab" data-bs-target="#spatial-layers" type="button" role="tab">
+                        <span class="icon-circle me-2"><i class="bi bi-map"></i></span>
+                        Spatial Layers
+                    </button>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="tab-content" id="mainTabContent">
+            <!-- Dashboard Tab -->
+            <div class="tab-pane fade show active" id="dashboard" role="tabpanel">
+                <div class="row g-4 mb-4">
+                    <div class="col-xl-3 col-md-6">
+                        <div class="surface metric-card h-100">
+                            <div class="d-flex align-items-start justify-content-between">
+                                <div>
+                                    <p class="metric-label text-muted text-uppercase mb-1">Total Jobs</p>
+                                    <h2 class="metric-value" id="total-jobs">--</h2>
+                                </div>
+                                <span class="metric-icon bg-primary-subtle text-primary"><i class="bi bi-calendar-check"></i></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-md-6">
+                        <div class="surface metric-card h-100">
+                            <div class="d-flex align-items-start justify-content-between">
+                                <div>
+                                    <p class="metric-label text-muted text-uppercase mb-1">Active Jobs</p>
+                                    <h2 class="metric-value text-success" id="active-jobs">--</h2>
+                                </div>
+                                <span class="metric-icon bg-success-subtle text-success"><i class="bi bi-play-circle"></i></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-md-6">
+                        <div class="surface metric-card h-100">
+                            <div class="d-flex align-items-start justify-content-between">
+                                <div>
+                                    <p class="metric-label text-muted text-uppercase mb-1">Running Jobs</p>
+                                    <h2 class="metric-value text-warning" id="running-jobs">--</h2>
+                                </div>
+                                <span class="metric-icon bg-warning-subtle text-warning"><i class="bi bi-arrow-repeat"></i></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3 col-md-6">
+                        <div class="surface metric-card h-100">
+                            <div class="d-flex align-items-start justify-content-between">
+                                <div>
+                                    <p class="metric-label text-muted text-uppercase mb-1">Failed (24h)</p>
+                                    <h2 class="metric-value text-danger" id="failed-jobs">--</h2>
+                                </div>
+                                <span class="metric-icon bg-danger-subtle text-danger"><i class="bi bi-exclamation-triangle"></i></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="row g-4">
+                    <div class="col-lg-6">
+                        <div class="surface h-100 p-4">
+                            <div class="surface-heading d-flex justify-content-between align-items-start mb-3">
+                                <div>
+                                    <span class="eyebrow text-muted text-uppercase">Automation</span>
+                                    <h4 class="surface-title mb-0"><i class="bi bi-lightning-charge me-2"></i>Quick Actions</h4>
+                                </div>
+                                <span class="small text-muted">Trigger jobs instantly</span>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-primary" onclick="executeJob('full_refresh')">
+                                    <i class="bi bi-arrow-clockwise me-2"></i>Run Full Data Refresh
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="executeJob('last_30_days_core_data')">
+                                    <i class="bi bi-calendar-week me-2"></i>Refresh Last 30 Days - Core Crash Data
+                                </button>
+                                <button class="btn btn-outline-primary" onclick="executeJob('last_6_months_fatalities')">
+                                    <i class="bi bi-exclamation-diamond me-2"></i>Refresh Fatalities (6 Months)
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="surface h-100 p-4">
+                            <div class="surface-heading d-flex justify-content-between align-items-start mb-3">
+                                <div>
+                                    <span class="eyebrow text-muted text-uppercase">Telemetry</span>
+                                    <h4 class="surface-title mb-0"><i class="bi bi-clock me-2"></i>Recent Activity</h4>
+                                </div>
+                                <span class="small text-muted">Latest job executions</span>
+                            </div>
+                            <div id="recent-executions" class="list-group list-group-flush modern-list">
+                                <div class="text-muted text-center py-4">Loading recent activity...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Jobs Tab -->
+            <div class="tab-pane fade" id="jobs" role="tabpanel">
+                <div class="surface p-4">
+                    <div class="d-flex justify-content-between flex-wrap align-items-center mb-3 gap-3">
+                        <div>
+                            <span class="eyebrow text-muted text-uppercase">Scheduling</span>
+                            <h3 class="surface-title mb-0">Scheduled Jobs</h3>
+                            <p class="text-muted small mb-0">Create, pause, and tune automated syncs.</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="showCreateJobModal()">
+                            <i class="bi bi-plus-circle me-2"></i>Create New Job
+                        </button>
+                    </div>
+
+                    <!-- Jobs Table -->
+                    <div class="table-responsive modern-table">
+                        <table class="table table-borderless align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Name</th>
+                                    <th>Type</th>
+                                    <th>Status</th>
+                                    <th>Schedule</th>
+                                    <th>Next Run</th>
+                                    <th>Last Run</th>
+                                    <th class="text-end">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="jobs-table-body">
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted py-4">Loading jobs...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Executions Tab -->
+            <div class="tab-pane fade" id="executions" role="tabpanel">
+                <div class="surface p-4">
+                    <div class="d-flex justify-content-between flex-wrap align-items-center mb-3 gap-3">
+                        <div>
+                            <span class="eyebrow text-muted text-uppercase">Observability</span>
+                            <h3 class="surface-title mb-0">Execution History</h3>
+                            <p class="text-muted small mb-0">Track recent runs and investigate performance.</p>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                            <select class="form-select shadow-none filter-select" id="execution-filter">
+                                <option value="">All Jobs</option>
+                            </select>
+                            <button class="btn btn-outline-dark" onclick="loadExecutions()">
+                                <i class="bi bi-arrow-clockwise me-2"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Executions Table -->
+                    <div class="table-responsive modern-table">
+                        <table class="table table-borderless align-middle">
+                            <thead>
+                                <tr>
+                                    <th>Execution ID</th>
+                                    <th>Job</th>
+                                    <th>Status</th>
+                                    <th>Started</th>
+                                    <th>Duration</th>
+                                    <th>Records Processed</th>
+                                    <th class="text-end">Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="executions-table-body">
+                                <tr>
+                                    <td colspan="7" class="text-center text-muted py-4">Loading executions...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Management Tab -->
+            <div class="tab-pane fade" id="data-management" role="tabpanel">
+                <div class="row g-4">
+                    <div class="col-lg-5">
+                        <div class="surface h-100 p-4 danger-surface">
+                            <div class="surface-heading d-flex justify-content-between align-items-start mb-3">
+                                <div>
+                                    <span class="eyebrow text-uppercase text-danger">Danger Zone</span>
+                                    <h4 class="surface-title mb-0"><i class="bi bi-exclamation-triangle me-2"></i>Data Deletion</h4>
+                                </div>
+                                <span class="badge rounded-pill bg-danger-subtle text-danger">Permanent</span>
+                            </div>
+                            <div class="alert alert-danger soft-alert">
+                                <strong>Warning:</strong> This action permanently deletes records. Double-check before continuing.
+                            </div>
+
+                            <div class="mb-3">
+                                <label for="delete-table-select" class="form-label">Select Table</label>
+                                <select class="form-select" id="delete-table-select">
+                                    <option value="">Choose table to delete data from...</option>
+                                    <option value="crashes">Crashes</option>
+                                    <option value="crash_people">Crash People</option>
+                                    <option value="crash_vehicles">Crash Vehicles</option>
+                                    <option value="vision_zero_fatalities">Vision Zero Fatalities</option>
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Date Range (Optional)</label>
+                                <div class="row g-2">
+                                    <div class="col">
+                                        <input type="date" class="form-control" id="delete-start-date" placeholder="Start Date">
+                                    </div>
+                                    <div class="col">
+                                        <input type="date" class="form-control" id="delete-end-date" placeholder="End Date">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <div class="form-check align-items-center">
+                                    <input class="form-check-input" type="checkbox" id="confirm-deletion">
+                                    <label class="form-check-label" for="confirm-deletion">
+                                        <span class="text-danger fw-semibold">I understand this action is permanent and cannot be undone.</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <button class="btn btn-danger w-100" onclick="deleteTableData()" disabled id="delete-data-btn">
+                                <i class="bi bi-trash me-2"></i>Delete Data
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-lg-7">
+                        <div class="surface h-100 p-4">
+                            <div class="surface-heading d-flex justify-content-between align-items-start mb-3">
+                                <div>
+                                    <span class="eyebrow text-muted text-uppercase">Insights</span>
+                                    <h4 class="surface-title mb-0"><i class="bi bi-bar-chart me-2"></i>Data Statistics</h4>
+                                </div>
+                                <button class="btn btn-outline-dark btn-sm" onclick="loadDataStatistics()">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                                </button>
+                            </div>
+                            <div id="data-stats" class="row g-3">
+                                <div class="col-12">
+                                    <p class="text-muted text-center mb-0">Loading data statistics...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Spatial Layers Tab -->
+            <div class="tab-pane fade" id="spatial-layers" role="tabpanel">
+                <div class="row g-4">
+                    <div class="col-xl-4">
+                        <div class="surface h-100 p-4">
+                            <div class="surface-heading mb-3">
+                                <span class="eyebrow text-muted text-uppercase">Spatial Uploads</span>
+                                <h4 class="surface-title mb-1"><i class="bi bi-upload me-2"></i>Upload Spatial Layer</h4>
+                                <p class="text-muted small mb-0">Upload GeoJSON or zipped shapefiles to use their boundaries in location reports.</p>
+                            </div>
+                            <form id="spatial-layer-upload-form">
+                                <div class="mb-3">
+                                    <label for="spatial-layer-name" class="form-label">Display Name</label>
+                                    <input type="text" class="form-control" id="spatial-layer-name" name="name" placeholder="e.g. Senate Districts" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="spatial-layer-description" class="form-label">Description (optional)</label>
+                                    <textarea class="form-control" id="spatial-layer-description" name="description" rows="2" placeholder="Describe this spatial layer"></textarea>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-12">
+                                        <label for="spatial-layer-srid" class="form-label">SRID</label>
+                                        <input type="number" class="form-control" id="spatial-layer-srid" name="srid" value="4326" min="2000" max="999999" required>
+                                        <div class="form-text">Default is WGS84 / EPSG:4326</div>
+                                    </div>
+                                </div>
+                                <div class="mb-3 mt-3">
+                                    <label for="spatial-layer-file" class="form-label">Spatial Data File</label>
+                                    <input type="file" class="form-control" id="spatial-layer-file" name="file" accept=".geojson,.json,.zip,application/geo+json,application/json,application/zip" required>
+                                    <div class="form-text">Accepted: GeoJSON (.geojson, .json) or zipped ESRI shapefile bundles (.zip with .shp/.shx/.dbf/.prj).</div>
+                                </div>
+                                <div class="mb-3" id="spatial-layer-label-field-group" style="display: none;">
+                                    <label for="spatial-layer-label-field" class="form-label">Label Field</label>
+                                    <select class="form-select" id="spatial-layer-label-field" name="label_field">
+                                        <option value="">Auto-detect (default)</option>
+                                    </select>
+                                    <div class="form-text">Choose which field to display as the feature name in dropdowns.</div>
+                                </div>
+                                <div class="mb-3" id="spatial-layer-sort-type-group" style="display: none;">
+                                    <label for="spatial-layer-sort-type" class="form-label">Sort Order</label>
+                                    <select class="form-select" id="spatial-layer-sort-type" name="sort_type">
+                                        <option value="alphabetic">Alphabetic (A, B, C...)</option>
+                                        <option value="numeric">Numeric (1, 2, 10, 20...)</option>
+                                        <option value="natural">Natural (1, 2, 10, District 1...)</option>
+                                    </select>
+                                    <div class="form-text">How to sort features in the location report dropdown.</div>
+                                </div>
+                                <div class="upload-checklist rounded-3 p-3 mb-3">
+                                    <p class="small fw-semibold text-uppercase text-muted mb-2">Upload checklist</p>
+                                    <ul class="small mb-0 ps-3">
+                                        <li>Name the layer so analysts can find it later.</li>
+                                        <li>For shapefiles, compress the .shp, .shx, .dbf, and .prj files together.</li>
+                                        <li>Set SRID if your data is not WGS84 (EPSG:4326).</li>
+                                    </ul>
+                                </div>
+                                <button type="button" class="btn btn-primary w-100" id="spatial-layer-upload-btn">
+                                    <i class="bi bi-cloud-upload me-2"></i>Upload Layer
+                                </button>
+                            </form>
+                            <div class="soft-alert alert-info mt-3">
+                                <strong>Tip:</strong> Spatial uploads automatically snapshot sample features for QA.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-8">
+                        <div class="surface h-100 p-4">
+                            <div class="surface-heading d-flex justify-content-between align-items-start mb-3 flex-wrap gap-3">
+                                <div>
+                                    <span class="eyebrow text-muted text-uppercase">Catalog</span>
+                                    <h4 class="surface-title mb-0"><i class="bi bi-layers me-2"></i>Managed Spatial Layers</h4>
+                                    <p class="text-muted small mb-0">Versioned Geo datasets ready for joins and visual overlays.</p>
+                                </div>
+                                <button class="btn btn-outline-dark btn-sm" type="button" onclick="loadSpatialLayers()">
+                                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                                </button>
+                            </div>
+                            <div class="table-responsive modern-table">
+                                <table class="table table-borderless align-middle">
+                                    <thead>
+                                        <tr>
+                                            <th>Layer</th>
+                                            <th>Features</th>
+                                            <th>Status</th>
+                                            <th>Source</th>
+                                            <th>Updated</th>
+                                            <th class="text-end">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="spatial-layer-table-body">
+                                        <tr>
+                                            <td colspan="6" class="text-center text-muted py-4">Loading layers...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals -->
+
+    <!-- Spatial Layer Modal -->
+    <div class="modal fade" id="spatialLayerModal" tabindex="-1" aria-labelledby="spatialLayerModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content surface-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="eyebrow text-muted text-uppercase">Spatial Layer</span>
+                        <h5 class="modal-title" id="spatialLayerModalLabel">Spatial Layer</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-4">
+                        <div class="col-lg-7">
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-name" class="form-label">Display Name</label>
+                                <input type="text" class="form-control" id="spatial-layer-edit-name" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-description" class="form-label">Description</label>
+                                <textarea class="form-control" id="spatial-layer-edit-description" rows="2"></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-label-field" class="form-label">Label Field</label>
+                                <select class="form-select" id="spatial-layer-edit-label-field">
+                                    <option value="">Auto-detect</option>
+                                </select>
+                                <div class="form-text">Field used for display names in location report dropdown.</div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="spatial-layer-edit-sort-type" class="form-label">Sort Order</label>
+                                <select class="form-select" id="spatial-layer-edit-sort-type">
+                                    <option value="alphabetic">Alphabetic (A, B, C...)</option>
+                                    <option value="numeric">Numeric (1, 2, 10, 20...)</option>
+                                    <option value="natural">Natural (1, 2, 10, District 1...)</option>
+                                </select>
+                                <div class="form-text">How to sort features in the location report dropdown.</div>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="spatial-layer-edit-active">
+                                    <label class="form-check-label" for="spatial-layer-edit-active">Active layer</label>
+                                </div>
+                                <div class="btn-group" role="group" aria-label="Spatial layer actions">
+                                    <button type="button" class="btn btn-primary" id="spatial-layer-save-btn" onclick="saveSpatialLayerChanges()">
+                                        <i class="bi bi-save me-2"></i>Save Changes
+                                    </button>
+                                    <button type="button" class="btn btn-outline-dark" onclick="promptSpatialLayerReplace(currentSpatialLayerId)">
+                                        <i class="bi bi-arrow-repeat me-2"></i>Replace Data File
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-5">
+                            <div id="spatial-layer-meta" class="meta-grid"></div>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <h6 class="text-uppercase text-muted small mb-2">Sample Features</h6>
+                        <div id="spatial-layer-samples" class="spatial-layer-samples"></div>
+                    </div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-danger me-auto" onclick="deleteSpatialLayer(currentSpatialLayerId)">
+                        <i class="bi bi-trash me-2"></i>Delete Layer
+                    </button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Job Modal -->
+    <div class="modal fade" id="jobModal" tabindex="-1" aria-labelledby="jobModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content surface-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="eyebrow text-muted text-uppercase">Scheduler</span>
+                        <h5 class="modal-title" id="jobModalLabel">Create New Job</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="jobForm" class="modal-form">
+                        <div class="row g-4">
+                            <div class="col-lg-7">
+                                <div class="mb-3">
+                                    <label for="job-name" class="form-label">Job Name</label>
+                                    <input type="text" class="form-control" id="job-name" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="job-description" class="form-label">Description</label>
+                                    <textarea class="form-control" id="job-description" rows="2"></textarea>
+                                </div>
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label for="job-type" class="form-label">Job Type</label>
+                                        <select class="form-select" id="job-type" required>
+                                            <option value="">Select job type...</option>
+                                            <option value="custom">Custom</option>
+                                            <option value="full_refresh">Full Refresh</option>
+                                            <option value="last_30_days_core_data">Last 30 Days - Core Crash Data</option>
+                                            <option value="last_30_days_people">Last 30 Days - People</option>
+                                            <option value="last_30_days_vehicles">Last 30 Days - Vehicles</option>
+                                            <option value="last_6_months_fatalities">Last 6 Months - Fatalities</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="job-recurrence" class="form-label">Schedule</label>
+                                        <select class="form-select" id="job-recurrence" required>
+                                            <option value="once">Run Once</option>
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                            <option value="monthly">Monthly</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-6">
+                                        <label for="job-start-date" class="form-label">Start Date (Optional)</label>
+                                        <input type="date" class="form-control" id="job-start-date">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="job-end-date" class="form-label">End Date (Optional)</label>
+                                        <input type="date" class="form-control" id="job-end-date">
+                                    </div>
+                                </div>
+                                <div class="row g-3 mt-1">
+                                    <div class="col-md-4">
+                                        <label for="job-timeout" class="form-label">Timeout (minutes)</label>
+                                        <input type="number" class="form-control" id="job-timeout" value="60" min="1" max="480">
+                                    </div>
+                                    <div class="col-md-4">
+                                        <label for="job-retries" class="form-label">Max Retries</label>
+                                        <input type="number" class="form-control" id="job-retries" value="3" min="0" max="10">
+                                    </div>
+                                    <div class="col-md-4 d-flex align-items-end">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="job-enabled" checked>
+                                            <label class="form-check-label" for="job-enabled">Enabled</label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mb-3 mt-3">
+                                    <label for="job-cron" class="form-label">Custom Cron Expression (optional)</label>
+                                    <input type="text" class="form-control" id="job-cron" placeholder="e.g. 0 0 * * *">
+                                    <div class="form-text">Leave blank to use the schedule selected above.</div>
+                                </div>
+                            </div>
+                            <div class="col-lg-5">
+                                <div class="mb-3" id="job-endpoints-group">
+                                    <label class="form-label">Endpoints to Sync</label>
+                                    <div class="surface-subtle p-3 rounded-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input job-endpoint" type="checkbox" value="crashes" id="endpoint-crashes">
+                                            <label class="form-check-label" for="endpoint-crashes">Crashes</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input job-endpoint" type="checkbox" value="people" id="endpoint-people">
+                                            <label class="form-check-label" for="endpoint-people">People</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input job-endpoint" type="checkbox" value="vehicles" id="endpoint-vehicles">
+                                            <label class="form-check-label" for="endpoint-vehicles">Vehicles</label>
+                                        </div>
+                                        <div class="form-check">
+                                            <input class="form-check-input job-endpoint" type="checkbox" value="fatalities" id="endpoint-fatalities">
+                                            <label class="form-check-label" for="endpoint-fatalities">Vision Zero Fatalities</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-outline-dark" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="saveJob()">Save Job</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Execution Details Modal -->
+    <div class="modal fade" id="executionModal" tabindex="-1" aria-labelledby="executionModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content surface-modal">
+                <div class="modal-header border-0 pb-0">
+                    <div>
+                        <span class="eyebrow text-muted text-uppercase">Execution</span>
+                        <h5 class="modal-title" id="executionModalLabel">Execution Details</h5>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="execution-details">
+                    <div class="text-center py-5">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3">
+        <div id="toast" class="toast" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="toast-header">
+                <strong class="me-auto" id="toast-title">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body" id="toast-body">
+                Message
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/admin/app.js"></script>
+</body>
+</html>

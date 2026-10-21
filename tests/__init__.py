@@ -1,1 +1,0 @@
-"""Test suite for Chicago crash data pipeline."""

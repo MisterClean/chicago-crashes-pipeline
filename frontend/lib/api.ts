@@ -1,7 +1,7 @@
 // Use absolute URL for server-side rendering, relative for client-side
 const API_BASE =
   typeof window === "undefined"
-    ? process.env.BACKEND_URL || "http://localhost:8000"
+    ? process.env.BACKEND_URL || "http://127.0.0.1:8003"
     : process.env.NEXT_PUBLIC_API_URL || "/api";
 
 // API Key for server-side requests (set in Railway environment)
@@ -204,22 +204,27 @@ export interface CrashCauseSummary {
 
 export interface MonthlyTrendPoint {
   month: string;
+  partial: boolean;
   crashes: number;
   injuries: number;
   fatalities: number;
 }
 
+export interface HourDayCount { day: number; hour: number; crashes: number; injury_crashes: number; severe_crashes: number; }
+export interface RoadUserSeverity { road_user: string; people: number; fatal: number; incapacitating: number; other_injury: number; no_injury: number; unknown: number; }
+
 export interface LocationReportResponse {
+  hour_day_counts: HourDayCount[];
+  road_user_severity: RoadUserSeverity[];
+  map_limit: number;
+  map_truncated: boolean;
   stats: LocationReportStats;
   causes: CrashCauseSummary[];
   monthly_trends: MonthlyTrendPoint[];
   crashes_geojson: CrashGeoJSON;
   query_area_geojson: {
     type: "Feature";
-    geometry: {
-      type: "Polygon";
-      coordinates: number[][][];
-    };
+    geometry: GeoJSON.Polygon | GeoJSON.MultiPolygon;
     properties: Record<string, unknown>;
   };
 }
@@ -245,33 +250,31 @@ export interface LocationReportExportRequest extends LocationReportRequest {
   datasets: LocationReportDataset[];
 }
 
-function parseFilenameFromDisposition(disposition: string | null): string | null {
-  if (!disposition) return null;
-  const match = disposition.match(/filename="?([^"]+)"?/i);
-  return match ? match[1] : null;
-}
-
 export async function exportLocationReport(
-  request: LocationReportExportRequest
-): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${API_BASE}/dashboard/location-report/export`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+  request: LocationReportExportRequest,
+  apiKey = ""
+): Promise<string> {
+  const headers: HeadersInit = apiKey ? { [API_KEY_HEADER]: apiKey } : getAuthHeaders();
+  const create = await fetch(`${API_BASE}/exports`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(request),
   });
-
-  if (!res.ok) {
-    throw new Error(`Failed to export location report: ${res.statusText}`);
+  if (create.status === 401 || create.status === 403) throw new Error("This server requires a valid API key for exports.");
+  if (!create.ok) throw new Error(`Unable to queue export (${create.status}).`);
+  let job = await create.json();
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (job.status === "queued" || job.status === "running") {
+    if (Date.now() > deadline) throw new Error(`Export ${job.id} is still processing. Please check again later.`);
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const status = await fetch(`${API_BASE}/exports/${job.id}`, { headers, cache: "no-store" });
+    if (!status.ok) throw new Error(`Unable to check export ${job.id}.`);
+    job = await status.json();
   }
-
-  const blob = await res.blob();
-  const filename =
-    parseFilenameFromDisposition(res.headers.get("Content-Disposition")) ||
-    (request.datasets.length > 1
-      ? "location-report-export.zip"
-      : `location-report-${request.datasets[0]}.csv`);
-
-  return { blob, filename };
+  if (job.status !== "completed") throw new Error(job.error || `Export ${job.status}. Please try again.`);
+  const download = await fetch(`${API_BASE}/exports/${job.id}/download`, { headers, cache: "no-store" });
+  if (!download.ok) throw new Error("Unable to retrieve the export download link.");
+  const { url } = await download.json();
+  return url;
 }
 
 // Places API Types
@@ -296,7 +299,8 @@ export interface PlaceGeometry {
 }
 
 export async function fetchLocationReport(
-  request: LocationReportRequest
+  request: LocationReportRequest,
+  signal?: AbortSignal
 ): Promise<LocationReportResponse> {
   const res = await fetch(`${API_BASE}/dashboard/location-report`, {
     method: "POST",
@@ -306,6 +310,7 @@ export async function fetchLocationReport(
     },
     body: JSON.stringify(request),
     cache: "no-store",
+    signal,
   });
 
   if (!res.ok) {
@@ -317,10 +322,11 @@ export async function fetchLocationReport(
 }
 
 // Places API Functions
-export async function fetchPlaceTypes(): Promise<PlaceType[]> {
+export async function fetchPlaceTypes(signal?: AbortSignal): Promise<PlaceType[]> {
   const res = await fetch(`${API_BASE}/places/types`, {
     headers: getAuthHeaders(),
     cache: "no-store",
+    signal,
   });
 
   if (!res.ok) {
@@ -330,10 +336,11 @@ export async function fetchPlaceTypes(): Promise<PlaceType[]> {
   return res.json();
 }
 
-export async function fetchPlaceItems(placeType: string): Promise<PlaceItem[]> {
+export async function fetchPlaceItems(placeType: string, signal?: AbortSignal): Promise<PlaceItem[]> {
   const res = await fetch(`${API_BASE}/places/types/${encodeURIComponent(placeType)}/items`, {
     headers: getAuthHeaders(),
     cache: "no-store",
+    signal,
   });
 
   if (!res.ok) {
@@ -345,13 +352,15 @@ export async function fetchPlaceItems(placeType: string): Promise<PlaceItem[]> {
 
 export async function fetchPlaceGeometry(
   placeType: string,
-  placeId: string
+  placeId: string,
+  signal?: AbortSignal
 ): Promise<PlaceGeometry> {
   const res = await fetch(
     `${API_BASE}/places/types/${encodeURIComponent(placeType)}/items/${encodeURIComponent(placeId)}/geometry`,
     {
       headers: getAuthHeaders(),
       cache: "no-store",
+      signal,
     }
   );
 

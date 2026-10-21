@@ -1,0 +1,752 @@
+//! Audited portal schemas and bounded, checksummed source artifacts.
+use anyhow::{Context, Result, ensure};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::{self, File},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+
+const MAPPING: &str = include_str!("../resources/csv_column_mapping.json");
+pub type Check<'a> = dyn Fn() -> Result<()> + Send + Sync + 'a;
+
+pub const DATASETS: [&str; 4] = ["crashes", "people", "vehicles", "fatalities"];
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SourceColumn {
+    pub csv_header: String,
+    pub api_field: String,
+    #[serde(rename = "type")]
+    pub data_type: String,
+}
+#[derive(Debug, Clone, Deserialize)]
+pub struct SourceSpec {
+    pub dataset_id: String,
+    pub metadata_url: String,
+    pub csv_download_url: String,
+    pub columns: Vec<SourceColumn>,
+    pub observed_csv_headers: Vec<String>,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublicationMode {
+    Profiling,
+    Production,
+}
+
+pub fn specification(dataset: &str) -> Result<SourceSpec> {
+    let mut mapping: BTreeMap<String, SourceSpec> = serde_json::from_str(MAPPING)?;
+    mapping
+        .remove(dataset)
+        .with_context(|| format!("unknown dataset {dataset}"))
+}
+pub fn mapping_sha256() -> String {
+    format!("{:x}", Sha256::digest(MAPPING.as_bytes()))
+}
+pub fn file_sha256(path: &Path) -> Result<String> {
+    file_sha256_guarded(path, &|| Ok(()))
+}
+pub fn file_sha256_guarded(path: &Path, check: &Check<'_>) -> Result<String> {
+    let mut source = File::open(path)?;
+    let mut buffer = [0_u8; 65536];
+    let mut digest = Sha256::new();
+    loop {
+        check()?;
+        let bytes = source.read(&mut buffer)?;
+        if bytes == 0 {
+            break;
+        }
+        digest.update(&buffer[..bytes]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+pub fn identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+pub fn literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+pub fn validate_headers(dataset: &str, headers: &[String]) -> Result<()> {
+    let expected = specification(dataset)?;
+    let observed: BTreeSet<_> = headers.iter().collect();
+    ensure!(
+        observed.len() == headers.len(),
+        "duplicate CSV headers for {dataset}"
+    );
+    ensure!(
+        observed == expected.observed_csv_headers.iter().collect(),
+        "CSV schema drift for {dataset}; review explicit mapping"
+    );
+    Ok(())
+}
+pub fn validate_metadata(dataset: &str, metadata: &Value) -> Result<()> {
+    let expected = specification(dataset)?;
+    let expected: BTreeMap<_, _> = expected
+        .columns
+        .iter()
+        .map(|c| {
+            (
+                c.api_field.as_str(),
+                (c.csv_header.as_str(), c.data_type.as_str()),
+            )
+        })
+        .collect();
+    let mut observed = BTreeMap::new();
+    for column in metadata["columns"]
+        .as_array()
+        .context("metadata columns missing")?
+    {
+        let field = column["fieldName"]
+            .as_str()
+            .context("metadata fieldName missing")?;
+        if field.starts_with(':') {
+            continue;
+        }
+        let name = column["name"].as_str().context("metadata name missing")?;
+        let kind = column["dataTypeName"]
+            .as_str()
+            .context("metadata type missing")?;
+        ensure!(
+            observed.insert(field, (name, kind)).is_none(),
+            "duplicate metadata field"
+        );
+    }
+    ensure!(
+        observed == expected,
+        "portal metadata schema drift for {dataset}"
+    );
+    ensure!(
+        metadata["rowsUpdatedAt"].is_number(),
+        "source revision missing"
+    );
+    Ok(())
+}
+/// Scans at most one CSV record at a time, respecting embedded quoted newlines.
+pub fn inspect_csv_guarded(
+    path: &Path,
+    dataset: &str,
+    check: &Check<'_>,
+) -> Result<(Vec<String>, u64)> {
+    let mut reader = csv::ReaderBuilder::new().flexible(false).from_path(path)?;
+    let headers: Vec<String> = reader
+        .headers()?
+        .iter()
+        .map(|h| h.trim_start_matches('\u{feff}').to_owned())
+        .collect();
+    validate_headers(dataset, &headers)?;
+    let mut record = csv::ByteRecord::new();
+    let mut rows = 0;
+    while reader.read_byte_record(&mut record)? {
+        rows += 1;
+        if rows % 1024 == 0 {
+            check()?;
+        }
+    }
+    ensure!(rows > 0, "refusing empty full source snapshot");
+    Ok((headers, rows))
+}
+
+#[derive(Debug, Clone)]
+pub struct VerifiedSource {
+    pub dataset: String,
+    pub path: PathBuf,
+    pub manifest: Value,
+}
+impl VerifiedSource {
+    pub fn rows(&self) -> Result<u64> {
+        self.manifest["rows"]
+            .as_u64()
+            .context("manifest row count missing")
+    }
+    pub fn production_complete(&self) -> bool {
+        let m = &self.manifest;
+        m["stable_source_revision"] == true
+            && m["profiling_only"] == false
+            && m["source_revision_before"].is_number()
+            && m["source_revision_before"] == m["source_revision_after"]
+            && m["rows"].as_u64().is_some_and(|rows| rows > 0)
+            && m["rows"] == m["expected_rows_before"]
+            && m["rows"] == m["expected_rows_after"]
+    }
+}
+/// Validate receipt, bytes, mapping and headers before a native engine opens input.
+pub fn load_source_guarded(
+    directory: &Path,
+    dataset: &str,
+    mode: PublicationMode,
+    check: &Check<'_>,
+) -> Result<VerifiedSource> {
+    specification(dataset)?;
+    let path = directory.join("sources").join(format!("{dataset}.csv"));
+    let manifest: Value =
+        serde_json::from_reader(File::open(path.with_extension("manifest.json"))?)?;
+    ensure!(manifest["dataset"] == dataset, "manifest dataset mismatch");
+    ensure!(
+        manifest["mapping_sha256"] == mapping_sha256(),
+        "mapping checksum differs; review source mapping"
+    );
+    ensure!(
+        manifest["bytes"].as_u64() == Some(path.metadata()?.len()),
+        "source size mismatch"
+    );
+    ensure!(
+        manifest["sha256"] == file_sha256_guarded(&path, check)?,
+        "source checksum mismatch"
+    );
+    let (headers, rows) = inspect_csv_guarded(&path, dataset, check)?;
+    ensure!(
+        manifest["rows"].as_u64() == Some(rows),
+        "source record count mismatch"
+    );
+    ensure!(
+        manifest["headers"] == json!(headers),
+        "manifest header mismatch"
+    );
+    let source = VerifiedSource {
+        dataset: dataset.to_owned(),
+        path: path.canonicalize()?,
+        manifest,
+    };
+    if mode == PublicationMode::Production {
+        ensure!(
+            source.production_complete(),
+            "{dataset} is incomplete, unstable or profiling-only; strict reconciliation required before publication"
+        );
+    }
+    Ok(source)
+}
+
+fn bounded_json<T: serde::de::DeserializeOwned>(
+    mut response: reqwest::blocking::Response,
+    max_bytes: usize,
+    check: &Check<'_>,
+) -> Result<T> {
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 65536];
+    loop {
+        check()?;
+        let size = response.read(&mut buffer)?;
+        if size == 0 {
+            break;
+        }
+        ensure!(
+            bytes.len().saturating_add(size) <= max_bytes,
+            "portal JSON response exceeds bounded size"
+        );
+        bytes.extend_from_slice(&buffer[..size]);
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+fn metadata(client: &reqwest::blocking::Client, dataset: &str) -> Result<Value> {
+    let response = client
+        .get(&specification(dataset)?.metadata_url)
+        .send()?
+        .error_for_status()?;
+    let value = bounded_json(response, 8 * 1024 * 1024, &|| Ok(()))?;
+    validate_metadata(dataset, &value)?;
+    Ok(value)
+}
+fn portal_count(client: &reqwest::blocking::Client, dataset: &str) -> Result<u64> {
+    portal_count_filtered(client, dataset, None)
+}
+fn portal_count_filtered(
+    client: &reqwest::blocking::Client,
+    dataset: &str,
+    filter: Option<&str>,
+) -> Result<u64> {
+    let id = specification(dataset)?.dataset_id;
+    let mut request = client
+        .get(format!("https://data.cityofchicago.org/resource/{id}.json"))
+        .query(&[("$select", "count(*) as count")]);
+    if let Some(filter) = filter {
+        request = request.query(&[("$where", filter)]);
+    }
+    let response = request.send()?.error_for_status()?;
+    let count: Value = bounded_json(response, 65536, &|| Ok(()))?;
+    let count = count[0]["count"]
+        .as_str()
+        .context("portal count missing")?
+        .parse::<u64>()?;
+    ensure!(count > 0, "refusing empty source snapshot");
+    Ok(count)
+}
+/// Downloads to a new attempt directory. Failures retain quarantined bytes and
+/// never replace a verified cache. Stable API counts must exactly match CSV rows.
+pub fn download_source(directory: &Path, dataset: &str) -> Result<VerifiedSource> {
+    download_source_guarded(directory, dataset, &|| Ok(()))
+}
+pub fn download_source_guarded(
+    directory: &Path,
+    dataset: &str,
+    check: &Check<'_>,
+) -> Result<VerifiedSource> {
+    check()?;
+    let acquisition_started_at = chrono::Utc::now();
+    let spec = specification(dataset)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let before = metadata(&client, dataset)?;
+    check()?;
+    let count_before = portal_count(&client, dataset)?;
+    check()?;
+    let sources = directory.join("sources");
+    fs::create_dir_all(&sources)?;
+    let path = sources.join(format!("{dataset}.csv"));
+    ensure!(
+        !path.exists() && !path.with_extension("manifest.json").exists(),
+        "source destination already exists; choose fresh attempt directory"
+    );
+    let temporary = sources.join(format!("{dataset}.{}.part", uuid::Uuid::new_v4()));
+    let mut response = client
+        .get(&spec.csv_download_url)
+        .send()?
+        .error_for_status()?;
+    let mut output = File::options()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let mut bytes = 0_u64;
+    let mut buffer = [0_u8; 65536];
+    loop {
+        check()?;
+        let size = response.read(&mut buffer)?;
+        if size == 0 {
+            break;
+        }
+        output.write_all(&buffer[..size])?;
+        bytes += size as u64;
+        ensure!(
+            bytes <= 8 * 1024 * 1024 * 1024,
+            "source download exceeds 8GiB limit"
+        );
+    }
+    output.flush()?;
+    output.sync_all()?;
+    drop(output);
+    let result = (|| {
+        let (headers, rows) = inspect_csv_guarded(&temporary, dataset, check)?;
+        let after = metadata(&client, dataset)?;
+        check()?;
+        let count_after = portal_count(&client, dataset)?;
+        check()?;
+        let receipt = json!({"manifest_version":1,"dataset":dataset,"dataset_id":spec.dataset_id,"url":spec.csv_download_url,"metadata_url":spec.metadata_url,"source_revision_before":before["rowsUpdatedAt"],"source_revision_after":after["rowsUpdatedAt"],"source_revision":after["rowsUpdatedAt"],"stable_source_revision":before["rowsUpdatedAt"]==after["rowsUpdatedAt"],"profiling_only":false,"expected_rows_before":count_before,"expected_rows_after":count_after,"expected_rows":count_after,"headers":headers,"rows":rows,"bytes":bytes,"sha256":file_sha256_guarded(&temporary,check)?,"mapping_sha256":mapping_sha256(),"mapping_baseline":"c08b80a","downloaded_at":chrono::Utc::now().to_rfc3339()});
+        let mut receipt = receipt;
+        receipt["acquisition_started_at"] = json!(acquisition_started_at.to_rfc3339());
+        receipt["source_updated_before"] =
+            json!((acquisition_started_at - chrono::Duration::seconds(10)).to_rfc3339());
+        ensure!(
+            before["rowsUpdatedAt"] == after["rowsUpdatedAt"],
+            "portal changed during download; retry whole dataset"
+        );
+        ensure!(
+            rows == count_before && rows == count_after,
+            "CSV/API count mismatch for {dataset}: CSV={rows}, API before={count_before}, after={count_after}; reconcile via stable ordered API bootstrap"
+        );
+        let manifest_path = path.with_extension("manifest.json");
+        let mut manifest_file = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&manifest_path)?;
+        serde_json::to_writer_pretty(&mut manifest_file, &receipt)?;
+        manifest_file.sync_all()?;
+        fs::hard_link(&temporary, &path)?;
+        fs::remove_file(&temporary)?;
+        load_source_guarded(directory, dataset, PublicationMode::Production, check)
+    })();
+    if result.is_err() && temporary.exists() {
+        let quarantine = directory.join("quarantine");
+        fs::create_dir_all(&quarantine)?;
+        fs::rename(
+            &temporary,
+            quarantine.join(format!("{dataset}.{}.csv", uuid::Uuid::new_v4())),
+        )?;
+    }
+    result
+}
+
+/// Strict catch-up fallback when portal bulk CSV omits rows. Pages are ordered
+/// by the portal's unique row identity and written directly to CSV; the before/
+/// after revision and exact API count must agree. Any mutation rejects the whole
+/// attempt rather than moving a checkpoint past a skipped page.
+pub fn download_api_source(directory: &Path, dataset: &str) -> Result<VerifiedSource> {
+    download_api_source_guarded(directory, dataset, &|| Ok(()))
+}
+pub fn download_api_source_guarded(
+    directory: &Path,
+    dataset: &str,
+    check: &Check<'_>,
+) -> Result<VerifiedSource> {
+    download_api_filtered_source(directory, dataset, None, check)
+}
+/// Complete, stable acquisition of an explicit event-date API window.
+pub fn download_api_window_source(
+    directory: &Path,
+    dataset: &str,
+    start: &str,
+    end: &str,
+    check: &Check<'_>,
+) -> Result<VerifiedSource> {
+    let start = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")?;
+    let end = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")?;
+    ensure!(start <= end, "reversed ingestion date window");
+    let exclusive = end.succ_opt().context("date window overflow")?;
+    let filter =
+        format!("crash_date >= '{start}T00:00:00' AND crash_date < '{exclusive}T00:00:00'");
+    download_api_filtered_source(directory, dataset, Some(&filter), check)
+}
+fn download_api_filtered_source(
+    directory: &Path,
+    dataset: &str,
+    filter: Option<&str>,
+    check: &Check<'_>,
+) -> Result<VerifiedSource> {
+    check()?;
+    let acquisition_started_at = chrono::Utc::now();
+    let spec = specification(dataset)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .build()?;
+    let before = metadata(&client, dataset)?;
+    check()?;
+    let count_before = portal_count_filtered(&client, dataset, filter)?;
+    check()?;
+    let sources = directory.join("sources");
+    fs::create_dir_all(&sources)?;
+    let path = sources.join(format!("{dataset}.csv"));
+    ensure!(
+        !path.exists() && !path.with_extension("manifest.json").exists(),
+        "API bootstrap requires new attempt directory"
+    );
+    let temporary = sources.join(format!("{dataset}.{}.part", uuid::Uuid::new_v4()));
+    let result = (|| {
+        let output = File::options()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        let mut writer = csv::Writer::from_writer(output);
+        let headers: Vec<_> = spec.columns.iter().map(|c| c.csv_header.as_str()).collect();
+        writer.write_record(&headers)?;
+        let selected = spec
+            .columns
+            .iter()
+            .map(|c| c.api_field.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
+        let endpoint = format!(
+            "https://data.cityofchicago.org/resource/{}.json",
+            spec.dataset_id
+        );
+        let mut offset = 0_u64;
+        loop {
+            check()?;
+            let mut request = client.get(&endpoint).query(&[
+                ("$select", selected.as_str()),
+                ("$order", ":id"),
+                ("$limit", "5000"),
+                ("$offset", &offset.to_string()),
+            ]);
+            if let Some(filter) = filter {
+                request = request.query(&[("$where", filter)]);
+            }
+            let response = request.send()?.error_for_status()?;
+            let page: Vec<Value> = bounded_json(response, 32 * 1024 * 1024, check)?;
+            if page.is_empty() {
+                break;
+            }
+            ensure!(page.len() <= 5000, "portal ignored bounded page size");
+            for record in &page {
+                check()?;
+                let values: Vec<String> = spec
+                    .columns
+                    .iter()
+                    .map(|c| match &record[&c.api_field] {
+                        Value::Null => String::new(),
+                        Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    })
+                    .collect();
+                writer.write_record(&values)?;
+            }
+            offset += page.len() as u64;
+            ensure!(
+                offset <= count_before,
+                "portal row count grew during bootstrap"
+            );
+        }
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        drop(writer);
+        let after = metadata(&client, dataset)?;
+        check()?;
+        let count_after = portal_count_filtered(&client, dataset, filter)?;
+        check()?;
+        ensure!(
+            before["rowsUpdatedAt"] == after["rowsUpdatedAt"]
+                && offset == count_before
+                && offset == count_after,
+            "source changed or API bootstrap was incomplete; retry"
+        );
+        let receipt = json!({"manifest_version":1,"dataset":dataset,"dataset_id":spec.dataset_id,"source_origin":"stable_ordered_api_bootstrap","source_filter":filter,"source_scope":if filter.is_some(){"event_date_window"}else{"full_dataset"},"source_revision_before":before["rowsUpdatedAt"],"source_revision_after":after["rowsUpdatedAt"],"source_revision":after["rowsUpdatedAt"],"stable_source_revision":true,"profiling_only":false,"expected_rows_before":count_before,"expected_rows_after":count_after,"expected_rows":count_after,"headers":headers,"rows":offset,"bytes":temporary.metadata()?.len(),"sha256":file_sha256_guarded(&temporary,check)?,"mapping_sha256":mapping_sha256(),"mapping_baseline":"c08b80a","downloaded_at":chrono::Utc::now().to_rfc3339()});
+        let mut receipt = receipt;
+        receipt["acquisition_started_at"] = json!(acquisition_started_at.to_rfc3339());
+        receipt["source_updated_before"] =
+            json!((acquisition_started_at - chrono::Duration::seconds(10)).to_rfc3339());
+        let mut manifest = File::options()
+            .write(true)
+            .create_new(true)
+            .open(path.with_extension("manifest.json"))?;
+        serde_json::to_writer_pretty(&mut manifest, &receipt)?;
+        manifest.sync_all()?;
+        fs::hard_link(&temporary, &path)?;
+        fs::remove_file(&temporary)?;
+        load_source_guarded(directory, dataset, PublicationMode::Production, check)
+    })();
+    if result.is_err() && temporary.exists() {
+        let quarantine = directory.join("quarantine");
+        fs::create_dir_all(&quarantine)?;
+        fs::rename(
+            &temporary,
+            quarantine.join(format!("{dataset}.api.{}.csv", uuid::Uuid::new_v4())),
+        )?;
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rejects_duplicate_or_renamed_headers() {
+        let mut headers = specification("fatalities").unwrap().observed_csv_headers;
+        headers.push(headers[0].clone());
+        assert!(validate_headers("fatalities", &headers).is_err());
+    }
+    #[test]
+    fn refuses_profiling_count_gap_as_complete() {
+        let source = VerifiedSource {
+            dataset: "crashes".into(),
+            path: PathBuf::new(),
+            manifest: json!({"stable_source_revision":true,"profiling_only":true,"rows":1105499,"expected_rows_before":1105828,"expected_rows_after":1105828,"source_revision_before":1,"source_revision_after":1}),
+        };
+        assert!(!source.production_complete());
+    }
+    #[test]
+    fn accepts_only_exact_stable_count_evidence() {
+        let source = VerifiedSource {
+            dataset: "crashes".into(),
+            path: PathBuf::new(),
+            manifest: json!({"stable_source_revision":true,"profiling_only":false,"rows":1,"expected_rows_before":1,"expected_rows_after":1,"source_revision_before":1,"source_revision_after":1}),
+        };
+        assert!(source.production_complete());
+    }
+    #[test]
+    fn explicit_fatality_mapping_preserves_mixed_headers() {
+        let spec = specification("fatalities").unwrap();
+        assert!(
+            spec.columns
+                .iter()
+                .any(|c| c.csv_header != c.api_field.to_uppercase())
+        );
+    }
+}
+
+fn canonical_decimal(value: &str) -> Result<String> {
+    let value = value.trim();
+    ensure!(
+        !value.is_empty() && value.len() <= 128,
+        "invalid source point coordinate length"
+    );
+    let (negative, value) = if let Some(value) = value.strip_prefix('-') {
+        (true, value)
+    } else {
+        (false, value.strip_prefix('+').unwrap_or(value))
+    };
+    let (mantissa, exponent) = if let Some(index) = value.find(['e', 'E']) {
+        let exponent = value[index + 1..]
+            .parse::<i32>()
+            .context("invalid source point exponent")?;
+        (&value[..index], exponent)
+    } else {
+        (value, 0)
+    };
+    ensure!(
+        exponent.unsigned_abs() <= 1000,
+        "source point exponent exceeds bound"
+    );
+    let mut parts = mantissa.split('.');
+    let integer = parts.next().unwrap_or("");
+    let fraction = parts.next().unwrap_or("");
+    ensure!(
+        parts.next().is_none()
+            && (!integer.is_empty() || !fraction.is_empty())
+            && integer
+                .bytes()
+                .chain(fraction.bytes())
+                .all(|value| value.is_ascii_digit()),
+        "source point coordinates must be finite decimal numbers"
+    );
+    let digits = format!("{integer}{fraction}");
+    let digits = digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return Ok("0".to_owned());
+    }
+    let trimmed = digits.trim_end_matches('0');
+    let exponent = exponent - (fraction.len() as i32) + (digits.len() - trimmed.len()) as i32;
+    let point = trimmed.len() as i32 + exponent;
+    let number = if point <= 0 {
+        format!("0.{}{trimmed}", "0".repeat((-point) as usize))
+    } else if point >= trimmed.len() as i32 {
+        format!(
+            "{trimmed}{}",
+            "0".repeat((point - trimmed.len() as i32) as usize)
+        )
+    } else {
+        let point = point as usize;
+        format!("{}.{}", &trimmed[..point], &trimmed[point..])
+    };
+    Ok(if negative {
+        format!("-{number}")
+    } else {
+        number
+    })
+}
+/// Preserve the deployed archival point representation independently of Chicago
+/// latitude/longitude validation and the geometry used for spatial selection.
+pub fn canonical_source_point(value: &str) -> Result<String> {
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    let value = value.trim();
+    let coordinates = if value.starts_with('{') {
+        let point: Value = serde_json::from_str(value)?;
+        ensure!(
+            point["type"] == "Point",
+            "source point must be a GeoJSON Point"
+        );
+        let coordinates = point["coordinates"]
+            .as_array()
+            .context("source point coordinates missing")?;
+        ensure!(
+            coordinates.len() == 2,
+            "source point requires exactly two coordinates"
+        );
+        coordinates
+            .iter()
+            .map(|value| match value {
+                Value::String(value) => Ok(value.clone()),
+                Value::Number(value) => Ok(value.to_string()),
+                _ => anyhow::bail!("source point coordinate must be numeric"),
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        ensure!(
+            value
+                .get(..5)
+                .is_some_and(|token| token.eq_ignore_ascii_case("POINT")),
+            "source point must be WKT POINT or GeoJSON Point"
+        );
+        let body = value[5..]
+            .trim()
+            .strip_prefix('(')
+            .and_then(|value| value.strip_suffix(')'))
+            .context("invalid source point WKT")?;
+        let coordinates = body
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        ensure!(
+            coordinates.len() == 2,
+            "source point requires exactly two coordinates"
+        );
+        coordinates
+    };
+    Ok(format!(
+        "POINT ({} {})",
+        canonical_decimal(&coordinates[0])?,
+        canonical_decimal(&coordinates[1])?
+    ))
+}
+/// Canonicalize only the small fatality source into owner scratch. Raw checked
+/// source artifacts remain unchanged; no historical dataset is held in Rust RAM.
+pub fn canonical_fatality_csv(
+    path: &Path,
+    temp_directory: &Path,
+    check: &Check<'_>,
+) -> Result<tempfile::NamedTempFile> {
+    fs::create_dir_all(temp_directory)?;
+    let mut output = tempfile::NamedTempFile::new_in(temp_directory)?;
+    let mut reader = csv::Reader::from_path(path)?;
+    let headers = reader.headers()?.clone();
+    let column = specification("fatalities")?
+        .columns
+        .into_iter()
+        .find(|column| column.api_field == "geocoded_column")
+        .context("fatality point mapping missing")?;
+    let index = headers
+        .iter()
+        .position(|header| header.trim_start_matches('\u{feff}') == column.csv_header)
+        .context("fatality point header missing")?;
+    let mut writer = csv::Writer::from_writer(output.as_file_mut());
+    writer.write_record(&headers)?;
+    let mut record = csv::StringRecord::new();
+    let mut rows = 0_u64;
+    while reader.read_record(&mut record)? {
+        check()?;
+        rows += 1;
+        ensure!(
+            rows <= 100000,
+            "fatality source exceeds deployed 100000-row bound"
+        );
+        let point =
+            canonical_source_point(record.get(index).context("fatality point field missing")?)?;
+        let fields = record.iter().enumerate().map(|(column, value)| {
+            if column == index {
+                point.as_str()
+            } else {
+                value
+            }
+        });
+        writer.write_record(fields)?;
+    }
+    writer.flush()?;
+    drop(writer);
+    Ok(output)
+}
+
+#[cfg(test)]
+mod point_tests {
+    use super::*;
+    #[test]
+    fn wkt_and_geojson_points_share_exact_decimal_canonical_form() {
+        let wkt =
+            canonical_source_point(" point ( -087.60000000000001234 +041.80000000000000987 ) ")
+                .unwrap();
+        let json=canonical_source_point(r#"{"type":"Point","coordinates":["-8.760000000000001234e1","4.180000000000000987e1"]}"#).unwrap();
+        assert_eq!(wkt, json);
+        assert_eq!(wkt, "POINT (-87.60000000000001234 41.80000000000000987)");
+    }
+    #[test]
+    fn source_points_keep_archival_coordinates_and_canonical_zero() {
+        assert_eq!(
+            canonical_source_point("POINT (999.5000 -0.000)").unwrap(),
+            "POINT (999.5 0)"
+        );
+    }
+    #[test]
+    fn nonfinite_malformed_or_three_dimensional_source_points_are_rejected() {
+        for point in [
+            "POINT (NaN 41)",
+            "POINT (-87 Infinity)",
+            "POINT (-87 41 1)",
+            "LINESTRING (-87 41,-87 42)",
+        ] {
+            assert!(canonical_source_point(point).is_err());
+        }
+    }
+}

@@ -1,0 +1,34 @@
+name: Rust application
+on:
+  push:
+    branches: [main, develop, "codex/**"]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install the pinned native engine and signed spatial extension
+        run: bash scripts/setup-rust-duckdb.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --all-targets --locked
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: frontend
+      - run: node --test rust/crashes-server/tests/admin-ui.test.cjs frontend/tests/export-api.test.cjs
+      - name: Build the production container
+        if: runner.os == 'Linux'
+        run: docker build -f docker/Dockerfile.rust -t crashes-rust:ci .
