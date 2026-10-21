@@ -24,7 +24,7 @@ COPY docker/rust-entrypoint.sh /usr/local/bin/crashes-entrypoint
 COPY docker/rust-bootstrap.sh /usr/local/bin/crashes-bootstrap
 RUN chmod 755 /usr/local/bin/crashes-entrypoint /usr/local/bin/crashes-bootstrap
 ENV DATA_DIR=/data DUCKDB_LIBRARY_PATH=/opt/duckdb/libduckdb.so DUCKDB_SPATIAL_PATH=/opt/duckdb/spatial.duckdb_extension \
-    DUCKDB_MEMORY_LIMIT=192MB DUCKDB_THREADS=2 BIND_ADDRESS=0.0.0.0 PORT=8000 APP_ENV=production DAILY_SYNC=true
+    DUCKDB_MEMORY_LIMIT=192MB DUCKDB_THREADS=2 BIND_ADDRESS=:: PORT=8000 APP_ENV=production DAILY_SYNC=true
 VOLUME ["/data"]
 EXPOSE 8000
 STOPSIGNAL SIGTERM

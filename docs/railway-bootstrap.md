@@ -31,7 +31,7 @@ Set backend service variables through the platform's secret/configuration manage
 | --- | --- |
 | `DATA_DIR` | `/data` |
 | `APP_ENV` | `production` |
-| `BIND_ADDRESS`, `PORT` | `0.0.0.0`, `8000` for the later serving phase |
+| `BIND_ADDRESS`, `PORT` | `::`, `8000` for private IPv6 and dual-stack serving |
 | `DAILY_SYNC` | `false` until source publication, boundaries and backup are verified |
 | `DUCKDB_MEMORY_LIMIT`, `DUCKDB_THREADS` | `192MB`, `2` |
 | `PUBLIC_CACHE_BYTES` | `16777216` |
@@ -42,6 +42,8 @@ Set backend service variables through the platform's secret/configuration manage
 | `EXPORT_ADDRESSING_STYLE` | Omit for virtual-host addressing; `path` only when required by the provider |
 
 Set an outer memory limit and reserve disk for all source CSVs, the database, native spill, exports and a paired backup. A 192 MB SQL buffer does not bound process or cgroup memory. Source download limits must accommodate the real complete exports; do not replace a rejected input with a subset or enable profiling mode to pass a gate.
+
+The production image binds `::`: [legacy Railway environments resolve private services only over IPv6](https://docs.railway.com/networking/private-networking/how-it-works#dns-resolution). Verify the private hostname from the frontend container and both IPv6 and IPv4 loopback health probes on the actual host before cutover. Local Compose explicitly uses its IPv4 listener.
 
 Open an SSH session using explicit generic targets; obtain their values from the operator's current project context:
 
