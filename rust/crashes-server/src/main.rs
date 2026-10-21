@@ -93,6 +93,13 @@ enum Command {
         #[arg(long)]
         snapshot: PathBuf,
     },
+    /// Export only uploaded boundaries over verified TLS into a new directory.
+    ExportPostgresLayers {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        allow_production_read: bool,
+    },
     ExportPostgresSnapshot {
         #[arg(long)]
         output: PathBuf,
@@ -187,6 +194,17 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if let Command::ExportPostgresLayers {
+        output,
+        allow_production_read,
+    } = &options.command
+    {
+        println!(
+            "{}",
+            migration::export_postgres_layers(output, *allow_production_read, &|| Ok(()))?
+        );
+        return Ok(());
+    }
     std::fs::create_dir_all(&options.data_dir)?;
     if let Command::Download {
         directory,
@@ -238,7 +256,7 @@ fn main() -> Result<()> {
     }
     let database = Arc::new(open(&options)?);
     match &options.command {
-        Command::BuildInfo=>{},
+        Command::BuildInfo|Command::ExportPostgresLayers{..}=>{},
         Command::Probe=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT version() AS version, current_setting('memory_limit') AS memory_limit, current_setting('threads') AS sql_threads, ST_Distance_Spheroid(ST_Point(-87.65,41.88), ST_Point(-87.65,41.881)) AS axis_probe_meters",&[])?)?),
         Command::Inspect=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name",&[])?)?),
         Command::Seed{source_dir,datasets,profiling,operation_id}=>{

@@ -1,0 +1,11 @@
+# Select this temporary config explicitly for a private, single-volume bootstrap.
+# Return the service config path to /railway.toml after verified seed and backup.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "docker/Dockerfile.rust"
+
+[deploy]
+numReplicas = 1
+startCommand = "/usr/local/bin/crashes-bootstrap"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

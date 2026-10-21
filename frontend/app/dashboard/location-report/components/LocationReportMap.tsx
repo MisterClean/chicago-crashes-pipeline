@@ -13,6 +13,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { setWorkerUrl } from "maplibre-gl";
 import { bbox } from "@turf/turf";
 import {
+  BASEMAP_STYLE_URL,
   LOOP_VIEW_STATE,
   SEVERITY_LEGEND,
   MIN_ZOOM,
@@ -82,14 +83,6 @@ function formatCurrency(value: number | undefined | null): string {
   if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
 }
-
-// A public style works without credentials; deployments can supply another style.
-const PROTOMAPS_KEY = process.env.NEXT_PUBLIC_PROTOMAPS_KEY;
-const BASEMAP_STYLE_URL =
-  process.env.NEXT_PUBLIC_BASEMAP_URL ||
-  (PROTOMAPS_KEY
-    ? `https://api.protomaps.com/styles/v4/light/en.json?key=${PROTOMAPS_KEY}`
-    : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json");
 
 export function LocationReportMap({
   mode,

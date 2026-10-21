@@ -1,3 +1,12 @@
+// NEXT_PUBLIC_* values are embedded at build time. The Protomaps token is a
+// browser-visible map credential, never a server API key.
+const PROTOMAPS_KEY = process.env.NEXT_PUBLIC_PROTOMAPS_KEY;
+export const BASEMAP_STYLE_URL =
+  process.env.NEXT_PUBLIC_BASEMAP_URL ||
+  (PROTOMAPS_KEY
+    ? `https://api.protomaps.com/styles/v4/light/en.json?key=${PROTOMAPS_KEY}`
+    : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json");
+
 // Chicago geographic constants
 export const CHICAGO_CENTER = {
   longitude: -87.6298,

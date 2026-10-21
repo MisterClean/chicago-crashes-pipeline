@@ -8,3 +8,4 @@
 !docker/
 !docker/Dockerfile.rust
 !docker/rust-entrypoint.sh
+!docker/rust-bootstrap.sh

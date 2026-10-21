@@ -8,12 +8,25 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 const MAPPING: &str = include_str!("../resources/csv_column_mapping.json");
 pub type Check<'a> = dyn Fn() -> Result<()> + Send + Sync + 'a;
 
 pub const DATASETS: [&str; 4] = ["crashes", "people", "vehicles", "fatalities"];
+
+#[derive(Clone, Copy)]
+struct BulkTransferLimits {
+    total_timeout: Duration,
+    read_timeout: Duration,
+    max_bytes: u64,
+}
+const BULK_TRANSFER_LIMITS: BulkTransferLimits = BulkTransferLimits {
+    total_timeout: Duration::from_secs(2 * 60 * 60),
+    read_timeout: Duration::from_secs(120),
+    max_bytes: 8 * 1024 * 1024 * 1024,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SourceColumn {
@@ -273,8 +286,87 @@ fn portal_count_filtered(
     ensure!(count > 0, "refusing empty source snapshot");
     Ok(count)
 }
-/// Downloads to a new attempt directory. Failures retain quarantined bytes and
-/// never replace a verified cache. Stable API counts must exactly match CSV rows.
+
+/// Bulk bodies need a longer deadline than metadata. Poll the existing guard
+/// while the socket is idle so cancellation never waits for the bulk deadline.
+fn transfer_bulk_csv(
+    url: &str,
+    directory: &Path,
+    dataset: &str,
+    check: &Check<'_>,
+    limits: BulkTransferLimits,
+) -> Result<(tempfile::NamedTempFile, u64, Option<u64>)> {
+    check()?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let client = reqwest::Client::builder()
+            .timeout(limits.total_timeout)
+            .connect_timeout(Duration::from_secs(30))
+            .read_timeout(limits.read_timeout)
+            .build()?;
+        let mut guard = tokio::time::interval(Duration::from_millis(100));
+        guard.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let request = client
+            .get(url)
+            .header(reqwest::header::ACCEPT_ENCODING, "identity")
+            .send();
+        tokio::pin!(request);
+        let mut response = loop {
+            tokio::select! {
+                response = &mut request => break response?.error_for_status()?,
+                _ = guard.tick() => check()?,
+            }
+        };
+        let expected_bytes = response.content_length();
+        ensure!(
+            expected_bytes.is_none_or(|bytes| bytes <= limits.max_bytes),
+            "source Content-Length exceeds download size limit"
+        );
+        let mut output = tempfile::Builder::new()
+            .prefix(&format!("{dataset}."))
+            .suffix(".part")
+            .tempfile_in(directory)?;
+        let mut bytes = 0_u64;
+        loop {
+            let chunk = loop {
+                tokio::select! {
+                    chunk = response.chunk() => break chunk.context("read bulk CSV body")?,
+                    _ = guard.tick() => check()?,
+                }
+            };
+            let Some(chunk) = chunk else { break };
+            for chunk in chunk.chunks(65536) {
+                check()?;
+                bytes = bytes
+                    .checked_add(chunk.len() as u64)
+                    .context("bulk CSV size overflow")?;
+                ensure!(
+                    bytes <= limits.max_bytes,
+                    "source download exceeds size limit"
+                );
+                ensure!(
+                    expected_bytes.is_none_or(|expected| bytes <= expected),
+                    "bulk CSV body exceeds Content-Length"
+                );
+                output.write_all(chunk)?;
+            }
+        }
+        ensure!(
+            expected_bytes.is_none_or(|expected| bytes == expected),
+            "bulk CSV Content-Length mismatch"
+        );
+        output.flush()?;
+        output.as_file().sync_all()?;
+        check()?;
+        Ok((output, bytes, expected_bytes))
+    })
+}
+
+/// Downloads to a new attempt directory without replacing a verified cache.
+/// Incomplete transfers are removed; completed unverified CSVs are quarantined.
+/// Stable API counts must exactly match CSV rows.
 pub fn download_source(directory: &Path, dataset: &str) -> Result<VerifiedSource> {
     download_source_guarded(directory, dataset, &|| Ok(()))
 }
@@ -301,40 +393,23 @@ pub fn download_source_guarded(
         !path.exists() && !path.with_extension("manifest.json").exists(),
         "source destination already exists; choose fresh attempt directory"
     );
-    let temporary = sources.join(format!("{dataset}.{}.part", uuid::Uuid::new_v4()));
-    let mut response = client
-        .get(&spec.csv_download_url)
-        .send()?
-        .error_for_status()?;
-    let mut output = File::options()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    let mut bytes = 0_u64;
-    let mut buffer = [0_u8; 65536];
-    loop {
-        check()?;
-        let size = response.read(&mut buffer)?;
-        if size == 0 {
-            break;
-        }
-        output.write_all(&buffer[..size])?;
-        bytes += size as u64;
-        ensure!(
-            bytes <= 8 * 1024 * 1024 * 1024,
-            "source download exceeds 8GiB limit"
-        );
-    }
-    output.flush()?;
-    output.sync_all()?;
-    drop(output);
+    let (temporary, bytes, content_length) = transfer_bulk_csv(
+        &spec.csv_download_url,
+        &sources,
+        dataset,
+        check,
+        BULK_TRANSFER_LIMITS,
+    )?;
+    let manifest_path = path.with_extension("manifest.json");
+    let mut published_csv = false;
+    let mut published_manifest = false;
     let result = (|| {
-        let (headers, rows) = inspect_csv_guarded(&temporary, dataset, check)?;
+        let (headers, rows) = inspect_csv_guarded(temporary.path(), dataset, check)?;
         let after = metadata(&client, dataset)?;
         check()?;
         let count_after = portal_count(&client, dataset)?;
         check()?;
-        let receipt = json!({"manifest_version":1,"dataset":dataset,"dataset_id":spec.dataset_id,"url":spec.csv_download_url,"metadata_url":spec.metadata_url,"source_revision_before":before["rowsUpdatedAt"],"source_revision_after":after["rowsUpdatedAt"],"source_revision":after["rowsUpdatedAt"],"stable_source_revision":before["rowsUpdatedAt"]==after["rowsUpdatedAt"],"profiling_only":false,"expected_rows_before":count_before,"expected_rows_after":count_after,"expected_rows":count_after,"headers":headers,"rows":rows,"bytes":bytes,"sha256":file_sha256_guarded(&temporary,check)?,"mapping_sha256":mapping_sha256(),"mapping_baseline":"c08b80a","downloaded_at":chrono::Utc::now().to_rfc3339()});
+        let receipt = json!({"manifest_version":1,"dataset":dataset,"dataset_id":spec.dataset_id,"url":spec.csv_download_url,"metadata_url":spec.metadata_url,"source_revision_before":before["rowsUpdatedAt"],"source_revision_after":after["rowsUpdatedAt"],"source_revision":after["rowsUpdatedAt"],"stable_source_revision":before["rowsUpdatedAt"]==after["rowsUpdatedAt"],"profiling_only":false,"expected_rows_before":count_before,"expected_rows_after":count_after,"expected_rows":count_after,"headers":headers,"rows":rows,"bytes":bytes,"sha256":file_sha256_guarded(temporary.path(),check)?,"http_content_length":content_length,"mapping_sha256":mapping_sha256(),"mapping_baseline":"c08b80a","downloaded_at":chrono::Utc::now().to_rfc3339()});
         let mut receipt = receipt;
         receipt["acquisition_started_at"] = json!(acquisition_started_at.to_rfc3339());
         receipt["source_updated_before"] =
@@ -347,22 +422,28 @@ pub fn download_source_guarded(
             rows == count_before && rows == count_after,
             "CSV/API count mismatch for {dataset}: CSV={rows}, API before={count_before}, after={count_after}; reconcile via stable ordered API bootstrap"
         );
-        let manifest_path = path.with_extension("manifest.json");
-        let mut manifest_file = File::options()
-            .write(true)
-            .create_new(true)
-            .open(&manifest_path)?;
+        let mut manifest_file = tempfile::Builder::new()
+            .prefix(&format!("{dataset}."))
+            .suffix(".manifest.part")
+            .tempfile_in(&sources)?;
         serde_json::to_writer_pretty(&mut manifest_file, &receipt)?;
-        manifest_file.sync_all()?;
-        fs::hard_link(&temporary, &path)?;
-        fs::remove_file(&temporary)?;
+        manifest_file.as_file().sync_all()?;
+        fs::hard_link(temporary.path(), &path)?;
+        published_csv = true;
+        fs::hard_link(manifest_file.path(), &manifest_path)?;
+        published_manifest = true;
         load_source_guarded(directory, dataset, PublicationMode::Production, check)
     })();
-    if result.is_err() && temporary.exists() {
+    if result.is_err() {
+        if published_manifest {
+            fs::remove_file(&manifest_path)?;
+        }
+        if published_csv {
+            fs::remove_file(&path)?;
+        }
         let quarantine = directory.join("quarantine");
         fs::create_dir_all(&quarantine)?;
-        fs::rename(
-            &temporary,
+        temporary.persist_noclobber(
             quarantine.join(format!("{dataset}.{}.csv", uuid::Uuid::new_v4())),
         )?;
     }
@@ -553,6 +634,236 @@ mod tests {
                 .iter()
                 .any(|c| c.csv_header != c.api_field.to_uppercase())
         );
+    }
+}
+
+#[cfg(test)]
+mod bulk_transport_tests {
+    use super::*;
+    use std::{
+        net::{TcpListener, TcpStream},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
+        thread,
+        time::Instant,
+    };
+
+    fn server(
+        respond: impl FnOnce(TcpStream) + Send + 'static,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0_u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                assert!(request.len() < 16384, "oversized fixture request");
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+            }
+            respond(stream);
+        });
+        (format!("http://{address}/rows.csv"), worker)
+    }
+
+    fn limits() -> BulkTransferLimits {
+        BulkTransferLimits {
+            total_timeout: Duration::from_secs(3),
+            read_timeout: Duration::from_millis(500),
+            max_bytes: 1024,
+        }
+    }
+
+    #[test]
+    fn truncated_body_removes_its_partial_and_preserves_unrelated_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let unrelated = directory.path().join("unrelated.part");
+        fs::write(&unrelated, "keep").unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc")
+                .unwrap();
+        });
+        let result = transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits());
+        worker.join().unwrap();
+        assert!(
+            result.is_err(),
+            "truncated Content-Length body was accepted"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        assert_eq!(fs::read_to_string(unrelated).unwrap(), "keep");
+    }
+
+    #[test]
+    fn stalled_body_uses_its_read_deadline_and_removes_the_partial() {
+        let directory = tempfile::tempdir().unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\na")
+                .unwrap();
+            thread::sleep(Duration::from_millis(800));
+        });
+        let mut limits = limits();
+        limits.read_timeout = Duration::from_millis(150);
+        let started = Instant::now();
+        let result = transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits);
+        let elapsed = started.elapsed();
+        worker.join().unwrap();
+        assert!(result.is_err(), "stalled body was accepted");
+        assert!(
+            elapsed < Duration::from_millis(700),
+            "stall timeout took {elapsed:?}"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn total_deadline_stops_an_otherwise_progressing_chunked_body() {
+        let directory = tempfile::tempdir().unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            for _ in 0..20 {
+                if stream.write_all(b"1\r\na\r\n").is_err() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            let _ = stream.write_all(b"0\r\n\r\n");
+        });
+        let mut limits = limits();
+        limits.total_timeout = Duration::from_millis(250);
+        let started = Instant::now();
+        let result = transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits);
+        let elapsed = started.elapsed();
+        worker.join().unwrap();
+        assert!(result.is_err(), "progress bypassed the total deadline");
+        assert!(
+            elapsed < Duration::from_millis(900),
+            "total deadline took {elapsed:?}"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cancellation_interrupts_a_stalled_body_and_removes_written_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let sent = Arc::new(AtomicBool::new(false));
+        let worker_sent = sent.clone();
+        let (url, worker) = server(move |mut stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\na")
+                .unwrap();
+            worker_sent.store(true, Ordering::Release);
+            thread::sleep(Duration::from_millis(800));
+        });
+        let check = || -> Result<()> {
+            if sent.load(Ordering::Acquire) {
+                for entry in fs::read_dir(directory.path())? {
+                    ensure!(entry?.metadata()?.len() == 0, "fixture lease cancelled");
+                }
+            }
+            Ok(())
+        };
+        let mut limits = limits();
+        limits.read_timeout = Duration::from_secs(2);
+        let started = Instant::now();
+        let error =
+            transfer_bulk_csv(&url, directory.path(), "crashes", &check, limits).unwrap_err();
+        let elapsed = started.elapsed();
+        worker.join().unwrap();
+        assert!(
+            error.to_string().contains("fixture lease cancelled"),
+            "{error:#}"
+        );
+        assert!(
+            elapsed < Duration::from_millis(700),
+            "cancellation took {elapsed:?}"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn excessive_declared_length_is_rejected_before_creating_a_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1025\r\nConnection: close\r\n\r\n")
+                .unwrap();
+        });
+        let error =
+            transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits()).unwrap_err();
+        worker.join().unwrap();
+        assert!(
+            error.to_string().contains("Content-Length exceeds"),
+            "{error:#}"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn unknown_length_still_enforces_the_streamed_byte_cap() {
+        let directory = tempfile::tempdir().unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nabcde")
+                .unwrap();
+        });
+        let mut limits = limits();
+        limits.max_bytes = 4;
+        let error =
+            transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits).unwrap_err();
+        worker.join().unwrap();
+        assert!(
+            error.to_string().contains("download exceeds size limit"),
+            "{error:#}"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn chunked_body_without_length_counts_only_decoded_payload_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n").unwrap();
+        });
+        let mut limits = limits();
+        limits.max_bytes = 5;
+        let (output, bytes, expected) =
+            transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits).unwrap();
+        worker.join().unwrap();
+        assert_eq!((bytes, expected), (5, None));
+        assert_eq!(fs::read(output.path()).unwrap(), b"abcde");
+    }
+
+    #[test]
+    fn healthy_progress_resets_the_read_deadline_and_matches_known_length() {
+        let directory = tempfile::tempdir().unwrap();
+        let (url, worker) = server(|mut stream| {
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            for byte in b"abcde" {
+                stream.write_all(&[*byte]).unwrap();
+                thread::sleep(Duration::from_millis(150));
+            }
+        });
+        let (output, bytes, expected) =
+            transfer_bulk_csv(&url, directory.path(), "crashes", &|| Ok(()), limits()).unwrap();
+        worker.join().unwrap();
+        assert_eq!((bytes, expected), (5, Some(5)));
+        assert_eq!(fs::read(output.path()).unwrap(), b"abcde");
+        drop(output);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 }
 

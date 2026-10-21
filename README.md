@@ -167,7 +167,9 @@ The root `railway.toml` builds `docker/Dockerfile.rust`, runs one backend replic
 
 Deploy `frontend/` as a separate Next.js service and set its private `BACKEND_URL` for both build and runtime. No PostgreSQL server, separate ingestion/export workers, Redis, or tile server is required for normal operation.
 
-For an existing deployment, follow the [migration and operations guide](docs/rust-migration.md): drain the old writers, capture a verified read-only snapshot, preserve facts and custom boundaries, review schedules/checkpoints, rehearse restore and measure the replacement before cutover. Keep the previous deployment available for rollback until the replacement is validated.
+For a clean migration, follow the [private bootstrap guide](docs/railway-bootstrap.md): download complete fresh portal CSVs, capture and restore only the existing uploaded boundaries, verify private backups and rehearse recovery before changing traffic. The temporary bootstrap process starts no public server or scheduler. The [migration and operations guide](docs/rust-migration.md) also supports preserving an entire historical PostgreSQL installation when that is required. Keep the previous deployment available for rollback until the replacement is validated.
+
+Start production with a **1 GiB backend memory ceiling**, a **192 MB DuckDB buffer**, two SQL threads and one replica. A **512 MiB frontend ceiling** leaves room for cold starts. These ceilings are protective limits: [Railway bills actual resource consumption](https://docs.railway.com/guides/right-size-cpu-memory), so lowering a limit alone does not lower idle costs. Measure actual usage after bootstrap and daily refresh before reducing headroom.
 
 ## Data sources and project layout
 

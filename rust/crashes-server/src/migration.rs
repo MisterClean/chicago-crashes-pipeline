@@ -130,18 +130,29 @@ fn boundaries(
 ) -> Result<Value> {
     let root = directory.join("boundaries");
     private_directory(&root)?;
+    check()?;
     let rows = transaction.query(
-        "SELECT row_to_json(t)::text FROM spatial_layers t ORDER BY id",
+        "SELECT row_to_json(t)::text FROM spatial_layers t ORDER BY id LIMIT 10001",
         &[],
     )?;
     ensure!(
         rows.len() <= 10000,
         "too many boundary layers for migration metadata"
     );
-    let layers = rows
-        .iter()
-        .map(|row| serde_json::from_str::<Value>(row.get::<_, &str>(0)))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut layers = Vec::with_capacity(rows.len());
+    let mut metadata_bytes = 0_usize;
+    for row in &rows {
+        check()?;
+        let text: &str = row.get(0);
+        metadata_bytes += text.len();
+        ensure!(
+            metadata_bytes <= 32 * 1024 * 1024,
+            "boundary metadata exceeds 32MiB"
+        );
+        let layer: Value = serde_json::from_str(text)?;
+        ensure!(layer.is_object(), "boundary metadata must be object");
+        layers.push(layer);
+    }
     let path = root.join("features.ndjson");
     let sql = "COPY(SELECT row_to_json(f)::text FROM(SELECT id,layer_id,properties::text properties_json,encode(ST_AsBinary(geometry),'hex') geometry_wkb_hex,ST_SRID(geometry) srid,created_at,updated_at FROM spatial_layer_features ORDER BY id) f) TO STDOUT WITH(FORMAT CSV)";
     let reader = transaction.copy_out(sql)?;
@@ -153,8 +164,15 @@ fn boundaries(
     let mut output = private_file(&path)?;
     while csv.read_record(&mut row)? {
         check()?;
+        ensure!(row.len() == 1, "invalid boundary export row");
         let text = row.get(0).context("boundary record missing")?;
-        let _: Value = serde_json::from_str(text)?;
+        ensure!(text.len() <= 16 * 1024 * 1024, "boundary row exceeds 16MiB");
+        let parsed: Value = serde_json::from_str(text)?;
+        ensure!(parsed.is_object(), "boundary export row must be object");
+        ensure!(
+            fs2::available_space(&path)? > 256 * 1024 * 1024,
+            "migration disk reserve exhausted"
+        );
         output.write_all(text.as_bytes())?;
         output.write_all(b"\n")?;
         count += 1;
@@ -175,23 +193,22 @@ fn write_manifest(path: &Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
-/// Credentials are read only from PG_MIGRATION_URL, never printed or serialized.
-/// The explicit flag authorizes read load; no source mutation is possible inside
-/// the repeatable-read/read-only transaction. Destination must be new and local.
-pub fn export_postgres_snapshot(
-    db: &Database,
-    directory: &Path,
-    allow_production_read: bool,
-    check: &Check<'_>,
-) -> Result<Value> {
+/// Preconditions precede both credential access and network I/O.
+fn validate_destination(directory: &Path, allow_production_read: bool) -> Result<()> {
     ensure!(
         allow_production_read,
         "explicit --allow-production-read required for consistent PostgreSQL snapshot acquisition"
     );
-    ensure!(
-        !directory.exists(),
-        "migration destination exists; choose a new directory"
-    );
+    match fs::symlink_metadata(directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => anyhow::bail!("migration destination exists; choose a new directory"),
+    }
+}
+
+/// Both exporters use verified TLS, including optional explicit trusted CA PEM.
+/// Connection configuration and credentials never enter an export artifact.
+fn connect_postgres() -> Result<postgres::Client> {
     let url = std::env::var("PG_MIGRATION_URL").context("PG_MIGRATION_URL is required")?;
     let mut configuration: postgres::Config = url
         .parse()
@@ -210,12 +227,15 @@ pub fn export_postgres_snapshot(
         tls_builder.add_root_certificate(certificate);
     }
     let tls = tls_builder.build()?;
-    let mut client=configuration.connect(postgres_native_tls::MakeTlsConnector::new(tls)).map_err(|error|{
+    let client=configuration.connect(postgres_native_tls::MakeTlsConnector::new(tls)).map_err(|error|{
         // PostgreSQL's outer error is a fixed category; omit its potentially
         // sensitive server detail and never format the connection configuration.
         let tls_error=std::error::Error::source(&error).and_then(|cause|cause.downcast_ref::<native_tls::Error>()).map(ToString::to_string).unwrap_or_else(||"no TLS certificate diagnostic".to_owned());
         anyhow::anyhow!("PostgreSQL migration connection failed ({error}, SQLSTATE {}, {tls_error}); verify secret environment and TLS connectivity",error.code().map(|code|code.code()).unwrap_or("unavailable"))
     })?;
+    Ok(client)
+}
+fn read_only_transaction(client: &mut postgres::Client) -> Result<Transaction<'_>> {
     let mut transaction = client
         .build_transaction()
         .isolation_level(IsolationLevel::RepeatableRead)
@@ -232,6 +252,52 @@ pub fn export_postgres_snapshot(
         actual_read_only == "on" && actual_isolation == "repeatable read",
         "source transaction must actually be read-only and repeatable-read"
     );
+    Ok(transaction)
+}
+
+/// Export uploaded layer metadata and exact WKB features only, never facts or
+/// operational records. The new directory contains boundaries/manifest.json and
+/// boundaries/features.ndjson, ready for `import-layers --snapshot OUTPUT/boundaries`.
+/// PG_MIGRATION_URL and optional PG_MIGRATION_CA_CERT follow the same mandatory,
+/// verified TLS policy as export-postgres-snapshot. No local DuckDB is required.
+pub fn export_postgres_layers(
+    directory: &Path,
+    allow_production_read: bool,
+    check: &Check<'_>,
+) -> Result<Value> {
+    validate_destination(directory, allow_production_read)?;
+    check()?;
+    let mut client = connect_postgres()?;
+    let mut transaction = read_only_transaction(&mut client)?;
+    let snapshot_id: String = transaction
+        .query_one("SELECT txid_current_snapshot()::text", &[])?
+        .get(0);
+    check()?;
+    if let Some(parent) = directory.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    private_directory(directory)?;
+    let receipt = boundaries(&mut transaction, directory, check)?;
+    check()?;
+    transaction.rollback()?;
+    Ok(
+        json!({"format_version":1,"source_kind":"postgresql_repeatable_read","source_transaction_read_only":true,"source_isolation":"repeatable read","snapshot_id":snapshot_id,"boundaries":receipt,"manifest":"boundaries/manifest.json","contains_crash_records":false,"contains_operational_records":false,"source_credentials_recorded":false}),
+    )
+}
+
+/// Credentials are read only from PG_MIGRATION_URL, never printed or serialized.
+/// The explicit flag authorizes read load; no source mutation is possible inside
+/// the repeatable-read/read-only transaction. Destination must be new and local.
+pub fn export_postgres_snapshot(
+    db: &Database,
+    directory: &Path,
+    allow_production_read: bool,
+    check: &Check<'_>,
+) -> Result<Value> {
+    validate_destination(directory, allow_production_read)?;
+    check()?;
+    let mut client = connect_postgres()?;
+    let mut transaction = read_only_transaction(&mut client)?;
     let snapshot_id: String = transaction
         .query_one("SELECT txid_current_snapshot()::text", &[])?
         .get(0);
@@ -354,7 +420,7 @@ pub fn export_postgres_snapshot(
     let boundaries = boundaries(&mut transaction, directory, check)?;
     check()?;
     transaction.rollback()?;
-    let manifest = json!({"format_version":1,"source_kind":"postgresql_repeatable_read","production_snapshot":true,"snapshot_id":snapshot_id,"captured_at":chrono::Utc::now().to_rfc3339(),"source_transaction_read_only":actual_read_only=="on","source_isolation":actual_isolation,"source_credentials_recorded":false,"tables":tables,"operations":ops,"boundaries":boundaries});
+    let manifest = json!({"format_version":1,"source_kind":"postgresql_repeatable_read","production_snapshot":true,"snapshot_id":snapshot_id,"captured_at":chrono::Utc::now().to_rfc3339(),"source_transaction_read_only":true,"source_isolation":"repeatable read","source_credentials_recorded":false,"tables":tables,"operations":ops,"boundaries":boundaries});
     write_manifest(&directory.join("manifest.json"), &manifest)?;
     Ok(manifest)
 }
@@ -362,6 +428,42 @@ pub fn export_postgres_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn layers_export_rejects_unauthorized_read_before_credentials_or_network() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("new");
+        let error = export_postgres_layers(&destination, false, &|| {
+            panic!("check must follow authorization")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("--allow-production-read"));
+        assert!(!destination.exists());
+    }
+    #[test]
+    fn layers_export_refuses_existing_destination_without_source_connection() {
+        let temporary = tempfile::tempdir().unwrap();
+        let sentinel = temporary.path().join("keep.txt");
+        fs::write(&sentinel, "preserve existing data").unwrap();
+        let error = export_postgres_layers(temporary.path(), true, &|| {
+            panic!("check must follow destination validation")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("destination exists"));
+        assert_eq!(
+            fs::read_to_string(sentinel).unwrap(),
+            "preserve existing data"
+        );
+    }
+    #[test]
+    fn layers_export_checks_cancellation_before_credentials_or_network() {
+        let temporary = tempfile::tempdir().unwrap();
+        let destination = temporary.path().join("new");
+        let error =
+            export_postgres_layers(&destination, true, &|| anyhow::bail!("cancelled fixture"))
+                .unwrap_err();
+        assert_eq!(error.to_string(), "cancelled fixture");
+        assert!(!destination.exists());
+    }
     #[cfg(unix)]
     #[test]
     fn snapshot_artifacts_are_private_without_inheriting_the_callers_umask() {

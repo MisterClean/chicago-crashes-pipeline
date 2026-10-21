@@ -89,8 +89,10 @@ pub fn import_layer_snapshot(db: &Database, directory: &Path) -> Result<Value> {
         "read_json({path},columns={{id:'BIGINT',layer_id:'BIGINT',properties_json:'VARCHAR',geometry_wkb_hex:'VARCHAR',srid:'INTEGER',created_at:'TIMESTAMP',updated_at:'TIMESTAMP'}},format='newline_delimited')"
     );
     db.transaction(|session|{
-        ensure!(count(session,"SELECT count(*) n FROM information_schema.tables WHERE table_schema='main' AND table_name IN ('spatial_layers','spatial_layer_features')")?==0,"boundary tables exist; restore requires fresh target");
         create_tables(session)?;
+        // Portal seeding initializes this catalog. Import may fill an empty
+        // catalog, but must never replace an operator's uploaded boundaries.
+        ensure!(count(session,"SELECT (SELECT count(*) FROM spatial_layers)+(SELECT count(*) FROM spatial_layer_features) n")?==0,"boundary catalog is populated; restore requires an empty target");
         for layer in layers{
             ensure!(layer["srid"]==4326,"boundary metadata must declare EPSG:4326");
             let values:Vec<_>=LAYER_FIELDS.iter().map(|field|layer[*field].clone()).collect();
@@ -587,6 +589,37 @@ mod native_tests {
         snapshot(&source, &wkb, 3857);
         assert!(import_layer_snapshot(&db, &source).is_err());
         assert_eq!(db.query("SELECT count(*) n FROM information_schema.tables WHERE table_name='spatial_layers'",&[]).unwrap()[0]["n"],0);
+    }
+    #[test]
+    fn restores_into_seeded_empty_catalog_and_refuses_to_replace_boundaries() {
+        let temp = tempfile::tempdir().unwrap();
+        let Some(db) = database(temp.path()) else {
+            return;
+        };
+        initialize_catalog(&db).unwrap();
+        let wkb = db
+            .query("SELECT ST_AsHEXWKB(ST_Point(-87.6,41.8)) wkb", &[])
+            .unwrap()[0]["wkb"]
+            .clone();
+        let source = temp.path().join("snapshot");
+        snapshot(&source, &wkb, 4326);
+        import_layer_snapshot(&db, &source).unwrap();
+        let before = db
+            .query(
+                "SELECT * EXCLUDE(geometry),ST_AsHEXWKB(geometry) wkb FROM spatial_layer_features",
+                &[],
+            )
+            .unwrap();
+        let error = import_layer_snapshot(&db, &source).unwrap_err();
+        assert!(error.to_string().contains("populated"));
+        assert_eq!(
+            db.query(
+                "SELECT * EXCLUDE(geometry),ST_AsHEXWKB(geometry) wkb FROM spatial_layer_features",
+                &[]
+            )
+            .unwrap(),
+            before
+        );
     }
     #[test]
     fn missing_prj_archive_rejected_before_converter_runs() {
