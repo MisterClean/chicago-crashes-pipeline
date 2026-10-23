@@ -88,7 +88,8 @@ impl From<anyhow::Error> for ApiError {
         {
             return Self(StatusCode::NOT_FOUND, "Resource not found".into());
         }
-        if message == "Selection geometry must be valid and nonempty"
+        if message == queries::REPORT_RANGE_ERROR
+            || message == "Selection geometry must be valid and nonempty"
             || message == "Selection geometry must be Polygon or MultiPolygon"
             || message == "upload requires 1..100000 features"
             || message == "invalid upload geometry"
@@ -445,6 +446,9 @@ async fn dispatch(
             return Err(ApiError::bad("resolved_area is internal"));
         }
         location.validate().map_err(ApiError::bad)?;
+        if path == "/dashboard/location-report" {
+            location.validate_report_dates().map_err(ApiError::bad)?;
+        }
         if let Some(kind) = &location.place_type {
             validate_place(kind, location.place_id.as_deref())?;
         }

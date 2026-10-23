@@ -14,6 +14,7 @@ The application uses **Rust**, **DuckDB 2.0.0**, **SQLite**, and **Next.js**. On
 - Creates paired DuckDB/SQLite backups with checksums and supports offline restore.
 
 Map points are capped independently of report totals. Reports and exports use the full selected population.
+API date filters use calendar years 0001–9999. Location reports expand at most 1,200 calendar months, including empty months; wider report ranges return a client error. Current all-history crash reports fit within that bound.
 
 ## Architecture
 
@@ -213,7 +214,7 @@ Deploy `frontend/` as a separate Next.js service and set its private `BACKEND_UR
 
 For a clean migration, follow the [private bootstrap guide](docs/railway-bootstrap.md): download complete fresh portal CSVs, capture and restore only the existing uploaded boundaries, verify private backups and rehearse recovery before changing traffic. The temporary bootstrap process starts no public server or scheduler. The [migration and operations guide](docs/rust-migration.md) also supports preserving an entire historical PostgreSQL installation when that is required. Keep the previous deployment available for rollback until the replacement is validated.
 
-For production with periodic full-source reconciliation, use a **2 GiB backend memory ceiling**, `DUCKDB_MEMORY_LIMIT=512MB`, `DUCKDB_THREADS=1` and one replica. The smaller 192 MB image default supports the measured low-traffic query/daily-window workload, but a complete 2.25-million-row vehicle replay exhausted that buffer and rolled back. Stagger full replays by source and retain enough volume capacity for staging, spill and paired backups. A **512 MiB frontend ceiling** leaves room for cold starts. These ceilings are protective limits: [Railway bills actual resource consumption](https://docs.railway.com/guides/right-size-cpu-memory), so lowering a limit alone does not lower idle costs. Measure actual usage during full refresh and location reports before reducing headroom.
+For production with periodic full-source reconciliation, use a **2 GB backend memory ceiling**, `DUCKDB_MEMORY_LIMIT=512MB`, `DUCKDB_THREADS=1` and one replica. The smaller 192 MB image default supports the measured low-traffic query/daily-window workload, but a complete 2.25-million-row vehicle replay exhausted that buffer and rolled back. Stagger full replays by source and retain enough volume capacity for staging, spill and paired backups. A **512 MiB frontend ceiling** leaves room for cold starts. These ceilings are protective limits: [Railway bills actual resource consumption](https://docs.railway.com/guides/right-size-cpu-memory), so lowering a limit alone does not lower idle costs. Measure actual usage during full refresh and location reports before reducing headroom.
 
 ## Data sources and project layout
 

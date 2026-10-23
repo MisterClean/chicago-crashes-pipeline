@@ -173,6 +173,69 @@ async fn send(
 fn place() -> Value {
     json!({"place_type":"layer:4","place_id":"259","start_date":"2024-01-01","end_date":"2024-01-31"})
 }
+
+#[tokio::test]
+async fn public_report_rejects_unbounded_month_expansion_before_database_admission() {
+    let (mut state, _directory) = fixture().unwrap();
+    state.admission = Arc::new(tokio::sync::Semaphore::new(0));
+    let app = api::router(state);
+    for (start, end) in [
+        ("-250000-01-01", "2026-01-01"),
+        ("0000-01-01", "2026-01-01"),
+        ("0001-01-01", "9999-12-31"),
+    ] {
+        let mut request = place();
+        request["start_date"] = json!(start);
+        request["end_date"] = json!(end);
+        let (status, _, _) = send(
+            app.clone(),
+            "POST",
+            "/dashboard/location-report",
+            request,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{start}..{end}");
+    }
+    let (status, _, _) = send(
+        app,
+        "GET",
+        "/dashboard/stats?start_date=-250000-01-01",
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn public_report_bounds_one_sided_date_ranges_after_resolving_matching_months() {
+    let (state, _directory) = fixture().unwrap();
+    let app = api::router(state);
+    for dates in [
+        json!({"start_date":"0001-01-01"}),
+        json!({"end_date":"9999-12-31"}),
+    ] {
+        let mut request = json!({"place_type":"layer:4","place_id":"259"});
+        for (key, value) in dates.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        let (status, body, _) = send(
+            app.clone(),
+            "POST",
+            "/dashboard/location-report",
+            request,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["detail"], crate::queries::REPORT_RANGE_ERROR);
+    }
+    let request = json!({"place_type":"layer:4","place_id":"259"});
+    let (status, report, _) = send(app, "POST", "/dashboard/location-report", request, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(report["stats"]["total_crashes"], 2);
+}
 fn export() -> Value {
     let mut v = place();
     v["datasets"] = json!(["crashes"]);
