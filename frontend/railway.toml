@@ -1,15 +1,17 @@
 # =============================================================================
 # Railway Configuration - Chicago Crash Dashboard (Frontend)
 # =============================================================================
-# Next.js frontend service
+# Legacy settings reference; new services use Railway settings or IaC.
+# Build with the frontend directory as the service root.
 # =============================================================================
 
 [build]
-builder = "RAILPACK"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 # Start command
-startCommand = "npm run start"
+startCommand = "node server.js"
 # Health check
 healthcheckPath = "/"
 healthcheckTimeout = 100
