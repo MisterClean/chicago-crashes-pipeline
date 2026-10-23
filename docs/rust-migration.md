@@ -48,7 +48,7 @@ For historical location reports, configure separate weekly full replays for cras
 
 Fatality incremental updates require an actual source-update checkpoint. Core modification-watermark jobs and historical person-date repair remain held until a reviewed baseline/policy is provided. `force` does not bypass holds, disabled flags or the change guard. Empty or unstable API windows do not erase facts.
 
-The audited [mapping](../rust/crashes-server/resources/csv_column_mapping.json) owns CSV display-header/API-name/type conversion. Downloads validate schema, transport, content hashes, counts and source revisions. New or renamed columns fail for review. Successful staging is removed after durable publication; source disk budget, retention and attempt counts are bounded.
+The audited [mapping](../rust/crashes-server/resources/csv_column_mapping.json) owns CSV display-header/API-name/type conversion. Downloads validate schema, transport, content hashes, counts and source revisions. New or renamed columns fail for review. Equivalent WKT and GeoJSON point coordinates retain the stored archival text during refresh, with exact decimal comparison before floating-point geometry conversion. A transport-format change therefore does not consume the changed-row allowance; actual coordinate and other field changes still do. Successful staging is removed after durable publication; source disk budget, retention and attempt counts are bounded.
 
 ## Boundaries and uploads
 
