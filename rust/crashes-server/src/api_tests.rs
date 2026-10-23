@@ -19,6 +19,60 @@ use tower::ServiceExt;
 const KEY: &str = "local-test-key-at-least-thirty-two-bytes";
 
 #[tokio::test]
+async fn backup_history_requires_auth_and_lists_only_completed_paired_receipts() {
+    let (state, directory) = fixture().unwrap();
+    let app = api::router(state.clone());
+    for path in ["/jobs/backups", "/admin/api/jobs/backups"] {
+        for key in [None, Some("invalid")] {
+            assert_eq!(
+                send(app.clone(), "GET", path, Value::Null, key).await.0,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        let (status, body, _) = send(app.clone(), "GET", path, Value::Null, Some(KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"backups":[],"last_full_backup_at":null}));
+    }
+
+    state
+        .control
+        .set_configuration("private_setting", &json!("must-not-be-disclosed"))
+        .unwrap();
+    let root = directory.path().join("backups");
+    let pending_id = uuid::Uuid::new_v4().to_string();
+    let pending = root.join(format!(".{pending_id}.partial"));
+    std::fs::create_dir_all(&pending).unwrap();
+    std::fs::write(pending.join("current.duckdb"), "incomplete snapshot").unwrap();
+    let mut completed = Vec::new();
+    for _ in 0..8 {
+        completed.push(crate::recovery::backup(&state.db, &state.control, &root, None).unwrap());
+    }
+    let last_completed = state
+        .control
+        .configuration("last_full_backup_at")
+        .unwrap()
+        .unwrap();
+    for path in ["/jobs/backups", "/admin/api/jobs/backups"] {
+        let (status, body, headers) = send(app.clone(), "GET", path, Value::Null, Some(KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["backups"], json!(&completed[1..]));
+        assert_eq!(body["last_full_backup_at"], last_completed);
+        assert!(!headers.contains_key("x-cache"));
+        assert!(!body.to_string().contains(&pending_id));
+        assert!(!body.to_string().contains("must-not-be-disclosed"));
+        assert!(
+            !body
+                .to_string()
+                .contains(&directory.path().display().to_string())
+        );
+    }
+    assert!(
+        pending.exists(),
+        "reading history must not mutate pending work"
+    );
+}
+
+#[tokio::test]
 async fn embedded_admin_routes_work_behind_the_frontend_proxy_and_keep_authentication() {
     let (state, _directory) = fixture().unwrap();
     let app = api::router(state);

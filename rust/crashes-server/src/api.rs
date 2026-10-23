@@ -702,6 +702,20 @@ fn execute(
                     .collect::<Vec<_>>()
             )),
             ["jobs", "schedules"] => Ok(serde_json::to_value(state.control.schedules()?)?),
+            ["jobs", "backups"] => {
+                // History is recorded only after the paired snapshot and any
+                // configured offsite publication complete. Do not infer success
+                // from local directories, which can also contain pending work.
+                let history = state
+                    .control
+                    .configuration("full_backup_history")?
+                    .unwrap_or_else(|| json!([]));
+                let history = history.as_array().context("invalid backup history")?;
+                Ok(json!({
+                    "backups": &history[history.len().saturating_sub(7)..],
+                    "last_full_backup_at": state.control.configuration("last_full_backup_at")?.and_then(|value| value.as_i64()),
+                }))
+            }
             ["jobs", id] => Ok(state
                 .control
                 .get(id)?

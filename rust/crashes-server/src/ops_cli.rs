@@ -11,6 +11,16 @@ use serde_json::{Value, json};
 use std::{io::Read, time::Duration};
 
 const MAX_RESPONSE_BYTES: u64 = 8 * 1024 * 1024;
+const BACKUP_OUTCOME_UNKNOWN: &str = "Backup outcome is unknown; check `admin backups` before retrying. For long backups use the backend loopback API through Railway SSH.";
+
+fn request_failure_context(method: &Method, path: &str, message: &str, backup: bool) -> String {
+    let context = format!("{method} {path} {message}");
+    if backup {
+        format!("{context}; {BACKUP_OUTCOME_UNKNOWN}")
+    } else {
+        context
+    }
+}
 
 #[derive(Args)]
 pub(crate) struct Options {
@@ -63,6 +73,8 @@ enum Command {
     Queue,
     /// Create and verify a paired DuckDB/SQLite backup through the running owner.
     Backup,
+    /// List completed paired backup receipts, including configured offsite publication.
+    Backups,
     /// Queue one administrative ingestion job; publication guards still apply.
     Run {
         #[arg(value_parser = clap::value_parser!(i64).range(1..))]
@@ -156,6 +168,7 @@ impl Backend {
     }
 
     fn request(&self, method: Method, path: &str, body: Option<Value>) -> Result<Value> {
+        let backup = method == Method::POST && path == "jobs/backup";
         let url = self.base.join(path).context("build admin request URL")?;
         let mut request = self.client.request(method.clone(), url);
         if let Some(body) = body {
@@ -163,22 +176,28 @@ impl Backend {
         }
         let response = request
             .send()
-            .with_context(|| format!("{method} {path} request failed"))?;
+            .with_context(|| request_failure_context(&method, path, "request failed", backup))?;
         let status = response.status();
         let mut bytes = Vec::new();
         response
             .take(MAX_RESPONSE_BYTES + 1)
             .read_to_end(&mut bytes)
-            .with_context(|| format!("read {method} {path} response"))?;
+            .with_context(|| {
+                request_failure_context(&method, path, "response could not be read", backup)
+            })?;
         ensure!(
             bytes.len() as u64 <= MAX_RESPONSE_BYTES,
-            "{method} {path} response exceeded 8 MiB"
+            "{}",
+            request_failure_context(&method, path, "response exceeded 8 MiB", backup)
         );
         if !status.is_success() {
             let value = serde_json::from_slice::<Value>(&bytes).ok();
             let detail = value.as_ref().and_then(|value| value["detail"].as_str());
-            let detail =
-                detail.unwrap_or("backend rejected the request; verify the URL and API_KEY");
+            let detail = detail.unwrap_or(if matches!(status.as_u16(), 401 | 403) {
+                "authentication failed; verify the URL and API_KEY"
+            } else {
+                "server or proxy returned an error"
+            });
             let detail = if self.api_key.is_empty() {
                 detail.to_owned()
             } else {
@@ -186,11 +205,19 @@ impl Backend {
             };
             bail!(
                 "{method} {path}: HTTP {status}: {}",
-                detail.chars().take(1000).collect::<String>()
+                if backup && status.is_server_error() {
+                    format!(
+                        "{}; {BACKUP_OUTCOME_UNKNOWN}",
+                        detail.chars().take(1000).collect::<String>()
+                    )
+                } else {
+                    detail.chars().take(1000).collect::<String>()
+                }
             );
         }
-        serde_json::from_slice(&bytes)
-            .with_context(|| format!("{method} {path} returned invalid JSON"))
+        serde_json::from_slice(&bytes).with_context(|| {
+            request_failure_context(&method, path, "returned invalid JSON", backup)
+        })
     }
 
     fn update_schedule(&self, id: &str, enabled: Option<bool>) -> Result<Value> {
@@ -295,6 +322,7 @@ pub(crate) fn run(options: &Options) -> Result<()> {
         }
         Command::Queue => backend.request(Method::GET, "jobs/executions", None)?,
         Command::Backup => backend.request(Method::POST, "jobs/backup", Some(json!({})))?,
+        Command::Backups => backend.request(Method::GET, "jobs/backups", None)?,
         Command::Run { job } => backend.request(
             Method::POST,
             &format!("jobs/{job}/execute"),

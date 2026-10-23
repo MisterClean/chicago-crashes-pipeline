@@ -153,6 +153,7 @@ target/release/crashes-server admin status
 target/release/crashes-server admin schedules
 target/release/crashes-server admin queue
 target/release/crashes-server admin scheduler status
+target/release/crashes-server admin backups
 target/release/crashes-server admin --timeout-seconds 900 backup
 ```
 
@@ -178,7 +179,9 @@ Portal metadata, count and page GETs retry temporary connection failures and res
 
 Migrated administrative schedules use numeric IDs: `admin jobs` lists them; `admin executions --job 42 --limit 20` shows their history; `admin run 42`, `admin enable 42` and `admin disable 42` manage them. `admin executions --limit 50` shows recent administrative history. An empty administrative jobs list can coexist with active native schedules. `queue` includes up to 100 durable worker records, including native ingestion and exports.
 
-For another backend, pass `--url https://backend.example.com` or set `CRASHES_ADMIN_URL`. The frontend proxy also works with `--url https://frontend.example.com/admin/api`. Use HTTPS across public networks. Keep the secret in `API_KEY`; URLs cannot include credentials. Each request defaults to a 180-second deadline, adjustable with `--timeout-seconds 1..900`; responses are bounded to 8 MiB. HTTP failures, redirects, timeouts and invalid JSON exit nonzero. Mutations are not automatically retried. A client timeout can leave server work running; check its result before retrying. `admin backup` creates and verifies a paired backup through the running owner, including configured offsite publication, and returns its receipt.
+For another backend, pass `--url https://backend.example.com` or set `CRASHES_ADMIN_URL`. The frontend proxy works with `--url https://frontend.example.com/admin/api` for status and short controls. Use HTTPS across public networks. Keep the secret in `API_KEY`; URLs cannot include credentials. Each request defaults to a 180-second deadline, adjustable with `--timeout-seconds 1..900`; responses are bounded to 8 MiB. This changes only the client's deadline: the frontend rewrite has its own shorter upstream timeout. Use backend loopback through Railway SSH for long backups.
+
+HTTP failures, redirects, timeouts and invalid JSON exit nonzero. Mutations are not automatically retried. A disconnected client or proxy HTTP 5xx can leave backup work running; run `admin backups` and compare the latest receipt before retrying. This read-only command returns up to seven completed paired backup receipts, oldest first, and `last_full_backup_at` as a Unix timestamp. Receipts enter history only after local snapshot creation and any configured offsite publication complete; pending or failed attempts are excluded. `admin backup` creates the paired DuckDB/SQLite snapshot through the running owner and returns its receipt, including file sizes and SHA-256 hashes. The receipt's `restore_tested` field records whether a separate restore test has been performed.
 
 On Railway, open a shell in the backend service, then use its existing environment and loopback API:
 
@@ -187,6 +190,8 @@ railway ssh --project PROJECT_ID --environment ENVIRONMENT_ID --service BACKEND_
 # In the remote shell:
 crashes-server admin --url "http://127.0.0.1:${PORT:-8000}" status
 crashes-server admin --url "http://127.0.0.1:${PORT:-8000}" schedules
+crashes-server admin --url "http://127.0.0.1:${PORT:-8000}" backups
+crashes-server admin --url "http://127.0.0.1:${PORT:-8000}" --timeout-seconds 900 backup
 ```
 
 Use `crashes-server admin --help` for the complete command list. Running `admin` beside the owner is safe; starting another `serve` process against its volume is not supported.

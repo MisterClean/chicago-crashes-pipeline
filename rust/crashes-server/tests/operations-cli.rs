@@ -73,6 +73,9 @@ fn mock(responses: Vec<Response>) -> Result<(String, JoinHandle<Result<Vec<Reque
                 headers,
                 body,
             });
+            if response.status.is_empty() {
+                continue;
+            }
             write!(
                 stream,
                 "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
@@ -137,6 +140,7 @@ fn admin_commands_dispatch_only_the_explicit_http_operation() -> Result<()> {
         (vec!["schedules"], "GET", "/jobs/schedules", None),
         (vec!["queue"], "GET", "/jobs/executions", None),
         (vec!["backup"], "POST", "/jobs/backup", Some(json!({}))),
+        (vec!["backups"], "GET", "/jobs/backups", None),
         (
             vec!["executions"],
             "GET",
@@ -265,6 +269,84 @@ fn admin_errors_fail_without_following_redirects_or_exposing_the_key() -> Result
         assert!(error.contains(expected), "{error}");
         assert!(!error.contains(API_KEY), "error must redact API_KEY");
         assert!(output.stdout.is_empty());
+        assert_eq!(requests(server)?.len(), 1);
+    }
+    Ok(())
+}
+
+#[test]
+fn backups_reads_completed_receipts_through_proxy_without_mutating_or_opening_data() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let data_dir = directory.path().join("must-not-be-created");
+    let history = json!({"last_full_backup_at":1767225600,"backups":[{"schema_version":1,"id":"00000000-0000-4000-8000-000000000001","engine":"2.0.0","created_at":"2026-01-01T00:00:00Z","files":[{"name":"current.duckdb","bytes":1024,"sha256":"a".repeat(64)},{"name":"control.sqlite","bytes":512,"sha256":"b".repeat(64)}],"restore_tested":false}]});
+    let (url, server) = mock(vec![Response::json(history.clone())])?;
+    let output = cli(&format!("{url}/admin/api"), &data_dir, &["backups"])?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(serde_json::from_slice::<Value>(&output.stdout)?, history);
+    assert!(!data_dir.exists());
+    let sent = requests(server)?;
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].method, "GET");
+    assert_eq!(sent[0].path, "/admin/api/jobs/backups");
+    assert_eq!(sent[0].headers["x-api-key"], API_KEY);
+    Ok(())
+}
+
+#[test]
+fn backup_ambiguous_failures_require_history_check_without_automatic_retry() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    for (status, body, expected) in [
+        ("", String::new(), "request failed"),
+        (
+            "500 Internal Server Error",
+            "Internal Server Error".into(),
+            "server or proxy returned an error",
+        ),
+        (
+            "502 Bad Gateway",
+            json!({"detail":format!("upstream disconnected {API_KEY}")}).to_string(),
+            "upstream disconnected [redacted]",
+        ),
+        ("200 OK", "<html>proxy error</html>".into(), "invalid JSON"),
+    ] {
+        let (url, server) = mock(vec![Response {
+            status,
+            body,
+            extra_headers: "",
+        }])?;
+        let output = cli(&url, directory.path(), &["backup"])?;
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr)?;
+        assert!(error.contains(expected), "{error}");
+        assert!(error.contains("Backup outcome is unknown"), "{error}");
+        assert!(error.contains("admin backups"), "{error}");
+        assert!(error.contains("Railway SSH"), "{error}");
+        assert!(!error.contains(API_KEY), "{error}");
+        assert!(output.stdout.is_empty());
+        let sent = requests(server)?;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].method, "POST");
+        assert_eq!(sent[0].path, "/jobs/backup");
+    }
+    Ok(())
+}
+
+#[test]
+fn backup_authentication_rejections_keep_key_guidance_without_claiming_work_started() -> Result<()>
+{
+    let directory = tempfile::tempdir()?;
+    for status in ["401 Unauthorized", "403 Forbidden"] {
+        let (url, server) = mock(vec![Response {
+            status,
+            body: "authentication required".into(),
+            extra_headers: "",
+        }])?;
+        let output = cli(&url, directory.path(), &["backup"])?;
+        assert!(!output.status.success());
+        let error = String::from_utf8(output.stderr)?;
+        assert!(error.contains("verify the URL and API_KEY"), "{error}");
+        assert!(!error.contains("outcome is unknown"), "{error}");
+        assert!(!error.contains(API_KEY), "{error}");
         assert_eq!(requests(server)?.len(), 1);
     }
     Ok(())
