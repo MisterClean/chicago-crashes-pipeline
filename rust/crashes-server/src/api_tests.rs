@@ -998,8 +998,10 @@ async fn runtime_info_is_protected_and_does_not_disclose_paths_or_credentials() 
     assert_eq!(body["backend"], "rust");
     assert_eq!(body["engine"], "2.0.0");
     assert_eq!(body["serialized"], true);
+    assert!(body["max_temp_directory_size"].as_str().is_some());
     assert!(body["resources"]["pid"].as_u64().is_some());
     assert!(!body.to_string().contains(KEY));
+    assert!(!body.to_string().contains(_dir.path().to_str().unwrap()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

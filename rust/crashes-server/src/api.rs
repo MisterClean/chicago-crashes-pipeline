@@ -618,9 +618,9 @@ fn execute(
     if *method == Method::GET {
         return match parts.as_slice() {
             ["runtime", "info"] => {
-                let settings=db.query("SELECT current_setting('memory_limit') AS memory_limit,current_setting('threads') AS sql_threads",&[])?.into_iter().next().context("runtime settings missing")?;
+                let settings=db.query("SELECT current_setting('memory_limit') AS memory_limit,current_setting('threads') AS sql_threads,current_setting('max_temp_directory_size') AS max_temp_directory_size",&[])?.into_iter().next().context("runtime settings missing")?;
                 Ok(
-                    json!({"backend":"rust","source_sha256":env!("CRASHES_SOURCE_SHA256"),"engine":"2.0.0","resources":{"pid":std::process::id()},"memory_limit":settings["memory_limit"],"sql_threads":settings["sql_threads"],"serialized":true,"profiling_data":state.profiling_data,"public_cache":state.pubcache.stats()}),
+                    json!({"backend":"rust","source_sha256":env!("CRASHES_SOURCE_SHA256"),"engine":"2.0.0","resources":{"pid":std::process::id()},"memory_limit":settings["memory_limit"],"sql_threads":settings["sql_threads"],"max_temp_directory_size":settings["max_temp_directory_size"],"serialized":true,"profiling_data":state.profiling_data,"public_cache":state.pubcache.stats()}),
                 )
             }
             ["ready"] => {
