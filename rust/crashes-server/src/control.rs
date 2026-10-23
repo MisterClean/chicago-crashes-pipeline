@@ -489,6 +489,39 @@ impl ControlStore {
         Ok(recovered)
     }
 
+    /// Page ingestion attempts whose analytical commit may precede queue finish.
+    /// Unlike `list`, this does not expire their deadline before reconciliation.
+    pub(crate) fn unreconciled_ingestion_ids(&self, after: &str) -> Result<Vec<String>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare("SELECT id FROM rust_jobs WHERE kind='ingestion' AND status IN ('queued','running','failed') AND id>? ORDER BY id LIMIT 500")?;
+        let rows = statement.query_map([after], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Reconcile an immutable DuckDB publication while holding the exclusive
+    /// owner lock, before workers start. A committed receipt is authoritative
+    /// even after the final attempt or deadline, but cannot undo cancellation.
+    pub(crate) fn reconcile_ingestion_publication(
+        &self,
+        id: &str,
+        receipt: &Value,
+    ) -> Result<usize> {
+        ensure!(
+            receipt["operation_id"].as_str() == Some(id)
+                && receipt["production_complete"] == true
+                && receipt["profiling_only"] == false,
+            "invalid committed ingestion receipt"
+        );
+        let completed = DateTime::parse_from_rfc3339(
+            receipt["committed_at"]
+                .as_str()
+                .context("publication commit time missing")?,
+        )?
+        .timestamp();
+        Ok(self.connect()?.execute("UPDATE rust_jobs SET status='completed',updated_at=?,completed_at=?,manifest_json=?,error=NULL,attempt_token=NULL,lease_until=NULL WHERE id=? AND kind='ingestion' AND status IN ('queued','running','failed') AND cancel_requested=0",
+            params![now()?,completed,serde_json::to_string(receipt)?,id])?)
+    }
+
     /// Validate ownership before every batch, publication and upload.
     pub fn check_attempt(&self, id: &str, token: &str) -> Result<()> {
         let job = self.get(id)?.context("job missing")?;

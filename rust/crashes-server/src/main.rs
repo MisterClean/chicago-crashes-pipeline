@@ -12,6 +12,7 @@ mod ingestion;
 mod layers;
 mod migration;
 mod mutations;
+mod ops_cli;
 mod queries;
 mod recovery;
 #[cfg(test)]
@@ -61,6 +62,8 @@ struct Options {
 #[derive(Subcommand)]
 enum Command {
     BuildInfo,
+    /// Monitor and manage a running backend over its authenticated HTTP API.
+    Admin(ops_cli::Options),
     Probe,
     Inspect,
     Download {
@@ -187,6 +190,9 @@ fn main() -> Result<()> {
         .json()
         .init();
     let options = Options::parse();
+    if let Command::Admin(admin) = &options.command {
+        return ops_cli::run(admin);
+    }
     if matches!(options.command, Command::BuildInfo) {
         println!(
             "{}",
@@ -256,7 +262,7 @@ fn main() -> Result<()> {
     }
     let database = Arc::new(open(&options)?);
     match &options.command {
-        Command::BuildInfo|Command::ExportPostgresLayers{..}=>{},
+        Command::BuildInfo|Command::Admin(_)|Command::ExportPostgresLayers{..}=>{},
         Command::Probe=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT version() AS version, current_setting('memory_limit') AS memory_limit, current_setting('threads') AS sql_threads, ST_Distance_Spheroid(ST_Point(-87.65,41.88), ST_Point(-87.65,41.881)) AS axis_probe_meters",&[])?)?),
         Command::Inspect=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name",&[])?)?),
         Command::Seed{source_dir,datasets,profiling,operation_id}=>{
@@ -281,6 +287,7 @@ fn main() -> Result<()> {
             control.initialize_scheduling(*daily_sync)?;
             let state=api::AppState { db:database,control,directory:options.data_dir.clone(),api_key:Arc::new(key),production,storage,admission:Arc::new(tokio::sync::Semaphore::new(32)),profiling_data:*allow_profiling_data,pubcache:Arc::new(cache::ResponseCache::from_env()?) };
             let stop=Arc::new(AtomicBool::new(false));
+            ingestion::reconcile_committed_publications(&state.db,&state.control)?;
             state.control.recover_interrupted()?;
             mutations::reconcile_deletions(&state.db,&state.control)?;
             let worker=worker::start(state.clone(),stop.clone());

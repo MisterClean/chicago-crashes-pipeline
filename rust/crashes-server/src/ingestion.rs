@@ -4,6 +4,7 @@ use crate::{
     sources::{self, PublicationMode, VerifiedSource},
 };
 use anyhow::{Context, Result, ensure};
+use chrono::Datelike;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path};
 
@@ -38,6 +39,17 @@ fn configured_limit(name: &str, default: u64) -> Result<u64> {
             .with_context(|| format!("{name} must be a nonnegative integer")),
         Err(std::env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(error).with_context(|| format!("invalid {name} configuration")),
+    }
+}
+
+/// Full replay defaults to bulk acquisition with the existing API fallback.
+/// Operators can require ordered API acquisition when bulk exports lag changes.
+pub(crate) fn full_source_uses_api(config: &Value) -> Result<bool> {
+    match config.get("source_mode") {
+        None => Ok(false),
+        Some(Value::String(mode)) if mode == "bulk" => Ok(false),
+        Some(Value::String(mode)) if mode == "api" => Ok(true),
+        _ => anyhow::bail!("source_mode must be api or bulk"),
     }
 }
 
@@ -109,7 +121,7 @@ pub fn schema_columns(dataset: &str) -> Result<BTreeMap<String, String>> {
     fields.insert("updated_at".into(), "TIMESTAMP".into());
     Ok(fields)
 }
-fn convert(expression: &str, field: &str, kind: &str) -> String {
+fn convert(expression: &str, field: &str, kind: &str, current_year: i32) -> String {
     if kind == "VARCHAR" {
         return format!(
             "CASE WHEN regexp_full_match(trim({expression}), '(?i:NULL|N/A|UNKNOWN|UNK|)') THEN NULL ELSE regexp_replace(trim({expression}), '\\s+', ' ', 'g') END"
@@ -129,7 +141,7 @@ fn convert(expression: &str, field: &str, kind: &str) -> String {
         "latitude" => format!("{number} BETWEEN 41.6 AND 42.1"),
         "longitude" => format!("{number} BETWEEN -87.95 AND -87.5"),
         "age" => format!("{number} BETWEEN 0 AND 120"),
-        "vehicle_year" => format!("{number} BETWEEN 1900 AND 2025"),
+        "vehicle_year" => format!("{number} BETWEEN 1900 AND {}", current_year + 1),
         _ => format!("isfinite({number})"),
     };
     format!("CASE WHEN {condition} THEN {number} ELSE NULL END")
@@ -170,6 +182,9 @@ fn stage(session: &Session, source: &VerifiedSource, check: &sources::Check<'_>)
     let path = input.to_str().context("source path must be UTF-8")?;
     session.execute(&format!("CREATE TEMP VIEW {} AS SELECT * FROM read_csv({},header=true,all_varchar=true,normalize_names=false,ignore_errors=false,strict_mode=true,buffer_size=4194304,maximum_line_size=262144)",sources::identifier(&raw),sources::literal(path)),&[])?;
     let fields = schema_columns(dataset)?;
+    let current_year = chrono::Utc::now()
+        .with_timezone(&chrono_tz::America::Chicago)
+        .year();
     let mut expressions = Vec::new();
     for c in sources::specification(dataset)?.columns {
         expressions.push(format!(
@@ -177,7 +192,8 @@ fn stage(session: &Session, source: &VerifiedSource, check: &sources::Check<'_>)
             convert(
                 &sources::identifier(&c.csv_header),
                 &c.api_field,
-                &fields[&c.api_field]
+                &fields[&c.api_field],
+                current_year,
             ),
             sources::identifier(&c.api_field)
         ));
@@ -337,11 +353,14 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
     }
     let schema = schema_columns(dataset)?;
     let columns: Vec<_> = schema.keys().map(|c| sources::identifier(c)).collect();
-    let compared: Vec<_> = schema
-        .keys()
-        .filter(|c| !["created_at", "updated_at", "geometry"].contains(&c.as_str()))
-        .map(|c| sources::identifier(c))
+    // Imported fields absent from the current portal schema have no replacement
+    // value in staging. Preserve those historical values on matching identities.
+    let mapped: Vec<_> = sources::specification(dataset)?
+        .columns
+        .into_iter()
+        .map(|column| column.api_field)
         .collect();
+    let compared: Vec<_> = mapped.iter().map(|c| sources::identifier(c)).collect();
     let equality = primary_keys(dataset)
         .iter()
         .map(|c| format!("t.{0}=s.{0}", sources::identifier(c)))
@@ -376,9 +395,11 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
             "SELECT count(*) n FROM {stage} s JOIN {table} t ON {equality} WHERE {changed_predicate}"
         ),
     )?;
-    let assignments = schema
-        .keys()
-        .filter(|c| c.as_str() != "created_at")
+    let assignments = mapped
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("updated_at"))
+        .chain(schema.contains_key("geometry").then_some("geometry"))
         .map(|c| format!("{0}=s.{0}", sources::identifier(c)))
         .collect::<Vec<_>>()
         .join(",");
@@ -391,8 +412,8 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
 }
 
 /// Publishes all supplied sources and revision checkpoints in one owner transaction.
-/// Production replays full stable snapshots daily so historical corrections are
-/// included; source absence never silently deletes existing accepted records.
+/// Full snapshots and bounded event-date windows use the same merge contract;
+/// source absence never silently deletes existing accepted records.
 pub fn publish_sources(
     db: &Database,
     directory: &Path,
@@ -502,10 +523,10 @@ mod tests {
         assert_eq!(fields["crash_date"], "TIMESTAMP");
     }
     #[test]
-    fn sanitation_preserves_audited_year_age_and_coordinate_policy() {
-        assert!(convert("v", "vehicle_year", "INTEGER").contains("1900 AND 2025"));
-        assert!(convert("v", "age", "INTEGER").contains("0 AND 120"));
-        assert!(convert("v", "longitude", "DOUBLE").contains("-87.95 AND -87.5"));
+    fn sanitation_preserves_age_and_coordinate_policy_and_advances_model_years() {
+        assert!(convert("v", "vehicle_year", "INTEGER", 2026).contains("1900 AND 2027"));
+        assert!(convert("v", "age", "INTEGER", 2026).contains("0 AND 120"));
+        assert!(convert("v", "longitude", "DOUBLE", 2026).contains("-87.95 AND -87.5"));
     }
     #[test]
     fn missing_acquisition_proof_cannot_fabricate_a_watermark() {
@@ -514,6 +535,15 @@ mod tests {
                 .unwrap()
                 .is_null()
         );
+    }
+    #[test]
+    fn full_source_mode_defaults_to_bulk_and_rejects_unknown_values() {
+        assert!(!full_source_uses_api(&json!({})).unwrap());
+        assert!(!full_source_uses_api(&json!({"source_mode":"bulk"})).unwrap());
+        assert!(full_source_uses_api(&json!({"source_mode":"api"})).unwrap());
+        for value in [json!("typo"), json!(true), Value::Null] {
+            assert!(full_source_uses_api(&json!({"source_mode":value})).is_err());
+        }
     }
 }
 
@@ -559,6 +589,39 @@ mod native_tests {
             &manifest,
         )
         .unwrap();
+    }
+    #[test]
+    fn vehicle_years_accept_current_and_next_model_years_but_reject_implausible_years() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let expression = convert("v", "vehicle_year", "INTEGER", 2026);
+        let rows = db.query(&format!("SELECT {expression} vehicle_year FROM (VALUES ('2026'),('2027'),('3000'),('1899')) years(v)"), &[]).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                json!({"vehicle_year":2026}),
+                json!({"vehicle_year":2027}),
+                json!({"vehicle_year":null}),
+                json!({"vehicle_year":null})
+            ]
+        );
+    }
+    #[test]
+    fn unknown_full_source_mode_is_rejected_before_staging_or_network_acquisition() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let staging = temp.path().join("ingestion");
+        let request = json!({"endpoints":["vehicles"],"mode":"full","allow_full_refresh":true,"source_mode":"typo"});
+        let error =
+            refresh_request_guarded(&db, &staging, &request, "invalid-source-mode", &|| Ok(()))
+                .unwrap_err();
+        assert!(error.to_string().contains("source_mode"));
+        assert!(!staging.exists());
+        assert!(
+            committed_publication(&db, "invalid-source-mode")
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn publication_rolls_back_first_dataset_when_later_identity_invalid() {
@@ -652,6 +715,92 @@ mod native_tests {
         assert_eq!(db.query("SELECT count(*) n FROM ingestion_checkpoints WHERE source_updated_before=TIMESTAMPTZ '2000-01-01T00:00:00Z'",&[]).unwrap()[0]["n"],1);
     }
     #[test]
+    fn startup_reconciles_committed_final_attempts_before_deadline_recovery() {
+        use crate::control::{ControlStore, JobOptions};
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let control = ControlStore::open(temp.path().join("control.sqlite"), 8, 60).unwrap();
+        let options = JobOptions {
+            max_attempts: 1,
+            ..JobOptions::default()
+        };
+        let request = json!({"endpoints":["crashes"],"mode":"api"});
+        fixture(
+            temp.path(),
+            "crashes",
+            &[json!({"crash_record_id":"C1","crash_date":"2026-01-01"})],
+        );
+        let submit = || {
+            let queued = control
+                .enqueue_kind("ingestion", &request, &options)
+                .unwrap();
+            let claimed = control.claim("ingestion").unwrap().unwrap();
+            assert_eq!(claimed.id, queued.id);
+            claimed
+        };
+        let publish = |id: &str| {
+            publish_sources(
+                &db,
+                temp.path(),
+                &["crashes".into()],
+                PublicationMode::Production,
+                id,
+            )
+            .unwrap()
+        };
+        let uncommitted = submit();
+        let cancelled = submit();
+        publish(&cancelled.id);
+        control.cancel(&cancelled.id).unwrap();
+        let failed = submit();
+        let failed_receipt = publish(&failed.id);
+        control
+            .fail(
+                &failed.id,
+                failed.attempt_token.as_deref().unwrap(),
+                "failed after commit",
+                false,
+            )
+            .unwrap();
+        let final_attempt = submit();
+        let final_receipt = publish(&final_attempt.id);
+        control
+            .connect()
+            .unwrap()
+            .execute(
+                "UPDATE rust_jobs SET deadline_at=0 WHERE id=?",
+                [&final_attempt.id],
+            )
+            .unwrap();
+
+        assert_eq!(reconcile_committed_publications(&db, &control).unwrap(), 2);
+        assert_eq!(control.recover_interrupted().unwrap(), 1);
+        for (job, receipt) in [(&final_attempt, final_receipt), (&failed, failed_receipt)] {
+            let recovered = control.get(&job.id).unwrap().unwrap();
+            assert_eq!(recovered.status, "completed");
+            assert_eq!(recovered.manifest, Some(receipt));
+            assert_eq!(recovered.request, request);
+            assert_eq!(recovered.attempt, 1);
+            assert_eq!(recovered.max_attempts, 1);
+            assert!(recovered.error.is_none());
+            assert!(recovered.attempt_token.is_none() && recovered.lease_until.is_none());
+            assert!(
+                control
+                    .heartbeat(&job.id, job.attempt_token.as_deref().unwrap())
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            control.get(&uncommitted.id).unwrap().unwrap().status,
+            "failed"
+        );
+        assert_eq!(
+            control.get(&cancelled.id).unwrap().unwrap().status,
+            "cancelled"
+        );
+        assert_eq!(reconcile_committed_publications(&db, &control).unwrap(), 0);
+    }
+    #[test]
     fn production_replay_is_idempotent_and_updates_changed_rows_preserving_created_at() {
         let temp = tempfile::tempdir().unwrap();
         let Some(db) = database(temp.path()) else {
@@ -711,6 +860,132 @@ mod native_tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn refresh_preserves_fields_absent_from_current_sources_for_every_dataset() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let cases = [
+            (
+                "crashes",
+                json!({"crash_record_id":"C1","crash_date":"2026-01-01","posted_speed_limit":"30","latitude":"41.8","longitude":"-87.6"}),
+                "posted_speed_limit",
+                "35",
+            ),
+            (
+                "people",
+                json!({"crash_record_id":"C1","person_id":"P1","age":"20"}),
+                "age",
+                "21",
+            ),
+            (
+                "vehicles",
+                json!({"crash_record_id":"C1","crash_unit_id":"V1","make":"FORD"}),
+                "make",
+                "HONDA",
+            ),
+            (
+                "fatalities",
+                json!({"person_id":"P1","crash_date":"2026-01-01","victim":"Driver","latitude":"41.8","longitude":"-87.6"}),
+                "victim",
+                "Pedestrian",
+            ),
+        ];
+        let datasets: Vec<_> = cases
+            .iter()
+            .map(|(name, _, _, _)| (*name).to_owned())
+            .collect();
+        for (dataset, row, _, _) in &cases {
+            fixture(temp.path(), dataset, std::slice::from_ref(row));
+        }
+        publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "seed",
+        )
+        .unwrap();
+        let mut preserved = BTreeMap::new();
+        for (dataset, _, _, _) in &cases {
+            let fields = model_only(dataset);
+            let assignments = fields
+                .iter()
+                .filter(|(name, _)| name.as_str() != "geometry")
+                .map(|(name, kind)| {
+                    format!(
+                        "{}={}",
+                        sources::identifier(name),
+                        if kind == "TIMESTAMP" {
+                            "TIMESTAMP '2000-01-01'"
+                        } else {
+                            "'legacy value'"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let table = table_name(dataset).unwrap();
+            db.execute(&format!("UPDATE {table} SET {assignments}"), &[])
+                .unwrap();
+            let selection = fields
+                .keys()
+                .filter(|name| name.as_str() != "geometry")
+                .map(|name| sources::identifier(name))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!("SELECT {selection},created_at FROM {table}");
+            preserved.insert(*dataset, (sql.clone(), db.query(&sql, &[]).unwrap()));
+        }
+        let unchanged = publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "unchanged",
+        )
+        .unwrap();
+        for (dataset, row, field, replacement) in &cases {
+            assert_eq!(
+                unchanged["datasets"][*dataset]["changed_rows"], 0,
+                "{dataset}"
+            );
+            let mut row = row.clone();
+            row[*field] = json!(replacement);
+            if row.get("latitude").is_some() {
+                row["latitude"] = json!("41.9");
+            }
+            fixture(temp.path(), dataset, &[row]);
+        }
+        let changed = publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "changed",
+        )
+        .unwrap();
+        for (dataset, _, _, _) in &cases {
+            assert_eq!(
+                changed["datasets"][*dataset]["changed_rows"], 1,
+                "{dataset}"
+            );
+            let (sql, expected) = &preserved[dataset];
+            assert_eq!(db.query(sql, &[]).unwrap(), *expected, "{dataset}");
+            if schema_columns(dataset).unwrap().contains_key("geometry") {
+                assert_eq!(
+                    db.query(
+                        &format!(
+                            "SELECT ST_Y(geometry) latitude FROM {}",
+                            table_name(dataset).unwrap()
+                        ),
+                        &[]
+                    )
+                    .unwrap()[0]["latitude"],
+                    41.9
+                );
+            }
+        }
     }
     #[test]
     fn people_keep_null_child_dates_and_chicago_coordinate_policy() {
@@ -1339,7 +1614,15 @@ pub fn refresh_request_guarded(
                     && config.get("end_date").is_none_or(Value::is_null),
                 "full refresh cannot use event-date filters"
             );
-            refresh_attempt(db, directory, &datasets, operation_id, check, None, false)
+            refresh_attempt(
+                db,
+                directory,
+                &datasets,
+                operation_id,
+                check,
+                None,
+                full_source_uses_api(&config)?,
+            )
         }
         "incremental" => {
             ensure!(
@@ -1420,4 +1703,40 @@ pub fn committed_publication(db: &Database, operation_id: &str) -> Result<Option
             }
         })
         .transpose()
+}
+
+/// Resolve the cross-store commit gap before expired/final attempts are failed.
+/// The caller must hold the exclusive owner lock and have no running workers.
+pub fn reconcile_committed_publications(
+    db: &Database,
+    control: &crate::control::ControlStore,
+) -> Result<usize> {
+    let exists = db.query("SELECT 1 FROM information_schema.tables WHERE table_schema='main' AND table_name='ingestion_publications'", &[])?;
+    if exists.is_empty() {
+        return Ok(0);
+    }
+    let mut after = String::new();
+    let mut reconciled = 0;
+    loop {
+        let ids = control.unreconciled_ingestion_ids(&after)?;
+        let Some(last) = ids.last() else { break };
+        after.clone_from(last);
+        let parameters: Vec<_> = ids.iter().map(|id| json!(id)).collect();
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let rows = db.query(&format!("SELECT operation_id,receipt FROM ingestion_publications WHERE operation_id IN ({placeholders})"), &parameters)?;
+        for row in rows {
+            let id = row["operation_id"]
+                .as_str()
+                .context("publication operation ID missing")?;
+            let receipt = if let Some(text) = row["receipt"].as_str() {
+                serde_json::from_str(text)?
+            } else {
+                row["receipt"].clone()
+            };
+            reconciled += control.reconcile_ingestion_publication(id, &receipt)?;
+        }
+    }
+    Ok(reconciled)
 }
