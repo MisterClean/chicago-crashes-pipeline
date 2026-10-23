@@ -1,77 +1,28 @@
-.PHONY: help install dev-install test lint format clean docker-build docker-up docker-down migrate seed-data
-
-# Default target
+.PHONY: help install test lint format serve frontend-install frontend-dev frontend-build docker-build docker-up docker-down
 help:
-	@echo "Available commands:"
-	@echo "  install      Install production dependencies"
-	@echo "  dev-install  Install development dependencies"
-	@echo "  test         Run tests"
-	@echo "  lint         Run linting"
-	@echo "  format       Format code"
-	@echo "  clean        Clean up build artifacts"
-	@echo "  docker-build Build Docker containers"
-	@echo "  docker-up    Start development environment"
-	@echo "  docker-down  Stop development environment"
-	@echo "  migrate      Run database migrations"
-	@echo "  seed-data    Load initial/sample data"
-
-# Installation
+	@echo 'install, test, lint, format, serve, frontend-install, frontend-dev, frontend-build, docker-build, docker-up, docker-down'
 install:
-	pip install -r requirements.txt
-
-dev-install:
-	pip install -r requirements.txt
-	pip install -e .
-
-# Testing and quality
+	bash scripts/setup-rust-duckdb.sh
+	cargo build --release --locked
 test:
-	pytest tests/ -v --cov=src --cov-report=html
-
+	cargo test --all-targets --locked
+	node --test rust/crashes-server/tests/admin-ui.test.cjs frontend/tests/export-api.test.cjs
 lint:
-	ruff check src tests
-	mypy src/utils src/etl src/validators --ignore-missing-imports
-
+	cargo fmt --all -- --check
+	cargo clippy --all-targets --all-features --locked -- -D warnings
 format:
-	ruff format src tests
-	ruff check --fix src tests
-
-# Cleanup
-clean:
-	find . -type f -name "*.pyc" -delete
-	find . -type d -name "__pycache__" -delete
-	rm -rf .coverage htmlcov/ .pytest_cache/ .mypy_cache/
-
-# Docker commands
-docker-build:
-	docker-compose -f docker/docker-compose.yml build
-
-docker-up:
-	docker-compose -f docker/docker-compose.yml up -d
-
-docker-down:
-	docker-compose -f docker/docker-compose.yml down
-
-# Database commands
-migrate:
-	alembic upgrade head
-
-migrate-create:
-	alembic revision --autogenerate -m "$(MESSAGE)"
-
-# ETL commands
-initial-load:
-	python -m src.cli.pipeline initial-load --start-date $(START_DATE)
-
-sync:
-	python -m src.cli.pipeline delta --window-days $${WINDOW_DAYS:-7}
-
-# API commands
+	cargo fmt --all
 serve:
-	uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
-
-serve-prod:
-	uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --workers 4
-
-# Spatial data
-load-shapefiles:
-	python -m src.spatial.loader --directory data/shapefiles
+	cargo run --release --locked -- serve
+frontend-install:
+	npm --prefix frontend ci
+frontend-dev:
+	npm --prefix frontend run dev
+frontend-build:
+	npm --prefix frontend run build
+docker-build:
+	docker build -f docker/Dockerfile.rust -t chicago-crashes-rust:local .
+docker-up:
+	docker compose -f docker/docker-compose.rust.yml up -d --build
+docker-down:
+	docker compose -f docker/docker-compose.rust.yml down

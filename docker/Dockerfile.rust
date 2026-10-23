@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1
+FROM rust:1.99.1-bookworm AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY rust/ ./rust/
+RUN cargo build --release --locked --bin crashes-server \
+    && cp target/release/crashes-server /build/crashes-server
+
+FROM debian:bookworm-slim AS native
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
+COPY scripts/setup-rust-duckdb.sh /tmp/setup-rust-duckdb.sh
+RUN bash /tmp/setup-rust-duckdb.sh /opt/duckdb && rm -f /opt/duckdb/*.tar.gz /opt/duckdb/*.h
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libssl3 gdal-bin gosu && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 crashes && useradd --uid 10001 --gid crashes --no-create-home crashes
+COPY --from=builder /build/crashes-server /usr/local/bin/crashes-server
+COPY --from=native /opt/duckdb /opt/duckdb
+COPY docker/rust-entrypoint.sh /usr/local/bin/crashes-entrypoint
+COPY docker/rust-bootstrap.sh /usr/local/bin/crashes-bootstrap
+RUN chmod 755 /usr/local/bin/crashes-entrypoint /usr/local/bin/crashes-bootstrap
+ENV DATA_DIR=/data DUCKDB_LIBRARY_PATH=/opt/duckdb/libduckdb.so DUCKDB_SPATIAL_PATH=/opt/duckdb/spatial.duckdb_extension \
+    DUCKDB_MEMORY_LIMIT=192MB DUCKDB_THREADS=2 BIND_ADDRESS=:: PORT=8000 APP_ENV=production DAILY_SYNC=true
+EXPOSE 8000
+STOPSIGNAL SIGTERM
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD curl --fail --silent "http://127.0.0.1:${PORT}/ready" || exit 1
+ENTRYPOINT ["/usr/local/bin/crashes-entrypoint"]
+CMD ["serve"]

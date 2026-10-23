@@ -1,8 +1,6 @@
 "use client";
 
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -28,7 +26,7 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
   // Format month for display
   const formatMonth = (month: string): string => {
     const date = new Date(month + "-01");
-    return date.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+    return date.toLocaleDateString("en-US", { month: "short", year: "2-digit", timeZone: "UTC" });
   };
 
   // Custom tooltip
@@ -45,7 +43,7 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
       return (
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3">
           <p className="text-sm font-medium text-gray-900 dark:text-white mb-2">
-            {label ? formatMonth(label) : ""}
+            {label ? formatMonth(label) : ""}{data.find((point) => point.month === label)?.partial ? " (partial)" : ""}
           </p>
           {payload.map((entry) => (
             <p
@@ -77,6 +75,7 @@ export function TrendSparklines({ data }: TrendSparklinesProps) {
 
   return (
     <div className="space-y-6">
+      {data.some((point) => point.partial) && <p className="text-xs text-gray-500">Partial months are included in the averages and identified in tooltips. Monthly counts reflect the selected dates.</p>}
       {/* Summary row */}
       <div className="grid grid-cols-3 gap-4 text-center">
         <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">

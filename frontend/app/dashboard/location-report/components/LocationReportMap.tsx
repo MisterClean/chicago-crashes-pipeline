@@ -10,14 +10,18 @@ import Map, {
   type MapRef,
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { setWorkerUrl } from "maplibre-gl";
 import { bbox } from "@turf/turf";
 import {
+  BASEMAP_STYLE_URL,
   LOOP_VIEW_STATE,
   SEVERITY_LEGEND,
   MIN_ZOOM,
   MAX_ZOOM,
 } from "@/lib/mapStyles";
 import type { LocationReportResponse } from "@/lib/api";
+
+setWorkerUrl(new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).toString());
 
 // Helper to generate circle polygon from center and radius
 function generateCirclePolygon(
@@ -79,14 +83,6 @@ function formatCurrency(value: number | undefined | null): string {
   if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
   return `$${value.toFixed(0)}`;
 }
-
-// Basemap style URL - requires NEXT_PUBLIC_PROTOMAPS_KEY env var
-const PROTOMAPS_KEY = process.env.NEXT_PUBLIC_PROTOMAPS_KEY;
-const BASEMAP_STYLE_URL =
-  process.env.NEXT_PUBLIC_BASEMAP_URL ||
-  (PROTOMAPS_KEY
-    ? `https://api.protomaps.com/styles/v4/light/en.json?key=${PROTOMAPS_KEY}`
-    : "");
 
 export function LocationReportMap({
   mode,

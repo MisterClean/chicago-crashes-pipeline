@@ -1,328 +1,191 @@
 # Chicago Traffic Crash Data Pipeline
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Tests](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Tests/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
-[![Lint](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Lint/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
-[![Security](https://github.com/MisterClean/chicago-crashes-pipeline/workflows/Security/badge.svg)](https://github.com/MisterClean/chicago-crashes-pipeline/actions)
+Explore Chicago traffic crashes on an interactive dashboard, compare injuries and fatalities over time, and generate location reports for uploaded administrative boundaries or a radius on the map.
 
-A Python-based data pipeline that ingests, validates, and serves Chicago traffic crash data from multiple SODA APIs, supporting spatial analysis and automated refresh workflows. Includes a **public dashboard** for visualizing crash data.
+The application uses **Rust**, **DuckDB 2.0.0**, **SQLite**, and **Next.js**. One backend process handles the API, portal ingestion, scheduled jobs, spatial uploads, exports, and recovery. It is designed for modest traffic and daily data updates, with bounded memory and disk use.
 
-## Overview
+## What it does
 
-The service orchestrates end-to-end ETL for four interconnected datasets from the Chicago Open Data Portal, keeps them synchronized in PostgreSQL/PostGIS, and exposes a FastAPI layer with an admin UI and documentation.
+- Maps crash locations and trends, with date and severity filters.
+- Reports crash, injury, pedestrian, cyclist, vehicle and economic-cost metrics for a selected area.
+- Accepts GeoJSON and zipped shapefiles for wards, districts, communities and other boundaries; retains configurable labels and properties.
+- Downloads and validates portal data, maps CSV headers to typed API fields, and publishes updates transactionally.
+- Runs durable background jobs and produces verified CSV ZIP exports through private S3-compatible storage.
+- Creates paired DuckDB/SQLite backups with checksums and supports offline restore.
 
-**Now includes a full-stack public dashboard** built with Next.js, featuring interactive maps, trend charts, and real-time statistics - perfect for advocacy organizations like [Lakeview Urbanists](https://lakeviewurbanists.org).
-
-## Quick Start
-
-**Prerequisites**: Python 3.11+, pip, Docker, Node 18+, npm, and GNU Make.
-
-```bash
-git clone https://github.com/MisterClean/chicago-crashes-pipeline.git
-cd chicago-crashes-pipeline
-python -m venv .venv && source .venv/bin/activate
-make install
-cp .env.example .env  # update credentials as needed
-make docker-up  # start Postgres/PostGIS and supporting services
-make migrate
-make serve  # FastAPI + admin portal at http://localhost:8000
-```
-
-## Public Dashboard
-
-A full-stack public dashboard for visualizing Chicago crash data, built with Next.js 15, MapLibre, and Recharts.
-
-![Dashboard Screenshot](docs/images/dashboard-screenshot.png)
-
-**Features:**
-- Interactive map with 10,000+ crash points color-coded by severity
-- Weekly trend charts showing crashes, injuries, and fatalities
-- Key metrics: total crashes, injuries, fatalities, pedestrians, cyclists, hit & runs
-- Date range filtering with quick presets (7 days, 30 days, 1 year)
-- Responsive design for desktop and mobile
-
-### Quick Start (Dashboard)
-
-```bash
-# Start the backend (if not already running)
-cd docker && docker-compose up -d postgres redis
-cd .. && source venv/bin/activate
-uvicorn src.api.main:app --reload --port 8000
-
-# Start the frontend
-cd frontend && npm install && npm run dev
-# Dashboard at http://localhost:3001/dashboard
-```
-
-### Full Stack Deployment (Docker)
-
-Deploy everything with Docker Compose:
-
-```bash
-# One-time: Download Chicago basemap tiles (~50MB)
-./docker/tiles/download-basemap.sh
-
-# Start all services
-docker-compose -f docker/docker-compose.fullstack.yml up -d
-
-# Access points:
-# - Dashboard: http://localhost
-# - API: http://localhost/api
-# - Tiles: http://localhost/tiles
-```
-
-### Dashboard Tech Stack
-
-| Layer | Technology | Purpose |
-|-------|------------|---------|
-| Frontend | Next.js 15 (App Router) | Server components, TypeScript |
-| Charts | Recharts | Trend visualization |
-| Maps | react-map-gl + MapLibre | Interactive crash map |
-| Tiles | Martin | Vector tiles from PostGIS |
-| Basemap | PMTiles | Self-hosted Chicago map tiles |
-| Proxy | Nginx | Reverse proxy, caching, rate limiting |
-
-## Datasets
-
-1. **Traffic Crashes – Crashes**: Primary crash records (~1M+ rows)
-2. **Traffic Crashes – People**: Person-level injury details
-3. **Traffic Crashes – Vehicles**: Vehicle and unit information
-4. **Traffic Crashes – Vision Zero Fatalities**: Curated fatality data
+Map points are capped independently of report totals. Reports and exports use the full selected population.
 
 ## Architecture
 
 ```mermaid
-graph TB
-    subgraph External["External Data Sources"]
-        CDA[Chicago Data Portal - SODA API]
-        SHP[Shapefiles - Geographic Boundaries]
-    end
-    
-    subgraph WebUI["Web Interface"]
-        ADMIN[Admin Portal]
-        API_DOCS[API Documentation]
-    end
-    
-    subgraph API["API Layer"]
-        FASTAPI[FastAPI Application]
-        SYNC_R[Sync Router]
-        JOBS_R[Jobs Router]
-        HEALTH_R[Health Router]
-        SPATIAL_R[Spatial Router]
-    end
-    
-    subgraph Services["Business Logic"]
-        ETL[ETL Service]
-        VALIDATOR[Data Validator]
-        JOB_SVC[Job Service]
-        SCHEDULER[Job Scheduler]
-        DB_SVC[Database Service]
-        SPATIAL_SVC[Spatial Service]
-    end
-    
-    subgraph Processing["Data Processing"]
-        SANITIZER[Data Sanitizer]
-        RATE_LIMITER[Rate Limiter]
-    end
-    
-    subgraph Storage["Data Storage"]
-        PG[(PostgreSQL with PostGIS)]
-        CRASHES[(Crashes Table)]
-        PEOPLE[(People Table)]
-        VEHICLES[(Vehicles Table)]
-        FATALITIES[(Fatalities Table)]
-        JOBS[(Jobs Table)]
-        EXECUTIONS[(Executions Table)]
-    end
-    
-    subgraph Infra["Infrastructure"]
-        DOCKER[Docker Container]
-        VENV[Python Environment]
-    end
-
-    ADMIN --> FASTAPI
-    API_DOCS --> FASTAPI
-    FASTAPI --> SYNC_R
-    FASTAPI --> JOBS_R
-    FASTAPI --> HEALTH_R
-    FASTAPI --> SPATIAL_R
-    
-    SYNC_R --> ETL
-    JOBS_R --> JOB_SVC
-    SPATIAL_R --> SPATIAL_SVC
-    
-    ETL --> CDA
-    ETL --> RATE_LIMITER
-    ETL --> VALIDATOR
-    VALIDATOR --> SANITIZER
-    
-    JOB_SVC --> SCHEDULER
-    JOB_SVC --> DB_SVC
-    SCHEDULER --> ETL
-    
-    SPATIAL_SVC --> SHP
-    SPATIAL_SVC --> DB_SVC
-    
-    DB_SVC --> PG
-    PG --> CRASHES
-    PG --> PEOPLE
-    PG --> VEHICLES
-    PG --> FATALITIES
-    PG --> JOBS
-    PG --> EXECUTIONS
-    
-    PG -.-> DOCKER
-    FASTAPI -.-> VENV
+flowchart LR
+    Browser --> Frontend[Next.js dashboard]
+    Frontend --> Backend[Rust API and background worker]
+    Portal[Chicago Data Portal] --> Backend
+    Backend --> Facts[(DuckDB 2.0.0 facts and boundaries)]
+    Backend --> Jobs[(SQLite jobs and history)]
+    Backend --> Storage[Private S3 exports and backups]
 ```
 
-**Key components**
-- **FastAPI service** exposing sync controls, health checks, and spatial endpoints
-- **Admin portal** for job orchestration and monitoring
-- **Async ETL pipeline** with rate limiting, validation, and sanitization stages
-- **Scheduler and job tracking** with retries and execution history
-- **PostgreSQL/PostGIS storage** optimised for spatial and analytic workloads
+**Run exactly one backend process and one replica per data directory.** The DuckDB file is owned by that process; HTTP queries and database work share a serialized SQL lane. The frontend is a separate service. PostgreSQL is only needed when importing an existing deployment through the read-only migration command.
 
-## Highlights
+## Prerequisites
 
-- Automated initial/backfill loads plus incremental syncs with progress tracking
-- Batch ingestion (~50k rows per request) using connection pooling and COPY for heavy loads
-- Spatial enrichment via PostGIS and shapefile lookups
-- Dockerised local stack with reproducible Python environment
-- Structured logging and metrics for observability
+- Linux or macOS, on x86-64 or ARM64. Windows users can use Linux containers or WSL2.
+- Rust **1.99.1**, selected by `rust-toolchain.toml`; install Rust with [rustup](https://rustup.rs/).
+- Node.js **22 or newer** and npm; CI and the frontend image use Node 22.
+- Bash, curl, tar and gzip for the native installer. A native Rust build also needs a C toolchain, OpenSSL development headers and pkg-config. On Debian/Ubuntu: `apt-get install build-essential pkg-config libssl-dev`.
+- GDAL's `ogr2ogr` on `PATH` for shapefile and foreign-CRS uploads. The backend Docker image includes it.
+- Approximately 8 GiB free disk for a full initial download/import and temporary files. Allow additional capacity for snapshots, exports and spill.
 
-## Data Quality & Reliability
+The installer selects the host platform, verifies the official DuckDB archive checksum and installs the matching signed spatial extension. No Python installation is required.
 
-**Validation & sanitization**
-- Geographic bounds, date parsing, age and vehicle year checks
-- Duplicate pruning, Unicode handling, and whitespace cleanup
+## Local setup
 
-**Resilience**
-- Circuit breaker with exponential backoff to respect API limits
-- Partial failure recovery to keep ingestion moving
-- Detailed error reporting to the job history tables
+From the repository root:
 
-## API Surface
-
-**Sync & Health:**
-- `GET /sync/status` – Current sync status and last run time
-- `POST /sync/trigger` – Manual sync trigger with optional date range
-- `GET /health` – Service health check
-
-**Dashboard (for frontend):**
-- `GET /dashboard/stats` – Aggregate statistics (crashes, injuries, fatalities)
-- `GET /dashboard/trends/weekly` – Weekly crash trends for charts
-- `GET /dashboard/crashes/geojson` – Crash points as GeoJSON for maps
-- `GET /dashboard/crashes/by-hour` – Hourly distribution analysis
-- `GET /dashboard/crashes/by-cause` – Top contributory causes
-
-## Documentation
-
-Comprehensive documentation is available at http://localhost:8000/documentation/ when running the API server.
-
-**Key Resources:**
-- [Quick Start Guide](docs/getting-started/quickstart.md) - Get up and running quickly
-- [Configuration Guide](docs/getting-started/configuration.md) - Environment setup
-- [API Reference](docs/user-guides/api-reference.md) - Complete API documentation
-- [Admin Portal Guide](docs/user-guides/admin-portal.md) - Using the web interface
-- [Troubleshooting](docs/operations/troubleshooting.md) - Common issues and solutions
-- [Contributing Guidelines](CONTRIBUTING.md) - How to contribute
-- [Security Policy](SECURITY.md) - Security best practices and reporting
-
-**Building Documentation:**
-```bash
-npm install
-npm run start  # Dev server at http://localhost:3000
-npm run build  # Static build to src/static/documentation/
+```sh
+bash scripts/setup-rust-duckdb.sh
+cargo build --release --locked
+target/release/crashes-server probe
+npm --prefix frontend ci
 ```
 
-The documentation is built with Docusaurus 3 and includes:
-- Architecture diagrams and data flow
-- API reference with examples
-- Development guides and testing strategies
-- Operations and deployment guides
-- Data catalog and schema documentation
+The native installation defaults to `.local/rust-duckdb/`; application data defaults to `.local/data/`. All paths are relative to the checkout. To use another installation, set `DUCKDB_LIBRARY_PATH` and `DUCKDB_SPATIAL_PATH`.
 
-## Security
+Copy `.env.example` for reference and set values in your shell or environment manager. The Rust executable **does not automatically load `.env`**. Keep actual credentials outside Git. For protected local operations, set `API_KEY` before starting the backend; production requires a key of at least 32 bytes.
 
-We take security seriously. Please review:
-- [SECURITY.md](SECURITY.md) - Security policy and vulnerability reporting
-- [Security Best Practices](docs/operations/security.md) - Deployment security guide
+### Populate a new installation
 
-**Important**: Never use default credentials in production. See the security documentation for configuration guidance.
+Download all four public datasets, then seed the database:
 
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-**Quick Start for Contributors:**
-1. Fork and clone the repository
-2. Set up development environment: `make dev-install`
-3. Create a feature branch: `git checkout -b feature/your-feature`
-4. Make changes and add tests
-5. Run tests and linters: `make test && make lint`
-6. Submit a pull request
-
-## Development
-
-```bash
-make install        # Install dependencies
-make test           # Run tests
-make lint           # Lint the codebase
-make format         # Apply formatting
-make docker-build   # Build Docker images
-make migrate        # Run database migrations
+```sh
+target/release/crashes-server download --directory .local/sources \
+  --datasets crashes,people,vehicles,fatalities
+target/release/crashes-server seed --source-dir .local/sources
 ```
 
-```
-chicago-crash-pipeline/
-├── src/
-│   ├── api/          # FastAPI service
-│   ├── etl/          # ETL pipeline modules
-│   ├── models/       # SQLAlchemy models
-│   ├── validators/   # Data validation rules
-│   ├── spatial/      # Spatial data handlers
-│   └── utils/        # Shared helpers
-├── frontend/         # Next.js dashboard
-│   ├── app/          # App Router pages
-│   ├── lib/          # API client, map config
-│   └── Dockerfile    # Production build
-├── docker/
-│   ├── docker-compose.fullstack.yml  # Full stack deployment
-│   ├── martin.yaml   # Vector tile server config
-│   ├── nginx.conf    # Reverse proxy config
-│   └── tiles/        # PMTiles basemap
-├── migrations/       # Alembic migrations
-├── tests/
-├── config/
-└── docs/
+Downloads stream to disk and validate headers, row counts, source revisions and hashes. The audited [column mapping](rust/crashes-server/resources/csv_column_mapping.json) handles CSV/API naming differences. Schema drift fails for review.
+
+Portal bulk CSVs can lag behind the API. If verification rejects a stale export, download the complete datasets into a **new directory** using the ordered API path, then seed from that directory:
+
+```sh
+target/release/crashes-server download --api --directory .local/sources-api \
+  --datasets crashes,people,vehicles,fatalities
+target/release/crashes-server seed --source-dir .local/sources-api
 ```
 
-## Data Sources
+A new seed initializes an empty spatial catalog. Upload your own boundaries through `/admin` after starting the application. Custom boundaries and database files are not bundled with the repository. For an existing deployment, choose deliberately: [clean portal facts with preserved boundaries](docs/railway-bootstrap.md), or a [snapshot migration](docs/rust-migration.md#preserve-an-existing-deployment) that retains historical facts and operations.
 
-- [Traffic Crashes – Crashes](https://data.cityofchicago.org/Transportation/Traffic-Crashes-Crashes/85ca-t3if)
-- [Traffic Crashes – People](https://data.cityofchicago.org/Transportation/Traffic-Crashes-People/u6pd-qa9d)
-- [Traffic Crashes – Vehicles](https://data.cityofchicago.org/Transportation/Traffic-Crashes-Vehicles/68nd-jvt3)
-- [Vision Zero Fatalities](https://data.cityofchicago.org/Transportation/Traffic-Crashes-Vision-Zero-Chicago-Traffic-Fatali/gzaz-isa6)
+### Run the application
 
-## Troubleshooting
+```sh
+# Terminal 1: backend, loopback port 8003
+cargo run --release --locked -- serve
 
-**Import errors with relative imports**
-- Run Python commands from the repository root so `src` stays on the path
-- For ad-hoc scripts, add `sys.path.append("src")`
+# Terminal 2: frontend, loopback API proxy and port 3001
+npm --prefix frontend run dev
+```
 
-**Database connection issues**
-- Confirm `.env` contains valid credentials
-- Verify PostgreSQL/PostGIS is running and the `postgis` extension is enabled
+Open:
 
-**API rate limits**
-- Default configuration respects the 1000 requests/hour cap
-- Request a Chicago Data Portal token for higher throughput
+- [Dashboard](http://127.0.0.1:3001/dashboard)
+- [Location reports](http://127.0.0.1:3001/dashboard/location-report)
+- [Administration](http://127.0.0.1:3001/admin)
 
-**Large data loads**
-- Tune the `batch_size` configuration and container memory for initial loads
+The default basemap uses CARTO Positron without an API key. Set `NEXT_PUBLIC_BASEMAP_URL` at frontend build time to use another MapLibre style. Internet access to the style, tiles and glyphs is required.
 
-## License
+Automatic scheduling is off locally. Start it through the authenticated admin controls or set `DAILY_SYNC=true` after reviewing job schedules. A profiling-only seed needs `seed --profiling` and an explicit development `serve --allow-profiling-data`; that waiver is restricted to loopback and is refused in production.
 
-MIT License - see `LICENSE` for details.
+### Docker Compose
+
+After populating `.local/data/` and stopping listeners on ports 8003 and 3001:
+
+```sh
+docker compose -f docker/docker-compose.rust.yml up --build
+```
+
+Compose mounts the same data directory and runs the backend at 512 MiB and the frontend at 256 MiB, both without swap. Set `CRASHES_DATA_DIR` to an absolute host path to mount another populated directory. Set `API_KEY` in the invoking environment for protected operations. Compose is a local development setup; production configuration is described below.
+
+## Configuration
+
+| Setting | Default or purpose |
+| --- | --- |
+| `DATA_DIR` | `.local/data` locally; `/data` in the backend image |
+| `DUCKDB_LIBRARY_PATH`, `DUCKDB_SPATIAL_PATH` | Override the native library and extension paths |
+| `APP_ENV` | `development`; use `production` for a public deployment |
+| `BIND_ADDRESS`, `PORT` | `127.0.0.1:8003` locally; image listens on `0.0.0.0:8000` |
+| `API_KEY` | Secret for administrative operations and exports; production requires at least 32 bytes |
+| `DUCKDB_MEMORY_LIMIT` | CLI `256MB`; image `192MB`. This is a DuckDB buffer budget, not a total RSS limit |
+| `DUCKDB_THREADS` | `2` SQL threads |
+| `DUCKDB_QUERY_TIMEOUT_SECONDS` | `120`, bounded to 1–900 seconds |
+| `PUBLIC_CACHE_BYTES` | `16777216`; set `0` for uncached measurements |
+| `DAILY_SYNC` | CLI `false`; image `true`. Review imported schedules before enabling |
+| `INGESTION_MAX_CHANGED_ROWS` | `25000`, the publication change guard |
+| `CRASHES_INGESTION_MAX_BYTES` | `8589934592`, source staging disk budget |
+| `EXPORT_ENDPOINT`, `EXPORT_BUCKET`, `EXPORT_ACCESS_KEY_ID`, `EXPORT_SECRET_ACCESS_KEY` | Private S3-compatible exports and backup storage; required in production |
+| `EXPORT_REGION` | `auto` |
+| `BACKEND_URL` | Frontend server and rewrite destination; local default `http://127.0.0.1:8003` |
+| `NEXT_PUBLIC_API_URL` | Browser API prefix, default `/api` |
+| `NEXT_PUBLIC_BASEMAP_URL` | Optional public MapLibre style URL |
+
+`BACKEND_URL` is needed at **frontend build time and runtime** because Next.js compiles rewrites. Rebuild after changing it. Never use a `NEXT_PUBLIC_*` variable for a secret.
+
+## API and administration
+
+Public routes include `/health`, `/ready`, `/version`, dashboard queries and `/places/*`. The embedded admin uses `/admin/api/*`, which works directly and through the frontend proxy. Administrative operations use `X-API-Key`; the admin page prompts for the key when configured. Exports use the durable `/exports` workflow and signed download URLs.
+
+```sh
+curl --fail http://127.0.0.1:8003/health
+curl --fail http://127.0.0.1:8003/dashboard/stats
+```
+
+[API contracts and compatibility](docs/research/rust-api-compatibility-2026-10-21.md) describes the preserved routes, sync guards and explicitly retired diagnostics. The server does not expose an autogenerated OpenAPI or documentation site.
+
+## Validation
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --all-targets --locked
+node --test rust/crashes-server/tests/admin-ui.test.cjs frontend/tests/export-api.test.cjs
+npm --prefix frontend run typecheck
+npm --prefix frontend run build
+```
+
+Native tests use real temporary DuckDB databases and fail if the pinned library is missing. They load the installed spatial extension explicitly rather than relying on a user's extension cache. CI runs native tests on Linux and macOS. An optional [local S3 integration fixture](scripts/test-s3.sh) exercises authenticated delivery against a disposable MinIO container:
+
+```sh
+bash scripts/test-s3.sh
+```
+
+See [measured results and their limits](docs/research/rust-migration-results-2026-10-21.md). The tested low-traffic configuration uses a 192 MB DuckDB buffer, a 16 MiB response cache and a 512 MiB backend container. Heavy uncached reports still scan substantial data, and cgroup reclaim pressure matters. Local tests do not prove a Railway cost reduction or a production latency guarantee.
+
+## Deploying on Railway
+
+For a new Railway service, set the Dockerfile to `docker/Dockerfile.rust`, the start command to `/usr/local/bin/crashes-entrypoint serve`, one replica and the healthcheck to `/ready` in service settings or Railway IaC. Railway has deprecated TOML configuration for new services; the checked-in TOML files remain references for existing deployments. Mount a persistent volume at `/data`, populate it before serving, and configure production authentication and private object storage. The image initializes mounted-volume permissions, drops privileges and binds `::` for Railway's private IPv6 network and dual-stack hosts.
+
+Deploy `frontend/` as a separate Next.js service and set its private `BACKEND_URL` for both build and runtime. No PostgreSQL server, separate ingestion/export workers, Redis, or tile server is required for normal operation.
+
+For a clean migration, follow the [private bootstrap guide](docs/railway-bootstrap.md): download complete fresh portal CSVs, capture and restore only the existing uploaded boundaries, verify private backups and rehearse recovery before changing traffic. The temporary bootstrap process starts no public server or scheduler. The [migration and operations guide](docs/rust-migration.md) also supports preserving an entire historical PostgreSQL installation when that is required. Keep the previous deployment available for rollback until the replacement is validated.
+
+Start production with a **1 GiB backend memory ceiling**, a **192 MB DuckDB buffer**, two SQL threads and one replica. A **512 MiB frontend ceiling** leaves room for cold starts. These ceilings are protective limits: [Railway bills actual resource consumption](https://docs.railway.com/guides/right-size-cpu-memory), so lowering a limit alone does not lower idle costs. Measure actual usage after bootstrap and daily refresh before reducing headroom.
+
+## Data sources and project layout
+
+The application reads Chicago's public portal datasets: [crashes](https://data.cityofchicago.org/d/85ca-t3if), [people](https://data.cityofchicago.org/d/u6pd-qa9d), [vehicles](https://data.cityofchicago.org/d/68nd-jvt3), and [Vision Zero fatalities](https://data.cityofchicago.org/d/gzaz-isa6). Crash timestamps use Chicago local wall time; operational timestamps and source checkpoints use UTC. Source corrections, missing coordinates and linked-person timing can affect reported metrics.
+
+```text
+rust/crashes-server/
+  src/          Rust API, ingestion, jobs, storage, migration and recovery
+  sql/          Analytical queries and native test fixtures
+  resources/    Audited CSV/API field mapping
+  static/admin/ Embedded administration UI
+  tests/        UI tests and publication fixtures
+frontend/       Next.js dashboard and map
+scripts/        Native dependency installer and optional S3 fixture
+docker/         Rust runtime and local Compose stack
+docs/           Operations, API contracts and measured results
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and [SECURITY.md](SECURITY.md) for vulnerability reporting. Released under the [MIT license](LICENSE).

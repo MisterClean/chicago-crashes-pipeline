@@ -1,52 +1,27 @@
 ---
-name: Bug Report
-about: Create a report to help us improve
-title: '[BUG] '
+name: Bug report
+about: Report a reproducible application problem
 labels: bug
-assignees: ''
-
 ---
 
-## Describe the Bug
-A clear and concise description of what the bug is.
+## What happened?
 
-## To Reproduce
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Run command '....'
-3. See error
+Describe the expected and actual behavior.
 
-## Expected Behavior
-A clear and concise description of what you expected to happen.
+## Reproduction
 
-## Actual Behavior
-What actually happened.
-
-## Error Messages / Logs
-```
-Paste any relevant error messages or log output here
-```
+List the smallest steps, request or input that reproduces the problem. Use a synthetic fixture when possible; do not attach secrets or private uploads.
 
 ## Environment
-- OS: [e.g. macOS 13.4, Ubuntu 22.04, Windows 11]
-- Python version: [e.g. 3.11.4]
-- Docker version: [e.g. 24.0.2]
-- Installation method: [e.g. Docker Compose, local venv]
 
-## Configuration
-- Environment: [development/staging/production]
-- Database: [PostgreSQL version]
-- Relevant .env settings (redact secrets):
-  ```
-  ENVIRONMENT=development
-  LOG_LEVEL=INFO
-  ```
+- Application commit/source hash:
+- OS and architecture:
+- Rust version:
+- Node version:
+- Native or Docker installation:
+- DuckDB version and configured buffer/container limits:
+- Browser and WebGL support (for map issues):
 
-## Screenshots
-If applicable, add screenshots to help explain your problem.
+## Evidence
 
-## Additional Context
-Add any other context about the problem here.
-
-## Possible Solution
-If you have ideas on how to fix this, please describe them here.
+Include relevant sanitized logs, errors or screenshots. Never include API keys, signed links, connection URLs or full environment dumps. Report vulnerabilities through the private security advisory form instead of this template.

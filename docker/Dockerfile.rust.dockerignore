@@ -1,0 +1,11 @@
+**
+!Cargo.toml
+!Cargo.lock
+!rust/
+!rust/**
+!scripts/
+!scripts/setup-rust-duckdb.sh
+!docker/
+!docker/Dockerfile.rust
+!docker/rust-entrypoint.sh
+!docker/rust-bootstrap.sh

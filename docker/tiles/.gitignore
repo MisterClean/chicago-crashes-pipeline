@@ -1,9 +1,0 @@
-# PMTiles basemap files (download with ./download-basemap.sh)
-*.pmtiles
-
-# Temporary downloads
-*_temp.*
-
-# Sprite and font assets (generated/downloaded separately)
-sprites/
-fonts/

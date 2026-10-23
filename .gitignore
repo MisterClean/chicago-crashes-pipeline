@@ -1,191 +1,63 @@
-# History files
-.Rhistory
-.Rapp.history
+# Local data, credentials and workstation-only notes
+/.local/
+/.local-docs/
+/.agents/
+/.claude/
+/.railway/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
 
-# Session Data files
-.RData
-.RDataTmp
+# Rust and native dependencies
+/target/
+*.so
+*.dylib
+*.dll
 
-# User-specific files
-.Ruserdata
+# Node and generated frontend output
+node_modules/
+.next/
+out/
+dist/
+build/
+.docusaurus/
+*.tsbuildinfo
 
-# Example code in package build process
-*-Ex.R
-
-# Output files from R CMD build
-/*.tar.gz
-
-# Output files from R CMD check
-/*.Rcheck/
-
-# RStudio files
-.Rproj.user/
-
-# produced vignettes
-vignettes/*.html
-vignettes/*.pdf
-
-# OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
-.httr-oauth
-
-# knitr and R markdown default cache directories
-*_cache/
-/cache/
-
-# Temporary files created by R markdown
-*.utf8.md
-*.knit.md
-
-# R Environment Variables
-.Renviron
-
-# pkgdown site
-
-# translation temp files
-po/*~
-
-# RStudio Connect folder
-rsconnect/
-
-# Large data files
+# Downloaded datasets, spatial uploads, databases and archives
 *.csv
+*.parquet
+*.duckdb
+*.duckdb.wal
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
 *.zip
+*.gz
+*.tar
 *.shp
 *.shx
 *.dbf
 *.prj
+*.cpg
+*.qix
 
-# OS specific files
-.DS_Store
-Thumbs.db
-
-# IDE files
-.vscode/
-.idea/
-
-# HTML files (except in specific output directories)
-*.html
-!output/maps/*.html
-!docs/*.html
-
-# Generated outputs (uncomment if you don't want to track these)
-# output/
-# data/processed/
-
-# Python
+# Local tools left from earlier checkouts
+venv/
+.venv/
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-!frontend/lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
 .pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# celery beat schedule file
-celerybeat-schedule
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-# Spyder project settings
-.spyderproject
-.spyproject
-
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-# Docusaurus
-node_modules/
-.docusaurus/
-build/
 .ruff_cache/
+.cache/
 
-# Claude
-.claude/
+# Editor and OS files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

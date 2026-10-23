@@ -1,0 +1,39 @@
+{
+  "committed_at": "2026-10-21T18:02:46.441541754+00:00",
+  "cross_dataset_consistent_snapshot": false,
+  "datasets": {
+    "crashes": {
+      "accepted_rows": 9298,
+      "changed_rows": 8855,
+      "identity_rejections": {
+        "rejected_rows": 0
+      },
+      "inserted_rows": 332,
+      "source_rows": 9298,
+      "unchanged_rows": 111
+    },
+    "people": {
+      "accepted_rows": 20423,
+      "changed_rows": 0,
+      "identity_rejections": {
+        "rejected_rows": 0
+      },
+      "inserted_rows": 0,
+      "source_rows": 20423,
+      "unchanged_rows": 20423
+    },
+    "vehicles": {
+      "accepted_rows": 18918,
+      "changed_rows": 0,
+      "identity_rejections": {
+        "rejected_rows": 0
+      },
+      "inserted_rows": 0,
+      "source_rows": 18918,
+      "unchanged_rows": 18918
+    }
+  },
+  "operation_id": "4a02d2c639f9425180a8f883665dd39c",
+  "production_complete": true,
+  "profiling_only": false
+}
