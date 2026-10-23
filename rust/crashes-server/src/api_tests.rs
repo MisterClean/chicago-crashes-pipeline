@@ -679,6 +679,16 @@ async fn multipart(
     fields: &[(&str, &str)],
     data: &str,
 ) -> (StatusCode, Value) {
+    multipart_with_chunks(app, path, fields, data, None).await
+}
+
+async fn multipart_with_chunks(
+    app: Router,
+    path: &str,
+    fields: &[(&str, &str)],
+    data: &str,
+    chunk_size: Option<usize>,
+) -> (StatusCode, Value) {
     let boundary = "rust-multipart-contract";
     let mut payload = String::new();
     for (name, value) in fields {
@@ -687,6 +697,14 @@ async fn multipart(
         ));
     }
     payload.push_str(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"boundary.geojson\"\r\nContent-Type: application/geo+json\r\n\r\n{data}\r\n--{boundary}--\r\n"));
+    let body = if let Some(chunk_size) = chunk_size {
+        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+            std::io::Cursor::new(payload),
+            chunk_size,
+        ))
+    } else {
+        Body::from(payload)
+    };
     let response = app
         .oneshot(
             Request::builder()
@@ -697,7 +715,7 @@ async fn multipart(
                     "content-type",
                     format!("multipart/form-data; boundary={boundary}"),
                 )
-                .body(Body::from(payload))
+                .body(body)
                 .unwrap(),
         )
         .await
@@ -705,6 +723,33 @@ async fn multipart(
     let status = response.status();
     let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn spatial_preview_reads_complete_streamed_uploads_including_final_chunks() {
+    let (state, _directory) = fixture().unwrap();
+    let app = api::router(state);
+    let label = "Boundary label ".repeat(64);
+    let geometry = json!({"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":label},"geometry":{"type":"Polygon","coordinates":[[[-87.7,41.8],[-87.6,41.8],[-87.6,41.9],[-87.7,41.8]]]}}]}).to_string();
+    for chunk_size in [1, 17, 4096] {
+        let (status, preview) = multipart_with_chunks(
+            app.clone(),
+            "/spatial/layers/preview-fields",
+            &[],
+            &geometry,
+            Some(chunk_size),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "chunk_size={chunk_size}: {preview}");
+        assert_eq!(preview["feature_count"], 1);
+        let name = preview["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["name"] == "name")
+            .unwrap();
+        assert_eq!(name["sample_values"], json!([label]));
+    }
 }
 
 #[tokio::test]

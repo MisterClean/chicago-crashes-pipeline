@@ -1010,6 +1010,12 @@ async fn upload(
                         .await
                         .map_err(anyhow::Error::from)?;
                 }
+                // Tokio may return from write_all before its filesystem task
+                // finishes. Complete it before synchronous validation reopens
+                // this path, including the final multipart chunk's write errors.
+                tokio::io::AsyncWriteExt::flush(&mut file)
+                    .await
+                    .map_err(anyhow::Error::from)?;
             }
             "name" => name = field.text().await.map_err(ApiError::bad)?,
             "label_field" => label = Some(field.text().await.map_err(ApiError::bad)?),
