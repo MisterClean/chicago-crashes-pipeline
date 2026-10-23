@@ -320,7 +320,125 @@ fn fatalities(session: &Session, stage: &str, operation: &str) -> Result<(String
         json!({"missing_person_id":missing,"conflicting_person_id":conflict,"identical_duplicate_person_id":identical,"rejected_rows":rejected}),
     ))
 }
-fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode) -> Result<Value> {
+/// Keep the original archival text when source transports describe the same
+/// exact decimal point. Only differing matched points cross the CSV boundary;
+/// Rust holds one narrow record at a time, and invalid points remain changes.
+fn preserve_equivalent_points(
+    session: &Session,
+    stage: &str,
+    dataset: &str,
+    max_rows: u64,
+    check: &sources::Check<'_>,
+) -> Result<()> {
+    let points: Vec<_> = sources::specification(dataset)?
+        .columns
+        .into_iter()
+        .filter(|column| column.data_type == "point")
+        .collect();
+    if points.is_empty() {
+        return Ok(());
+    }
+    let scratch = session.query("SELECT current_setting('temp_directory') path", &[])?;
+    let scratch = Path::new(
+        scratch[0]["path"]
+            .as_str()
+            .context("owner scratch directory missing")?,
+    );
+    std::fs::create_dir_all(scratch)?;
+    let temporary = tempfile::Builder::new()
+        .prefix("point-preservation-")
+        .tempdir_in(scratch)?;
+    let keys = primary_keys(dataset);
+    let table = table_name(dataset)?;
+    let equality = keys
+        .iter()
+        .map(|key| format!("t.{0}=s.{0}", sources::identifier(key)))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let projection = keys
+        .iter()
+        .map(|key| format!("s.{}", sources::identifier(key)))
+        .collect::<Vec<_>>()
+        .join(",");
+    for point in points {
+        check()?;
+        let field = sources::identifier(&point.api_field);
+        let differences = temporary
+            .path()
+            .join(format!("{}.differences.csv", point.api_field));
+        let preserved = temporary
+            .path()
+            .join(format!("{}.preserved.csv", point.api_field));
+        session.execute(&format!("COPY(SELECT {projection},t.{field} stored_point,s.{field} staged_point FROM {stage} s JOIN {table} t ON {equality} WHERE t.{field} IS NOT NULL AND s.{field} IS NOT NULL AND t.{field} IS DISTINCT FROM s.{field}) TO {}(FORMAT CSV,HEADER true)", sources::literal(differences.to_str().context("point comparison path must be UTF-8")?)), &[])?;
+        let mut reader = csv::Reader::from_path(&differences)?;
+        let mut writer = csv::Writer::from_path(&preserved)?;
+        writer.write_record(
+            keys.iter()
+                .copied()
+                .chain(std::iter::once(point.api_field.as_str())),
+        )?;
+        let mut record = csv::StringRecord::new();
+        let mut rows = 0_u64;
+        let mut preserved_rows = 0_u64;
+        while reader.read_record(&mut record)? {
+            check()?;
+            rows += 1;
+            ensure!(
+                rows <= max_rows,
+                "point comparison exceeds staged identity count"
+            );
+            let stored = record.get(keys.len()).context("stored point missing")?;
+            let staged = record.get(keys.len() + 1).context("staged point missing")?;
+            let equivalent = match (
+                sources::canonical_source_point(stored),
+                sources::canonical_source_point(staged),
+            ) {
+                (Ok(stored), Ok(staged)) => stored == staged,
+                _ => false,
+            };
+            if equivalent {
+                writer.write_record(
+                    record
+                        .iter()
+                        .take(keys.len())
+                        .chain(std::iter::once(stored)),
+                )?;
+                preserved_rows += 1;
+            }
+        }
+        writer.flush()?;
+        drop(writer);
+        drop(reader);
+        if preserved_rows == 0 {
+            continue;
+        }
+        check()?;
+        let columns = keys
+            .iter()
+            .copied()
+            .chain(std::iter::once(point.api_field.as_str()))
+            .map(|name| format!("{}:'VARCHAR'", sources::literal(name)))
+            .collect::<Vec<_>>()
+            .join(",");
+        session.execute(&format!("CREATE TEMP TABLE _ingest_preserved_points AS SELECT * FROM read_csv({},header=true,columns={{{columns}}},strict_mode=true,buffer_size=4194304,maximum_line_size=262144)", sources::literal(preserved.to_str().context("point preservation path must be UTF-8")?)), &[])?;
+        let matched = keys
+            .iter()
+            .map(|key| format!("s.{0}=p.{0}", sources::identifier(key)))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        session.execute(&format!("UPDATE {stage} s SET {field}=p.{field} FROM _ingest_preserved_points p WHERE {matched}"), &[])?;
+        session.execute("DROP TABLE _ingest_preserved_points", &[])?;
+    }
+    Ok(())
+}
+
+fn publish(
+    session: &Session,
+    stage: &str,
+    dataset: &str,
+    mode: PublicationMode,
+    check: &sources::Check<'_>,
+) -> Result<Value> {
     let table = table_name(dataset)?;
     let exists = count(
         session,
@@ -370,6 +488,7 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
     if dataset == "fatalities" {
         session.execute(&format!("DELETE FROM {stage} WHERE person_id IN (SELECT person_id FROM {table} GROUP BY person_id HAVING count(*)>1)"),&[])?;
     }
+    preserve_equivalent_points(session, stage, dataset, accepted, check)?;
     let changed_predicate = format!(
         "row({}) IS DISTINCT FROM row({})",
         compared
@@ -490,7 +609,7 @@ pub fn publish_sources_guarded(
         for source in &sources {
             let stage = stage(session,source,check)?;
             let (stage,rejections) = if source.dataset=="fatalities" {fatalities(session,&stage,operation_id)?} else {validate_core(session,&stage,&source.dataset)?;(stage,json!({"rejected_rows":0}))};
-            let mut result = publish(session,&stage,&source.dataset,mode)?;
+            let mut result = publish(session,&stage,&source.dataset,mode,check)?;
             changed_rows+=result["inserted_rows"].as_u64().unwrap_or(0)+result["changed_rows"].as_u64().unwrap_or(0);
             ensure!(!existing_targets||changed_rows<=max_changed,"publication changes exceed INGESTION_MAX_CHANGED_ROWS={max_changed}; transaction rolled back");
             result["identity_rejections"]=rejections;
@@ -1030,6 +1149,294 @@ mod native_tests {
             .unwrap()[0];
         assert!(updated["crash_date"].is_null());
         assert_eq!(updated["age"], 119);
+    }
+    #[test]
+    fn crash_point_comparison_preserves_exact_equivalents_and_detects_real_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let points = [
+            (
+                "equivalent",
+                "POINT (-87.6000 41.8000)",
+                r#"{"coordinates":[-87.6,41.8],"type":"Point"}"#,
+            ),
+            (
+                "outside",
+                "POINT (999.5000 -0.000)",
+                r#"{"coordinates":[999.5,0],"type":"Point"}"#,
+            ),
+            (
+                "precise_equal",
+                "POINT (-87.60000000000001234 41.80000000000000987)",
+                r#"{"coordinates":[-87.60000000000001234,41.80000000000000987],"type":"Point"}"#,
+            ),
+            (
+                "precise_changed",
+                "POINT (-87.60000000000001234 41.80000000000000987)",
+                r#"{"coordinates":[-87.60000000000001235,41.80000000000000987],"type":"Point"}"#,
+            ),
+            (
+                "moved",
+                "POINT (-87.6 41.8)",
+                r#"{"coordinates":[-87.7,41.8],"type":"Point"}"#,
+            ),
+            (
+                "other_field",
+                "POINT (-87.6000 41.8000)",
+                r#"{"coordinates":[-87.6,41.8],"type":"Point"}"#,
+            ),
+            (
+                "invalid_old",
+                "archival unparseable point",
+                r#"{"coordinates":[-87.6,41.8],"type":"Point"}"#,
+            ),
+        ];
+        let original: Vec<_> = points.iter().map(|(id, point, _)| {
+            let mut row = json!({"crash_record_id":id,"crash_date":"2026-01-01","location":point,"posted_speed_limit":"30","latitude":"41.8","longitude":"-87.6"});
+            if *id == "outside" {
+                row["latitude"] = json!("0");
+                row["longitude"] = json!("999.5");
+            }
+            row
+        }).collect();
+        fixture(temp.path(), "crashes", &original);
+        publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "point-seed",
+        )
+        .unwrap();
+        let updated: Vec<_> = original
+            .iter()
+            .zip(&points)
+            .map(|(row, (id, _, point))| {
+                let mut row = row.clone();
+                row["location"] = json!(point);
+                if *id == "moved" {
+                    row["longitude"] = json!("-87.7");
+                }
+                if *id == "other_field" {
+                    row["posted_speed_limit"] = json!("35");
+                }
+                row
+            })
+            .collect();
+        fixture(temp.path(), "crashes", &updated);
+        let receipt = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "point-update",
+        )
+        .unwrap();
+        assert_eq!(receipt["datasets"]["crashes"]["changed_rows"], 4);
+        assert_eq!(receipt["datasets"]["crashes"]["unchanged_rows"], 3);
+        for (id, old, new) in &points {
+            let row = &db.query("SELECT location,posted_speed_limit,ST_X(geometry) longitude FROM crashes WHERE crash_record_id=?", &[json!(id)]).unwrap()[0];
+            let expected = if ["equivalent", "outside", "precise_equal", "other_field"].contains(id)
+            {
+                old
+            } else {
+                new
+            };
+            assert_eq!(row["location"], *expected, "{id}");
+            if *id == "other_field" {
+                assert_eq!(row["posted_speed_limit"], 35);
+            }
+            if *id == "moved" {
+                assert_eq!(row["longitude"], -87.7);
+            }
+            if *id == "outside" {
+                assert!(row["longitude"].is_null());
+            }
+        }
+        let replay = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "point-replay",
+        )
+        .unwrap();
+        assert_eq!(replay["datasets"]["crashes"]["changed_rows"], 0);
+        assert!(
+            std::fs::read_dir(temp.path().join("spill"))
+                .unwrap()
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("point-preservation-"))
+        );
+    }
+    #[test]
+    fn fatality_refresh_preserves_archival_json_when_only_other_fields_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let archived =
+            r#"{"coordinates":[-87.60000000000001234,41.80000000000000987],"type":"Point"}"#;
+        let original = json!({"person_id":"P1","crash_date":"2026-01-01","geocoded_column":archived,"victim":"Driver"});
+        fixture(temp.path(), "fatalities", std::slice::from_ref(&original));
+        publish_sources(
+            &db,
+            temp.path(),
+            &["fatalities".into()],
+            PublicationMode::Production,
+            "fatal-point-seed",
+        )
+        .unwrap();
+        // Imported historical raw text is retained even when current ingestion
+        // canonicalizes new fatality points to WKT.
+        db.execute(
+            "UPDATE vision_zero_fatalities SET geocoded_column=?",
+            &[json!(archived)],
+        )
+        .unwrap();
+        let mut updated = original;
+        updated["victim"] = json!("Pedestrian");
+        fixture(temp.path(), "fatalities", &[updated]);
+        let receipt = publish_sources(
+            &db,
+            temp.path(),
+            &["fatalities".into()],
+            PublicationMode::Production,
+            "fatal-point-update",
+        )
+        .unwrap();
+        assert_eq!(receipt["datasets"]["fatalities"]["changed_rows"], 1);
+        let row = &db
+            .query(
+                "SELECT geocoded_column,victim FROM vision_zero_fatalities",
+                &[],
+            )
+            .unwrap()[0];
+        assert_eq!(row["geocoded_column"], archived);
+        assert_eq!(row["victim"], "Pedestrian");
+    }
+    #[test]
+    fn point_preservation_checks_cancellation_while_streaming_and_cleans_scratch() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        db.execute(
+            "CREATE TABLE crashes(crash_record_id VARCHAR,location VARCHAR)",
+            &[],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO crashes VALUES('C1','POINT (-87.6000 41.8000)')",
+            &[],
+        )
+        .unwrap();
+        let spill = temp.path().join("spill");
+        let result: Result<()> = db.transaction(|session| {
+            session.execute(
+                "CREATE TEMP TABLE _point_stage AS SELECT * FROM crashes",
+                &[],
+            )?;
+            session.execute(
+                "UPDATE _point_stage SET location=?",
+                &[json!(r#"{"type":"Point","coordinates":[-87.6,41.8]}"#)],
+            )?;
+            let check = || {
+                for entry in std::fs::read_dir(&spill)? {
+                    let path = entry?.path();
+                    ensure!(
+                        !path.join("location.differences.csv").exists()
+                            || !path.join("location.preserved.csv").exists(),
+                        "cancelled while streaming points"
+                    );
+                }
+                Ok(())
+            };
+            preserve_equivalent_points(session, "_point_stage", "crashes", 1, &check)
+        });
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled while streaming")
+        );
+        assert_eq!(
+            db.query("SELECT location FROM crashes", &[]).unwrap()[0]["location"],
+            "POINT (-87.6000 41.8000)"
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM information_schema.tables WHERE table_name='_point_stage'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            0
+        );
+        assert!(std::fs::read_dir(spill).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("point-preservation-")
+        }));
+    }
+    #[test]
+    fn format_only_replays_above_publication_guard_succeed_but_actual_changes_roll_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let mut rows: Vec<_> = (0..25_001).map(|id| json!({"crash_record_id":format!("C{id}"),"crash_date":"2026-01-01","location":"POINT (-87.6000 41.8000)"})).collect();
+        fixture(temp.path(), "crashes", &rows);
+        publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "guard-point-seed",
+        )
+        .unwrap();
+        for row in &mut rows {
+            row["location"] = json!(r#"{"type":"Point","coordinates":[-87.6,41.8]}"#);
+        }
+        fixture(temp.path(), "crashes", &rows);
+        let receipt = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "guard-point-equivalent",
+        )
+        .unwrap();
+        assert_eq!(receipt["datasets"]["crashes"]["changed_rows"], 0);
+        assert_eq!(receipt["datasets"]["crashes"]["unchanged_rows"], 25_001);
+        for row in &mut rows {
+            row["location"] = json!(r#"{"type":"Point","coordinates":[-87.7,41.8]}"#);
+        }
+        fixture(temp.path(), "crashes", &rows);
+        let result = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "guard-point-changed",
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("INGESTION_MAX_CHANGED_ROWS")
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM crashes WHERE location='POINT (-87.6000 41.8000)'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            25_001
+        );
+        assert!(
+            committed_publication(&db, "guard-point-changed")
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn fatalities_coalesce_wkt_json_points_and_roll_back_bad_source_points() {

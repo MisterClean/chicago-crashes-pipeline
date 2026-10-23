@@ -480,6 +480,22 @@ pub fn download_api_window_source(
         format!("crash_date >= '{start}T00:00:00' AND crash_date < '{exclusive}T00:00:00'");
     download_api_filtered_source(directory, dataset, Some(&filter), check)
 }
+
+/// Decode source strings while retaining exact numeric and point JSON tokens.
+fn api_csv_value(value: Option<&serde_json::value::RawValue>) -> Result<String> {
+    let Some(value) = value else {
+        return Ok(String::new());
+    };
+    let token = value.get();
+    if token == "null" {
+        Ok(String::new())
+    } else if token.starts_with('"') {
+        Ok(serde_json::from_str(token)?)
+    } else {
+        Ok(token.to_owned())
+    }
+}
+
 fn download_api_filtered_source(
     directory: &Path,
     dataset: &str,
@@ -536,7 +552,8 @@ fn download_api_filtered_source(
                 request = request.query(&[("$where", filter)]);
             }
             let response = request.send()?.error_for_status()?;
-            let page: Vec<Value> = bounded_json(response, 32 * 1024 * 1024, check)?;
+            let page: Vec<BTreeMap<String, Box<serde_json::value::RawValue>>> =
+                bounded_json(response, 32 * 1024 * 1024, check)?;
             if page.is_empty() {
                 break;
             }
@@ -546,12 +563,8 @@ fn download_api_filtered_source(
                 let values: Vec<String> = spec
                     .columns
                     .iter()
-                    .map(|c| match &record[&c.api_field] {
-                        Value::Null => String::new(),
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect();
+                    .map(|c| api_csv_value(record.get(&c.api_field).map(AsRef::as_ref)))
+                    .collect::<Result<_>>()?;
                 writer.write_record(&values)?;
             }
             offset += page.len() as u64;
@@ -927,6 +940,35 @@ fn canonical_decimal(value: &str) -> Result<String> {
         number
     })
 }
+/// Retain numeric JSON tokens before decimal canonicalization. Parsing these
+/// through `Value::Number` first would round coordinates to binary floating point.
+fn raw_point_coordinates(value: &str) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Point<'a> {
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(borrow)]
+        coordinates: [&'a serde_json::value::RawValue; 2],
+    }
+    let point: Point<'_> = serde_json::from_str(value)?;
+    ensure!(
+        point.kind == "Point",
+        "source point must be a GeoJSON Point"
+    );
+    point
+        .coordinates
+        .iter()
+        .map(|coordinate| {
+            let token = coordinate.get();
+            if token.starts_with('"') {
+                Ok(serde_json::from_str(token)?)
+            } else {
+                Ok(token.to_owned())
+            }
+        })
+        .collect()
+}
+
 /// Preserve the deployed archival point representation independently of Chicago
 /// latitude/longitude validation and the geometry used for spatial selection.
 pub fn canonical_source_point(value: &str) -> Result<String> {
@@ -935,26 +977,7 @@ pub fn canonical_source_point(value: &str) -> Result<String> {
     }
     let value = value.trim();
     let coordinates = if value.starts_with('{') {
-        let point: Value = serde_json::from_str(value)?;
-        ensure!(
-            point["type"] == "Point",
-            "source point must be a GeoJSON Point"
-        );
-        let coordinates = point["coordinates"]
-            .as_array()
-            .context("source point coordinates missing")?;
-        ensure!(
-            coordinates.len() == 2,
-            "source point requires exactly two coordinates"
-        );
-        coordinates
-            .iter()
-            .map(|value| match value {
-                Value::String(value) => Ok(value.clone()),
-                Value::Number(value) => Ok(value.to_string()),
-                _ => anyhow::bail!("source point coordinate must be numeric"),
-            })
-            .collect::<Result<Vec<_>>>()?
+        raw_point_coordinates(value)?
     } else {
         ensure!(
             value
@@ -1041,6 +1064,40 @@ mod point_tests {
         let json=canonical_source_point(r#"{"type":"Point","coordinates":["-8.760000000000001234e1","4.180000000000000987e1"]}"#).unwrap();
         assert_eq!(wkt, json);
         assert_eq!(wkt, "POINT (-87.60000000000001234 41.80000000000000987)");
+    }
+    #[test]
+    fn numeric_geojson_tokens_keep_distinctions_beyond_binary_float_precision() {
+        let wkt =
+            canonical_source_point("POINT (-87.60000000000001234 41.80000000000000987)").unwrap();
+        let json = canonical_source_point(
+            r#"{"type":"Point","coordinates":[-87.60000000000001234,41.80000000000000987]}"#,
+        )
+        .unwrap();
+        assert_eq!(wkt, json);
+        let changed = canonical_source_point(
+            r#"{"type":"Point","coordinates":[-87.60000000000001235,41.80000000000000987]}"#,
+        )
+        .unwrap();
+        assert_ne!(json, changed);
+    }
+    #[test]
+    fn api_page_fields_preserve_exact_numeric_points_and_decode_strings_and_nulls() {
+        let raw = r#"[{"location":{"type":"Point","coordinates":[-87.60000000000001234,41.80000000000000987]},"number":87.60000000000001234,"text":"a\\b\nc","absent":null}]"#;
+        let page: Vec<BTreeMap<String, Box<serde_json::value::RawValue>>> =
+            serde_json::from_str(raw).unwrap();
+        let field = |name: &str| api_csv_value(page[0].get(name).map(AsRef::as_ref)).unwrap();
+        assert_eq!(
+            field("location"),
+            r#"{"type":"Point","coordinates":[-87.60000000000001234,41.80000000000000987]}"#
+        );
+        assert_eq!(
+            canonical_source_point(&field("location")).unwrap(),
+            "POINT (-87.60000000000001234 41.80000000000000987)"
+        );
+        assert_eq!(field("number"), "87.60000000000001234");
+        assert_eq!(field("text"), "a\\b\nc");
+        assert_eq!(field("absent"), "");
+        assert_eq!(field("missing"), "");
     }
     #[test]
     fn source_points_keep_archival_coordinates_and_canonical_zero() {
