@@ -261,6 +261,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let database = Arc::new(open(&options)?);
+    ingestion::cleanup_point_scratch(&database)?;
     match &options.command {
         Command::BuildInfo|Command::Admin(_)|Command::ExportPostgresLayers{..}=>{},
         Command::Probe=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT version() AS version, current_setting('memory_limit') AS memory_limit, current_setting('threads') AS sql_threads, ST_Distance_Spheroid(ST_Point(-87.65,41.88), ST_Point(-87.65,41.881)) AS axis_probe_meters",&[])?)?),

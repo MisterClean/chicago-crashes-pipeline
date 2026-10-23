@@ -31,6 +31,63 @@ const STRING_NUMBERS: &[&str] = &[
     "vehicle_id",
     "cmv_id",
 ];
+const POINT_SCRATCH_PREFIX: &str = "point-preservation-";
+const POINT_SCRATCH_RANDOM_CHARS: usize = 6;
+
+/// Reclaim interrupted point CSV copies while holding the exclusive SQL lane.
+/// Run after opening the database owner, before starting the background worker.
+pub fn cleanup_point_scratch(db: &Database) -> Result<usize> {
+    db.with_session(|session| {
+        let setting = session.query("SELECT current_setting('temp_directory') path", &[])?;
+        let scratch = Path::new(
+            setting[0]["path"]
+                .as_str()
+                .context("owner scratch directory missing")?,
+        );
+        std::fs::create_dir_all(scratch)?;
+        let mut removed = 0;
+        for entry in std::fs::read_dir(scratch)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(suffix) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix(POINT_SCRATCH_PREFIX))
+            else {
+                continue;
+            };
+            ensure!(
+                suffix.len() == POINT_SCRATCH_RANDOM_CHARS
+                    && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric()),
+                "unrecognized point scratch directory name"
+            );
+            ensure!(
+                entry.file_type()?.is_dir(),
+                "point scratch path must be a directory, not a symlink or file"
+            );
+            // Check every member before removing anything. Do not follow links or
+            // delete unknown content, including DuckDB's own spill structures.
+            for member in std::fs::read_dir(entry.path())? {
+                let member = member?;
+                ensure!(
+                    member.file_type()?.is_file()
+                        && matches!(
+                            member.file_name().to_str(),
+                            Some(
+                                "location.differences.csv"
+                                    | "location.preserved.csv"
+                                    | "geocoded_column.differences.csv"
+                                    | "geocoded_column.preserved.csv"
+                            )
+                        ),
+                    "point scratch directory contains an unknown entry or symlink"
+                );
+            }
+            std::fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        }
+        Ok(removed)
+    })
+}
 
 fn configured_limit(name: &str, default: u64) -> Result<u64> {
     match std::env::var(name) {
@@ -346,7 +403,8 @@ fn preserve_equivalent_points(
     );
     std::fs::create_dir_all(scratch)?;
     let temporary = tempfile::Builder::new()
-        .prefix("point-preservation-")
+        .prefix(POINT_SCRATCH_PREFIX)
+        .rand_bytes(POINT_SCRATCH_RANDOM_CHARS)
         .tempdir_in(scratch)?;
     let keys = primary_keys(dataset);
     let table = table_name(dataset)?;
@@ -708,6 +766,84 @@ mod native_tests {
             &manifest,
         )
         .unwrap();
+    }
+    #[test]
+    fn point_scratch_cleanup_reclaims_abandoned_copies_without_touching_native_spill() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let spill = temp.path().join("spill");
+        let orphan = tempfile::Builder::new()
+            .prefix(POINT_SCRATCH_PREFIX)
+            .rand_bytes(POINT_SCRATCH_RANDOM_CHARS)
+            .tempdir_in(&spill)
+            .unwrap()
+            .keep();
+        std::fs::write(orphan.join("location.differences.csv"), "interrupted copy").unwrap();
+        std::fs::write(orphan.join("location.preserved.csv"), "interrupted copy").unwrap();
+        let unrelated = spill.join("unrelated-directory");
+        std::fs::create_dir(&unrelated).unwrap();
+        let unrelated_file = unrelated.join("keep");
+        std::fs::write(&unrelated_file, "keep").unwrap();
+        let native = spill.join("duckdb_temp_storage-0.tmp");
+        std::fs::write(&native, "native spill").unwrap();
+        assert_eq!(cleanup_point_scratch(&db).unwrap(), 1);
+        assert!(!orphan.exists());
+        assert_eq!(std::fs::read_to_string(&unrelated_file).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&native).unwrap(), "native spill");
+        assert_eq!(cleanup_point_scratch(&db).unwrap(), 0);
+    }
+
+    #[test]
+    fn point_scratch_cleanup_rejects_unknown_content_and_a_second_live_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let orphan = temp.path().join("spill/point-preservation-ABC123");
+        std::fs::create_dir(&orphan).unwrap();
+        let unknown = orphan.join("operator-note");
+        std::fs::write(&unknown, "must retain").unwrap();
+        assert!(cleanup_point_scratch(&db).is_err());
+        assert_eq!(std::fs::read_to_string(&unknown).unwrap(), "must retain");
+        let second = Database::open(
+            &temp.path().join("test.duckdb"),
+            &crate::test_support::library(),
+            "64MB",
+            1,
+            &temp.path().join("spill"),
+        );
+        assert!(second.is_err());
+        assert!(
+            unknown.exists(),
+            "a second owner must fail before startup cleanup"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn point_scratch_cleanup_never_follows_directory_or_file_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let spill = temp.path().join("spill");
+        let external = temp.path().join("external");
+        std::fs::create_dir(&external).unwrap();
+        let external_file = external.join("location.differences.csv");
+        std::fs::write(&external_file, "must retain").unwrap();
+        let candidate = spill.join("point-preservation-ABC123");
+        std::os::unix::fs::symlink(&external, &candidate).unwrap();
+        assert!(cleanup_point_scratch(&db).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&external_file).unwrap(),
+            "must retain"
+        );
+        std::fs::remove_file(&candidate).unwrap();
+        std::fs::create_dir(&candidate).unwrap();
+        std::os::unix::fs::symlink(&external_file, candidate.join("location.differences.csv"))
+            .unwrap();
+        assert!(cleanup_point_scratch(&db).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&external_file).unwrap(),
+            "must retain"
+        );
+        assert!(candidate.exists());
     }
     #[test]
     fn vehicle_years_accept_current_and_next_model_years_but_reject_implausible_years() {
