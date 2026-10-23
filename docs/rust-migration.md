@@ -50,6 +50,8 @@ Fatality incremental updates require an actual source-update checkpoint. Core mo
 
 The audited [mapping](../rust/crashes-server/resources/csv_column_mapping.json) owns CSV display-header/API-name/type conversion. Downloads validate schema, transport, content hashes, counts and source revisions. New or renamed columns fail for review. Equivalent WKT and GeoJSON point coordinates retain the stored archival text during refresh, with exact decimal comparison before floating-point geometry conversion. A transport-format change therefore does not consume the changed-row allowance; actual coordinate and other field changes still do. Successful staging is removed after durable publication; source disk budget, retention and attempt counts are bounded.
 
+Metadata, count and ordered API page GETs make at most three attempts for connection failures, timeouts before receiving a response, and HTTP 429/502/503/504. Each request has a 90-second deadline and 15-second connection timeout. Backoff checks the job fence at least every 100 milliseconds, caps integer `Retry-After` delays at 30 seconds, and checks the lease before and after each send. Body, JSON, schema, count and revision validation failures remain outside this retry loop and require a fresh acquisition. Retries therefore do not permit a source changing mid-download to publish.
+
 ## Boundaries and uploads
 
 A new portal seed creates an empty spatial catalog. Existing migrations import the captured catalog. Use `/admin` to preview label fields and upload GeoJSON or a complete zipped shapefile. Shapefile archives require `.shp`, `.shx`, `.dbf` and `.prj`; GDAL must be available on `PATH`.
@@ -77,6 +79,8 @@ Required settings:
 The image's starting buffer configuration is `DUCKDB_MEMORY_LIMIT=192MB`, `DUCKDB_THREADS=2` and a 16 MiB response cache. Do not use a 128 MB buffer with exports: it is smaller than an observed native allocation. The local low-traffic trial passed with a 512 MiB backend cap, but reached that cap with reclaim pressure. Validate the actual host architecture, storage, traffic and upload envelope before selecting limits.
 
 Full historical reconciliation needs additional headroom: full vehicle replays exhausted 192 MB and 512 MB buffers, and a 1 GB buffer still reached the default 4 GB scratch cap. Configure a 1 GB DuckDB buffer, one SQL thread, an 8 GB scratch budget and a finite 3 GB outer container ceiling; validate the complete replay and report workload on the actual host. On Railway, a dedicated ephemeral directory such as `/tmp/crashes-duckdb-spill` separates disposable SQL spill from the 5 GB persistent volume. Keep facts, SQLite, source receipts, exports and backups under `DATA_DIR`. Keep per-source full jobs separate to bound source staging. A buffer or container ceiling does not imply that amount of idle consumption.
+
+A custom SQL scratch directory must be empty on first use or already contain this application's ownership marker. It is private (mode 0700 on Unix) and exclusively locked. Independent database owners must use separate scratch directories; an existing owner is refused before scratch cleanup can run.
 
 Serve the frontend separately with a private `BACKEND_URL` and `NEXT_PUBLIC_API_URL=/api`. Set `BACKEND_URL` when building and at runtime; changing it requires rebuilding compiled rewrites. `NEXT_PUBLIC_BASEMAP_URL` optionally selects a public style at build time. No server secret belongs in a `NEXT_PUBLIC_*` setting.
 
