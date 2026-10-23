@@ -237,7 +237,7 @@ fn stage(session: &Session, source: &VerifiedSource, check: &sources::Check<'_>)
         .as_ref()
         .map_or(source.path.as_path(), |file| file.path());
     let path = input.to_str().context("source path must be UTF-8")?;
-    session.execute(&format!("CREATE TEMP VIEW {} AS SELECT * FROM read_csv({},header=true,all_varchar=true,normalize_names=false,ignore_errors=false,strict_mode=true,buffer_size=4194304,maximum_line_size=262144)",sources::identifier(&raw),sources::literal(path)),&[])?;
+    session.execute(&format!("CREATE TEMP VIEW {} AS SELECT * FROM read_csv({},header=true,all_varchar=true,normalize_names=false,delim=',',quote='\"',escape='\"',nullstr='',ignore_errors=false,strict_mode=true,buffer_size=4194304,maximum_line_size=262144)",sources::identifier(&raw),sources::literal(path)),&[])?;
     let fields = schema_columns(dataset)?;
     let current_year = chrono::Utc::now()
         .with_timezone(&chrono_tz::America::Chicago)
@@ -427,9 +427,19 @@ fn preserve_equivalent_points(
         let preserved = temporary
             .path()
             .join(format!("{}.preserved.csv", point.api_field));
-        session.execute(&format!("COPY(SELECT {projection},t.{field} stored_point,s.{field} staged_point FROM {stage} s JOIN {table} t ON {equality} WHERE t.{field} IS NOT NULL AND s.{field} IS NOT NULL AND t.{field} IS DISTINCT FROM s.{field}) TO {}(FORMAT CSV,HEADER true)", sources::literal(differences.to_str().context("point comparison path must be UTF-8")?)), &[])?;
-        let mut reader = csv::Reader::from_path(&differences)?;
-        let mut writer = csv::Writer::from_path(&preserved)?;
+        session.execute(&format!("COPY(SELECT {projection},t.{field} stored_point,s.{field} staged_point FROM {stage} s JOIN {table} t ON {equality} WHERE t.{field} IS NOT NULL AND s.{field} IS NOT NULL AND t.{field} IS DISTINCT FROM s.{field}) TO {}(FORMAT CSV,HEADER true,DELIMITER ',',QUOTE '\"',ESCAPE '\"',NULL '')", sources::literal(differences.to_str().context("point comparison path must be UTF-8")?)), &[])?;
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(b',')
+            .quote(b'"')
+            .double_quote(true)
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_path(&differences)?;
+        let mut writer = csv::WriterBuilder::new()
+            .delimiter(b',')
+            .quote(b'"')
+            .double_quote(true)
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_path(&preserved)?;
         writer.write_record(
             keys.iter()
                 .copied()
@@ -471,22 +481,42 @@ fn preserve_equivalent_points(
             continue;
         }
         check()?;
-        let columns = keys
-            .iter()
-            .copied()
-            .chain(std::iter::once(point.api_field.as_str()))
-            .map(|name| format!("{}:'VARCHAR'", sources::literal(name)))
-            .collect::<Vec<_>>()
-            .join(",");
-        session.execute(&format!("CREATE TEMP TABLE _ingest_preserved_points AS SELECT * FROM read_csv({},header=true,columns={{{columns}}},strict_mode=true,buffer_size=4194304,maximum_line_size=262144)", sources::literal(preserved.to_str().context("point preservation path must be UTF-8")?)), &[])?;
-        let matched = keys
-            .iter()
-            .map(|key| format!("s.{0}=p.{0}", sources::identifier(key)))
-            .collect::<Vec<_>>()
-            .join(" AND ");
-        session.execute(&format!("UPDATE {stage} s SET {field}=p.{field} FROM _ingest_preserved_points p WHERE {matched}"), &[])?;
-        session.execute("DROP TABLE _ingest_preserved_points", &[])?;
+        restore_preserved_points(session, stage, dataset, &point.api_field, &preserved)?;
     }
+    Ok(())
+}
+
+fn restore_preserved_points(
+    session: &Session,
+    stage: &str,
+    dataset: &str,
+    point: &str,
+    preserved: &Path,
+) -> Result<()> {
+    let keys = primary_keys(dataset);
+    let columns = keys
+        .iter()
+        .copied()
+        .chain(std::iter::once(point))
+        .map(|name| format!("{}:'VARCHAR'", sources::literal(name)))
+        .collect::<Vec<_>>()
+        .join(",");
+    // Both writers use comma, doubled quotes and LF. A WKT-only prefix must
+    // never persuade the sniffer to disable quoting before later JSON rows.
+    session.execute(&format!("CREATE TEMP TABLE _ingest_preserved_points AS SELECT * FROM read_csv({},auto_detect=false,header=true,columns={{{columns}}},delim=',',quote='\"',escape='\"',new_line='\\n',nullstr='',allow_quoted_nulls=false,strict_mode=true,ignore_errors=false,null_padding=false,buffer_size=4194304,maximum_line_size=262144)", sources::literal(preserved.to_str().context("point preservation path must be UTF-8")?)), &[])?;
+    let matched = keys
+        .iter()
+        .map(|key| format!("s.{0}=p.{0}", sources::identifier(key)))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let field = sources::identifier(point);
+    session.execute(
+        &format!(
+            "UPDATE {stage} s SET {field}=p.{field} FROM _ingest_preserved_points p WHERE {matched}"
+        ),
+        &[],
+    )?;
+    session.execute("DROP TABLE _ingest_preserved_points", &[])?;
     Ok(())
 }
 
@@ -1541,6 +1571,69 @@ mod native_tests {
                 .to_string_lossy()
                 .starts_with("point-preservation-")
         }));
+    }
+    #[test]
+    fn preserved_point_csv_reads_late_quoted_json_and_keeps_null_sentinels_distinct() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let path = temp.path().join("location.preserved.csv");
+        let archived =
+            r#"{"coordinates":[-87.60000000000001234,41.80000000000000987],"type":"Point"}"#;
+        let mut writer = csv::Writer::from_path(&path).unwrap();
+        writer
+            .write_record(["crash_record_id", "location"])
+            .unwrap();
+        // Exceed DuckDB's default 20,480-row sniffing window before the first
+        // field requiring CSV quoting, as in the production preservation file.
+        for id in 0..30_000 {
+            writer
+                .write_record([format!("wkt-{id}"), "POINT (-87.6000 41.8000)".to_owned()])
+                .unwrap();
+        }
+        for (id, point) in [
+            ("json-tail", archived),
+            ("empty-tail", ""),
+            ("literal-null-tail", "null"),
+            ("json-null-tail", "\"null\""),
+        ] {
+            writer.write_record([id, point]).unwrap();
+        }
+        writer.flush().unwrap();
+        drop(writer);
+        db.transaction(|session| {
+            session.execute("CREATE TEMP TABLE _point_stage AS SELECT 'wkt-'||i crash_record_id,'staged'::VARCHAR location FROM range(30000) ids(i)", &[])?;
+            session.execute("INSERT INTO _point_stage VALUES('json-tail','staged'),('empty-tail','staged'),('literal-null-tail','staged'),('json-null-tail','staged')", &[])?;
+            restore_preserved_points(session, "_point_stage", "crashes", "location", &path)
+        }).unwrap();
+        assert_eq!(
+            db.query("SELECT count(*) n FROM _point_stage", &[])
+                .unwrap()[0]["n"],
+            30_004
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM _point_stage WHERE location='POINT (-87.6000 41.8000)'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            30_000
+        );
+        let value = |id: &str| {
+            db.query(
+                "SELECT location FROM _point_stage WHERE crash_record_id=?",
+                &[json!(id)],
+            )
+            .unwrap()[0]["location"]
+                .clone()
+        };
+        assert_eq!(value("json-tail"), archived);
+        assert_eq!(
+            sources::canonical_source_point(value("json-tail").as_str().unwrap()).unwrap(),
+            "POINT (-87.60000000000001234 41.80000000000000987)"
+        );
+        assert!(value("empty-tail").is_null());
+        assert_eq!(value("literal-null-tail"), "null");
+        assert_eq!(value("json-null-tail"), "\"null\"");
     }
     #[test]
     fn format_only_replays_above_publication_guard_succeed_but_actual_changes_roll_back() {
