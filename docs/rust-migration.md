@@ -5,7 +5,7 @@ The application runs one Rust backend owner with DuckDB 2.0.0 facts/boundaries a
 ## Runtime invariants
 
 - Run one backend process and one replica per persistent data directory. An OS owner lock and DuckDB's file lock reject a second owner. Never mount the same writable database into independent workers.
-- Queries share a serialized SQL lane, two SQL threads, a default 120-second statement deadline and a 4 GB spill ceiling. The CLI defaults to a 256 MB buffer; the production image uses 192 MB. Buffer budgets and total process RSS are different limits.
+- Queries share a serialized SQL lane, two SQL threads, a default 120-second statement deadline and a default 4 GB spill ceiling. The CLI defaults to a 256 MB buffer; the production image defaults to 192 MB. Full-source reconciliation requires the larger measured configuration below. Buffer budgets and total process RSS are different limits.
 - Facts, publication receipts and source checkpoints commit transactionally. An immutable operation ID reconciles a crash between DuckDB publication and SQLite job completion before work is repeated.
 - Public caching defaults to a 300-second TTL, 16 MiB total payloads, 4 MiB per entry and 256 entries. Mutations invalidate cached reads. Operational routes, exports and errors are not cached. `PUBLIC_CACHE_BYTES=0` disables the cache for measurements.
 - Crash timestamps are Chicago local wall time. Operational timestamps and source modification checkpoints are UTC. Radius selection uses WGS84 spheroid distance with longitude/latitude axes. Polygon selection excludes edges and holes.
@@ -44,9 +44,15 @@ Automatic scheduling is off in the local CLI; the production image sets `DAILY_S
 
 The daily core job uses a 30-day event-date API window for crashes, people and vehicles. It preserves historical null person dates and enforces the default 25,000 changed-row publication guard. A date window does not prove full historical completeness or advance a global modification watermark.
 
+For historical location reports, configure separate weekly full replays for crashes, people and vehicles, staggered so each source completes before the next begins. Use `mode=full`, `allow_full_refresh=true`, one endpoint per schedule, and the same finite change guard. `source_mode=bulk` retains strict bulk validation with complete ordered API fallback; `source_mode=api` requires the complete ordered API directly. These schedules are explicit operating policy and are not installed automatically. Review their durable receipts with `crashes-server admin queue`. Current portal vehicle model years through the Chicago calendar year plus one are accepted; snapshot imports preserve captured historical values.
+
+Full and windowed refreshes use the same upsert contract: source absence does not delete existing accepted records. A full publication receipt counts its accepted source rows, which can be fewer than the retained target population. Investigate missing identities separately before making a strict source-parity claim or removing historical facts.
+
 Fatality incremental updates require an actual source-update checkpoint. Core modification-watermark jobs and historical person-date repair remain held until a reviewed baseline/policy is provided. `force` does not bypass holds, disabled flags or the change guard. Empty or unstable API windows do not erase facts.
 
-The audited [mapping](../rust/crashes-server/resources/csv_column_mapping.json) owns CSV display-header/API-name/type conversion. Downloads validate schema, transport, content hashes, counts and source revisions. New or renamed columns fail for review. Successful staging is removed after durable publication; source disk budget, retention and attempt counts are bounded.
+The audited [mapping](../rust/crashes-server/resources/csv_column_mapping.json) owns CSV display-header/API-name/type conversion. Downloads validate schema, transport, content hashes, counts and source revisions. New or renamed columns fail for review. Equivalent WKT and GeoJSON point coordinates retain the stored archival text during refresh, with exact decimal comparison before floating-point geometry conversion. A transport-format change therefore does not consume the changed-row allowance; actual coordinate and other field changes still do. Successful staging is removed after durable publication; source disk budget, retention and attempt counts are bounded.
+
+Metadata, count and ordered API page GETs make at most three attempts for connection failures, timeouts before receiving a response, and HTTP 429/500/502/503/504. Each request has a 90-second deadline and 15-second connection timeout. Backoff checks the job fence at least every 100 milliseconds, caps integer `Retry-After` delays at 30 seconds, and checks the lease before and after each send. Body, JSON, schema, count and revision validation failures remain outside this retry loop and require a fresh acquisition. Retries therefore do not permit a source changing mid-download to publish.
 
 ## Boundaries and uploads
 
@@ -69,8 +75,14 @@ Required settings:
 | `EXPORT_ACCESS_KEY_ID`, `EXPORT_SECRET_ACCESS_KEY` | Bucket credentials |
 | `EXPORT_REGION` | Bucket region; default `auto` |
 | `DAILY_SYNC` | Enable only after reviewing imported schedules |
+| `DUCKDB_TEMP_DIRECTORY` | Optional dedicated SQL scratch directory; defaults to `DATA_DIR/spill` |
+| `DUCKDB_MAX_TEMP_DIRECTORY_SIZE` | Finite positive SQL spill budget; defaults to `4GB` |
 
 The image's starting buffer configuration is `DUCKDB_MEMORY_LIMIT=192MB`, `DUCKDB_THREADS=2` and a 16 MiB response cache. Do not use a 128 MB buffer with exports: it is smaller than an observed native allocation. The local low-traffic trial passed with a 512 MiB backend cap, but reached that cap with reclaim pressure. Validate the actual host architecture, storage, traffic and upload envelope before selecting limits.
+
+Full historical reconciliation needs additional headroom: full vehicle replays exhausted 192 MB and 512 MB buffers, and a 1 GB buffer still reached the default 4 GB scratch cap. Configure a 1 GB DuckDB buffer, one SQL thread, an 8 GB scratch budget and a finite 3 GB outer container ceiling; validate the complete replay and report workload on the actual host. On Railway, a dedicated ephemeral directory such as `/tmp/crashes-duckdb-spill` separates disposable SQL spill from the 5 GB persistent volume. Keep facts, SQLite, source receipts, exports and backups under `DATA_DIR`. Keep per-source full jobs separate to bound source staging. A buffer or container ceiling does not imply that amount of idle consumption.
+
+A custom SQL scratch directory must be empty on first use or already contain this application's ownership marker. It is private (mode 0700 on Unix) and exclusively locked. Independent database owners must use separate scratch directories; an existing owner is refused before scratch cleanup can run.
 
 Serve the frontend separately with a private `BACKEND_URL` and `NEXT_PUBLIC_API_URL=/api`. Set `BACKEND_URL` when building and at runtime; changing it requires rebuilding compiled rewrites. `NEXT_PUBLIC_BASEMAP_URL` optionally selects a public style at build time. No server secret belongs in a `NEXT_PUBLIC_*` setting.
 

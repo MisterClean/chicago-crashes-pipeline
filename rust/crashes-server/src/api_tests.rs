@@ -19,6 +19,60 @@ use tower::ServiceExt;
 const KEY: &str = "local-test-key-at-least-thirty-two-bytes";
 
 #[tokio::test]
+async fn backup_history_requires_auth_and_lists_only_completed_paired_receipts() {
+    let (state, directory) = fixture().unwrap();
+    let app = api::router(state.clone());
+    for path in ["/jobs/backups", "/admin/api/jobs/backups"] {
+        for key in [None, Some("invalid")] {
+            assert_eq!(
+                send(app.clone(), "GET", path, Value::Null, key).await.0,
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        let (status, body, _) = send(app.clone(), "GET", path, Value::Null, Some(KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body, json!({"backups":[],"last_full_backup_at":null}));
+    }
+
+    state
+        .control
+        .set_configuration("private_setting", &json!("must-not-be-disclosed"))
+        .unwrap();
+    let root = directory.path().join("backups");
+    let pending_id = uuid::Uuid::new_v4().to_string();
+    let pending = root.join(format!(".{pending_id}.partial"));
+    std::fs::create_dir_all(&pending).unwrap();
+    std::fs::write(pending.join("current.duckdb"), "incomplete snapshot").unwrap();
+    let mut completed = Vec::new();
+    for _ in 0..8 {
+        completed.push(crate::recovery::backup(&state.db, &state.control, &root, None).unwrap());
+    }
+    let last_completed = state
+        .control
+        .configuration("last_full_backup_at")
+        .unwrap()
+        .unwrap();
+    for path in ["/jobs/backups", "/admin/api/jobs/backups"] {
+        let (status, body, headers) = send(app.clone(), "GET", path, Value::Null, Some(KEY)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["backups"], json!(&completed[1..]));
+        assert_eq!(body["last_full_backup_at"], last_completed);
+        assert!(!headers.contains_key("x-cache"));
+        assert!(!body.to_string().contains(&pending_id));
+        assert!(!body.to_string().contains("must-not-be-disclosed"));
+        assert!(
+            !body
+                .to_string()
+                .contains(&directory.path().display().to_string())
+        );
+    }
+    assert!(
+        pending.exists(),
+        "reading history must not mutate pending work"
+    );
+}
+
+#[tokio::test]
 async fn embedded_admin_routes_work_behind_the_frontend_proxy_and_keep_authentication() {
     let (state, _directory) = fixture().unwrap();
     let app = api::router(state);
@@ -172,6 +226,69 @@ async fn send(
 
 fn place() -> Value {
     json!({"place_type":"layer:4","place_id":"259","start_date":"2024-01-01","end_date":"2024-01-31"})
+}
+
+#[tokio::test]
+async fn public_report_rejects_unbounded_month_expansion_before_database_admission() {
+    let (mut state, _directory) = fixture().unwrap();
+    state.admission = Arc::new(tokio::sync::Semaphore::new(0));
+    let app = api::router(state);
+    for (start, end) in [
+        ("-250000-01-01", "2026-01-01"),
+        ("0000-01-01", "2026-01-01"),
+        ("0001-01-01", "9999-12-31"),
+    ] {
+        let mut request = place();
+        request["start_date"] = json!(start);
+        request["end_date"] = json!(end);
+        let (status, _, _) = send(
+            app.clone(),
+            "POST",
+            "/dashboard/location-report",
+            request,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{start}..{end}");
+    }
+    let (status, _, _) = send(
+        app,
+        "GET",
+        "/dashboard/stats?start_date=-250000-01-01",
+        Value::Null,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn public_report_bounds_one_sided_date_ranges_after_resolving_matching_months() {
+    let (state, _directory) = fixture().unwrap();
+    let app = api::router(state);
+    for dates in [
+        json!({"start_date":"0001-01-01"}),
+        json!({"end_date":"9999-12-31"}),
+    ] {
+        let mut request = json!({"place_type":"layer:4","place_id":"259"});
+        for (key, value) in dates.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        let (status, body, _) = send(
+            app.clone(),
+            "POST",
+            "/dashboard/location-report",
+            request,
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["detail"], crate::queries::REPORT_RANGE_ERROR);
+    }
+    let request = json!({"place_type":"layer:4","place_id":"259"});
+    let (status, report, _) = send(app, "POST", "/dashboard/location-report", request, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(report["stats"]["total_crashes"], 2);
 }
 fn export() -> Value {
     let mut v = place();
@@ -679,6 +796,16 @@ async fn multipart(
     fields: &[(&str, &str)],
     data: &str,
 ) -> (StatusCode, Value) {
+    multipart_with_chunks(app, path, fields, data, None).await
+}
+
+async fn multipart_with_chunks(
+    app: Router,
+    path: &str,
+    fields: &[(&str, &str)],
+    data: &str,
+    chunk_size: Option<usize>,
+) -> (StatusCode, Value) {
     let boundary = "rust-multipart-contract";
     let mut payload = String::new();
     for (name, value) in fields {
@@ -687,6 +814,14 @@ async fn multipart(
         ));
     }
     payload.push_str(&format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"boundary.geojson\"\r\nContent-Type: application/geo+json\r\n\r\n{data}\r\n--{boundary}--\r\n"));
+    let body = if let Some(chunk_size) = chunk_size {
+        Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+            std::io::Cursor::new(payload),
+            chunk_size,
+        ))
+    } else {
+        Body::from(payload)
+    };
     let response = app
         .oneshot(
             Request::builder()
@@ -697,7 +832,7 @@ async fn multipart(
                     "content-type",
                     format!("multipart/form-data; boundary={boundary}"),
                 )
-                .body(Body::from(payload))
+                .body(body)
                 .unwrap(),
         )
         .await
@@ -705,6 +840,33 @@ async fn multipart(
     let status = response.status();
     let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
+}
+
+#[tokio::test]
+async fn spatial_preview_reads_complete_streamed_uploads_including_final_chunks() {
+    let (state, _directory) = fixture().unwrap();
+    let app = api::router(state);
+    let label = "Boundary label ".repeat(64);
+    let geometry = json!({"type":"FeatureCollection","features":[{"type":"Feature","properties":{"name":label},"geometry":{"type":"Polygon","coordinates":[[[-87.7,41.8],[-87.6,41.8],[-87.6,41.9],[-87.7,41.8]]]}}]}).to_string();
+    for chunk_size in [1, 17, 4096] {
+        let (status, preview) = multipart_with_chunks(
+            app.clone(),
+            "/spatial/layers/preview-fields",
+            &[],
+            &geometry,
+            Some(chunk_size),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "chunk_size={chunk_size}: {preview}");
+        assert_eq!(preview["feature_count"], 1);
+        let name = preview["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|field| field["name"] == "name")
+            .unwrap();
+        assert_eq!(name["sample_values"], json!([label]));
+    }
 }
 
 #[tokio::test]
@@ -890,8 +1052,10 @@ async fn runtime_info_is_protected_and_does_not_disclose_paths_or_credentials() 
     assert_eq!(body["backend"], "rust");
     assert_eq!(body["engine"], "2.0.0");
     assert_eq!(body["serialized"], true);
+    assert!(body["max_temp_directory_size"].as_str().is_some());
     assert!(body["resources"]["pid"].as_u64().is_some());
     assert!(!body.to_string().contains(KEY));
+    assert!(!body.to_string().contains(_dir.path().to_str().unwrap()));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -11,6 +11,103 @@ use std::{
     time::Duration,
 };
 
+const PORTAL_GET_ATTEMPTS: u32 = 3;
+const PORTAL_RETRY_AFTER_LIMIT: Duration = Duration::from_secs(30);
+
+fn portal_client() -> Result<reqwest::blocking::Client> {
+    Ok(reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(90))
+        .connect_timeout(Duration::from_secs(15))
+        .retry(reqwest::retry::never())
+        .build()?)
+}
+
+fn portal_retry_delay(headers: &reqwest::header::HeaderMap, fallback: Duration) -> Duration {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(fallback)
+        .min(PORTAL_RETRY_AFTER_LIMIT)
+}
+
+fn wait_portal_retry(delay: Duration, check: &Check<'_>) -> Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        check()?;
+        let remaining = delay.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        std::thread::sleep(remaining.min(Duration::from_millis(100)));
+    }
+}
+
+/// Retry only idempotent GET transport failures and explicitly transient status
+/// codes. Response parsing and publication validation stay outside this loop.
+fn portal_get(
+    client: &reqwest::blocking::Client,
+    request: reqwest::blocking::RequestBuilder,
+    check: &Check<'_>,
+) -> Result<reqwest::blocking::Response> {
+    portal_get_with_backoff(client, request, check, Duration::from_secs(1))
+}
+
+fn portal_get_with_backoff(
+    client: &reqwest::blocking::Client,
+    request: reqwest::blocking::RequestBuilder,
+    check: &Check<'_>,
+    initial_delay: Duration,
+) -> Result<reqwest::blocking::Response> {
+    let request = request.build()?;
+    ensure!(
+        request.method() == reqwest::Method::GET,
+        "portal retries require GET"
+    );
+    for attempt in 1..=PORTAL_GET_ATTEMPTS {
+        check()?;
+        let outcome = client.execute(request.try_clone().context("portal GET cannot be cloned")?);
+        check()?;
+        let fallback = initial_delay.saturating_mul(1 << (attempt - 1));
+        let delay = match outcome {
+            Ok(response) => {
+                let status = response.status();
+                if !matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504)
+                    || attempt == PORTAL_GET_ATTEMPTS
+                {
+                    return Ok(response.error_for_status()?);
+                }
+                let delay = portal_retry_delay(response.headers(), fallback);
+                tracing::warn!(attempt, status=%status, retry_after_ms=delay.as_millis(), "retrying transient portal GET");
+                delay
+            }
+            Err(error) => {
+                let error = error.without_url();
+                if (!error.is_timeout() && !error.is_connect()) || attempt == PORTAL_GET_ATTEMPTS {
+                    let failure = if error.is_timeout() {
+                        "timed out"
+                    } else if error.is_connect() {
+                        "connection failed"
+                    } else {
+                        "request failed"
+                    };
+                    let context = format!(
+                        "portal GET {} {failure} on attempt {attempt}/{PORTAL_GET_ATTEMPTS}: {error}",
+                        request.url().path()
+                    );
+                    return Err(error).context(context);
+                }
+                let delay = fallback.min(PORTAL_RETRY_AFTER_LIMIT);
+                tracing::warn!(attempt, endpoint=request.url().path(), error=%error, retry_after_ms=delay.as_millis(), "retrying portal GET transport failure");
+                delay
+            }
+        };
+        wait_portal_retry(delay, check)?;
+    }
+    anyhow::bail!("portal GET retry budget exhausted")
+}
+
 const MAPPING: &str = include_str!("../resources/csv_column_mapping.json");
 pub type Check<'a> = dyn Fn() -> Result<()> + Send + Sync + 'a;
 
@@ -253,22 +350,28 @@ fn bounded_json<T: serde::de::DeserializeOwned>(
     }
     Ok(serde_json::from_slice(&bytes)?)
 }
-fn metadata(client: &reqwest::blocking::Client, dataset: &str) -> Result<Value> {
-    let response = client
-        .get(&specification(dataset)?.metadata_url)
-        .send()?
-        .error_for_status()?;
-    let value = bounded_json(response, 8 * 1024 * 1024, &|| Ok(()))?;
+fn metadata(client: &reqwest::blocking::Client, dataset: &str, check: &Check<'_>) -> Result<Value> {
+    let response = portal_get(
+        client,
+        client.get(&specification(dataset)?.metadata_url),
+        check,
+    )?;
+    let value = bounded_json(response, 8 * 1024 * 1024, check)?;
     validate_metadata(dataset, &value)?;
     Ok(value)
 }
-fn portal_count(client: &reqwest::blocking::Client, dataset: &str) -> Result<u64> {
-    portal_count_filtered(client, dataset, None)
+fn portal_count(
+    client: &reqwest::blocking::Client,
+    dataset: &str,
+    check: &Check<'_>,
+) -> Result<u64> {
+    portal_count_filtered(client, dataset, None, check)
 }
 fn portal_count_filtered(
     client: &reqwest::blocking::Client,
     dataset: &str,
     filter: Option<&str>,
+    check: &Check<'_>,
 ) -> Result<u64> {
     let id = specification(dataset)?.dataset_id;
     let mut request = client
@@ -277,8 +380,8 @@ fn portal_count_filtered(
     if let Some(filter) = filter {
         request = request.query(&[("$where", filter)]);
     }
-    let response = request.send()?.error_for_status()?;
-    let count: Value = bounded_json(response, 65536, &|| Ok(()))?;
+    let response = portal_get(client, request, check)?;
+    let count: Value = bounded_json(response, 65536, check)?;
     let count = count[0]["count"]
         .as_str()
         .context("portal count missing")?
@@ -378,13 +481,10 @@ pub fn download_source_guarded(
     check()?;
     let acquisition_started_at = chrono::Utc::now();
     let spec = specification(dataset)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(30))
-        .build()?;
-    let before = metadata(&client, dataset)?;
+    let client = portal_client()?;
+    let before = metadata(&client, dataset, check)?;
     check()?;
-    let count_before = portal_count(&client, dataset)?;
+    let count_before = portal_count(&client, dataset, check)?;
     check()?;
     let sources = directory.join("sources");
     fs::create_dir_all(&sources)?;
@@ -405,9 +505,9 @@ pub fn download_source_guarded(
     let mut published_manifest = false;
     let result = (|| {
         let (headers, rows) = inspect_csv_guarded(temporary.path(), dataset, check)?;
-        let after = metadata(&client, dataset)?;
+        let after = metadata(&client, dataset, check)?;
         check()?;
-        let count_after = portal_count(&client, dataset)?;
+        let count_after = portal_count(&client, dataset, check)?;
         check()?;
         let receipt = json!({"manifest_version":1,"dataset":dataset,"dataset_id":spec.dataset_id,"url":spec.csv_download_url,"metadata_url":spec.metadata_url,"source_revision_before":before["rowsUpdatedAt"],"source_revision_after":after["rowsUpdatedAt"],"source_revision":after["rowsUpdatedAt"],"stable_source_revision":before["rowsUpdatedAt"]==after["rowsUpdatedAt"],"profiling_only":false,"expected_rows_before":count_before,"expected_rows_after":count_after,"expected_rows":count_after,"headers":headers,"rows":rows,"bytes":bytes,"sha256":file_sha256_guarded(temporary.path(),check)?,"http_content_length":content_length,"mapping_sha256":mapping_sha256(),"mapping_baseline":"c08b80a","downloaded_at":chrono::Utc::now().to_rfc3339()});
         let mut receipt = receipt;
@@ -480,6 +580,22 @@ pub fn download_api_window_source(
         format!("crash_date >= '{start}T00:00:00' AND crash_date < '{exclusive}T00:00:00'");
     download_api_filtered_source(directory, dataset, Some(&filter), check)
 }
+
+/// Decode source strings while retaining exact numeric and point JSON tokens.
+fn api_csv_value(value: Option<&serde_json::value::RawValue>) -> Result<String> {
+    let Some(value) = value else {
+        return Ok(String::new());
+    };
+    let token = value.get();
+    if token == "null" {
+        Ok(String::new())
+    } else if token.starts_with('"') {
+        Ok(serde_json::from_str(token)?)
+    } else {
+        Ok(token.to_owned())
+    }
+}
+
 fn download_api_filtered_source(
     directory: &Path,
     dataset: &str,
@@ -489,13 +605,10 @@ fn download_api_filtered_source(
     check()?;
     let acquisition_started_at = chrono::Utc::now();
     let spec = specification(dataset)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .connect_timeout(std::time::Duration::from_secs(30))
-        .build()?;
-    let before = metadata(&client, dataset)?;
+    let client = portal_client()?;
+    let before = metadata(&client, dataset, check)?;
     check()?;
-    let count_before = portal_count_filtered(&client, dataset, filter)?;
+    let count_before = portal_count_filtered(&client, dataset, filter, check)?;
     check()?;
     let sources = directory.join("sources");
     fs::create_dir_all(&sources)?;
@@ -535,8 +648,9 @@ fn download_api_filtered_source(
             if let Some(filter) = filter {
                 request = request.query(&[("$where", filter)]);
             }
-            let response = request.send()?.error_for_status()?;
-            let page: Vec<Value> = bounded_json(response, 32 * 1024 * 1024, check)?;
+            let response = portal_get(&client, request, check)?;
+            let page: Vec<BTreeMap<String, Box<serde_json::value::RawValue>>> =
+                bounded_json(response, 32 * 1024 * 1024, check)?;
             if page.is_empty() {
                 break;
             }
@@ -546,12 +660,8 @@ fn download_api_filtered_source(
                 let values: Vec<String> = spec
                     .columns
                     .iter()
-                    .map(|c| match &record[&c.api_field] {
-                        Value::Null => String::new(),
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    })
-                    .collect();
+                    .map(|c| api_csv_value(record.get(&c.api_field).map(AsRef::as_ref)))
+                    .collect::<Result<_>>()?;
                 writer.write_record(&values)?;
             }
             offset += page.len() as u64;
@@ -563,9 +673,9 @@ fn download_api_filtered_source(
         writer.flush()?;
         writer.get_ref().sync_all()?;
         drop(writer);
-        let after = metadata(&client, dataset)?;
+        let after = metadata(&client, dataset, check)?;
         check()?;
-        let count_after = portal_count_filtered(&client, dataset, filter)?;
+        let count_after = portal_count_filtered(&client, dataset, filter, check)?;
         check()?;
         ensure!(
             before["rowsUpdatedAt"] == after["rowsUpdatedAt"]
@@ -633,6 +743,233 @@ mod tests {
             spec.columns
                 .iter()
                 .any(|c| c.csv_header != c.api_field.to_uppercase())
+        );
+    }
+}
+
+#[cfg(test)]
+mod portal_retry_tests {
+    use super::*;
+    use std::{
+        net::{TcpListener, TcpStream},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        thread,
+        time::Instant,
+    };
+
+    fn server(
+        requests: usize,
+        respond: impl Fn(usize, TcpStream) + Send + Sync + 'static,
+    ) -> (String, Arc<AtomicUsize>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let received = Arc::new(AtomicUsize::new(0));
+        let count = received.clone();
+        let respond = Arc::new(respond);
+        let worker = thread::spawn(move || {
+            let started = Instant::now();
+            let mut responses = Vec::new();
+            while count.load(Ordering::Acquire) < requests
+                && started.elapsed() < Duration::from_secs(5)
+            {
+                let (mut stream, _) = match listener.accept() {
+                    Ok(connection) => connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                };
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                while !request.ends_with(b"\r\n\r\n") {
+                    assert!(request.len() < 16384);
+                    stream.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                let index = count.fetch_add(1, Ordering::AcqRel);
+                let respond = respond.clone();
+                responses.push(thread::spawn(move || respond(index, stream)));
+            }
+            for response in responses {
+                response.join().unwrap();
+            }
+        });
+        (format!("http://{address}/source.json"), received, worker)
+    }
+
+    fn reply(stream: &mut TcpStream, status: u16, headers: &str) {
+        let _ = stream.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Length: 2\r\nConnection: close\r\n{headers}\r\n{{}}").as_bytes());
+    }
+
+    #[test]
+    fn transient_status_recovers_without_restarting_the_source_request() {
+        for transient in [429, 500, 502, 503, 504] {
+            let (url, received, worker) = server(2, move |index, mut stream| {
+                reply(
+                    &mut stream,
+                    if index == 0 { transient } else { 200 },
+                    "Retry-After: 0\r\n",
+                );
+            });
+            let client = portal_client().unwrap();
+            let response = portal_get_with_backoff(
+                &client,
+                client.get(url),
+                &|| Ok(()),
+                Duration::from_millis(5),
+            )
+            .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            worker.join().unwrap();
+            assert_eq!(received.load(Ordering::Acquire), 2);
+        }
+    }
+
+    #[test]
+    fn fatal_client_status_is_not_retried() {
+        let (url, received, worker) = server(1, |_, mut stream| reply(&mut stream, 404, ""));
+        let client = portal_client().unwrap();
+        let checks = AtomicUsize::new(0);
+        let check = || {
+            checks.fetch_add(1, Ordering::AcqRel);
+            Ok(())
+        };
+        let error =
+            portal_get_with_backoff(&client, client.get(url), &check, Duration::from_millis(5))
+                .unwrap_err();
+        worker.join().unwrap();
+        assert_eq!(
+            error.downcast_ref::<reqwest::Error>().unwrap().status(),
+            Some(reqwest::StatusCode::NOT_FOUND)
+        );
+        assert_eq!(received.load(Ordering::Acquire), 1);
+        assert_eq!(checks.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn transient_attempt_budget_is_finite() {
+        let (url, received, worker) = server(3, |_, mut stream| {
+            reply(&mut stream, 503, "Retry-After: 0\r\n")
+        });
+        let client = portal_client().unwrap();
+        let error = portal_get_with_backoff(
+            &client,
+            client.get(url),
+            &|| Ok(()),
+            Duration::from_millis(5),
+        )
+        .unwrap_err();
+        worker.join().unwrap();
+        assert_eq!(
+            error.downcast_ref::<reqwest::Error>().unwrap().status(),
+            Some(reqwest::StatusCode::SERVICE_UNAVAILABLE)
+        );
+        assert_eq!(received.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn cancellation_interrupts_retry_after_backoff() {
+        let (url, received, worker) = server(1, |_, mut stream| {
+            reply(&mut stream, 429, "Retry-After: 999\r\n")
+        });
+        let client = portal_client().unwrap();
+        let checks = AtomicUsize::new(0);
+        let check = || {
+            ensure!(
+                checks.fetch_add(1, Ordering::AcqRel) < 3,
+                "fixture cancelled during backoff"
+            );
+            Ok(())
+        };
+        let started = Instant::now();
+        let error =
+            portal_get_with_backoff(&client, client.get(url), &check, Duration::from_millis(5))
+                .unwrap_err();
+        worker.join().unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("fixture cancelled during backoff")
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_eq!(received.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn send_timeouts_recover_on_a_later_attempt() {
+        let (url, received, worker) = server(2, |index, mut stream| {
+            if index == 0 {
+                thread::sleep(Duration::from_millis(1400));
+            }
+            reply(&mut stream, 200, "");
+        });
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let response = portal_get_with_backoff(
+            &client,
+            client.get(url),
+            &|| Ok(()),
+            Duration::from_millis(5),
+        )
+        .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        worker.join().unwrap();
+        assert_eq!(received.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn exhausted_timeouts_preserve_actionable_context_without_query_values() {
+        let (url, received, worker) = server(3, |_, mut stream| {
+            thread::sleep(Duration::from_millis(1400));
+            reply(&mut stream, 200, "");
+        });
+        let client = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let error = portal_get_with_backoff(
+            &client,
+            client.get(format!("{url}?token=private-fixture-value")),
+            &|| Ok(()),
+            Duration::from_millis(5),
+        )
+        .unwrap_err();
+        worker.join().unwrap();
+        let message = error.to_string();
+        assert!(
+            message.contains("/source.json timed out on attempt 3/3"),
+            "{message}"
+        );
+        assert!(!format!("{error:#}").contains("private-fixture-value"));
+        assert!(error.downcast_ref::<reqwest::Error>().unwrap().is_timeout());
+        assert_eq!(received.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn retry_after_is_an_integer_bounded_to_thirty_seconds() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, "999".parse().unwrap());
+        assert_eq!(
+            portal_retry_delay(&headers, Duration::from_secs(2)),
+            Duration::from_secs(30)
+        );
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "not-an-integer".parse().unwrap(),
+        );
+        assert_eq!(
+            portal_retry_delay(&headers, Duration::from_secs(2)),
+            Duration::from_secs(2)
         );
     }
 }
@@ -927,6 +1264,35 @@ fn canonical_decimal(value: &str) -> Result<String> {
         number
     })
 }
+/// Retain numeric JSON tokens before decimal canonicalization. Parsing these
+/// through `Value::Number` first would round coordinates to binary floating point.
+fn raw_point_coordinates(value: &str) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct Point<'a> {
+        #[serde(rename = "type")]
+        kind: String,
+        #[serde(borrow)]
+        coordinates: [&'a serde_json::value::RawValue; 2],
+    }
+    let point: Point<'_> = serde_json::from_str(value)?;
+    ensure!(
+        point.kind == "Point",
+        "source point must be a GeoJSON Point"
+    );
+    point
+        .coordinates
+        .iter()
+        .map(|coordinate| {
+            let token = coordinate.get();
+            if token.starts_with('"') {
+                Ok(serde_json::from_str(token)?)
+            } else {
+                Ok(token.to_owned())
+            }
+        })
+        .collect()
+}
+
 /// Preserve the deployed archival point representation independently of Chicago
 /// latitude/longitude validation and the geometry used for spatial selection.
 pub fn canonical_source_point(value: &str) -> Result<String> {
@@ -935,26 +1301,7 @@ pub fn canonical_source_point(value: &str) -> Result<String> {
     }
     let value = value.trim();
     let coordinates = if value.starts_with('{') {
-        let point: Value = serde_json::from_str(value)?;
-        ensure!(
-            point["type"] == "Point",
-            "source point must be a GeoJSON Point"
-        );
-        let coordinates = point["coordinates"]
-            .as_array()
-            .context("source point coordinates missing")?;
-        ensure!(
-            coordinates.len() == 2,
-            "source point requires exactly two coordinates"
-        );
-        coordinates
-            .iter()
-            .map(|value| match value {
-                Value::String(value) => Ok(value.clone()),
-                Value::Number(value) => Ok(value.to_string()),
-                _ => anyhow::bail!("source point coordinate must be numeric"),
-            })
-            .collect::<Result<Vec<_>>>()?
+        raw_point_coordinates(value)?
     } else {
         ensure!(
             value
@@ -1041,6 +1388,40 @@ mod point_tests {
         let json=canonical_source_point(r#"{"type":"Point","coordinates":["-8.760000000000001234e1","4.180000000000000987e1"]}"#).unwrap();
         assert_eq!(wkt, json);
         assert_eq!(wkt, "POINT (-87.60000000000001234 41.80000000000000987)");
+    }
+    #[test]
+    fn numeric_geojson_tokens_keep_distinctions_beyond_binary_float_precision() {
+        let wkt =
+            canonical_source_point("POINT (-87.60000000000001234 41.80000000000000987)").unwrap();
+        let json = canonical_source_point(
+            r#"{"type":"Point","coordinates":[-87.60000000000001234,41.80000000000000987]}"#,
+        )
+        .unwrap();
+        assert_eq!(wkt, json);
+        let changed = canonical_source_point(
+            r#"{"type":"Point","coordinates":[-87.60000000000001235,41.80000000000000987]}"#,
+        )
+        .unwrap();
+        assert_ne!(json, changed);
+    }
+    #[test]
+    fn api_page_fields_preserve_exact_numeric_points_and_decode_strings_and_nulls() {
+        let raw = r#"[{"location":{"type":"Point","coordinates":[-87.60000000000001234,41.80000000000000987]},"number":87.60000000000001234,"text":"a\\b\nc","absent":null}]"#;
+        let page: Vec<BTreeMap<String, Box<serde_json::value::RawValue>>> =
+            serde_json::from_str(raw).unwrap();
+        let field = |name: &str| api_csv_value(page[0].get(name).map(AsRef::as_ref)).unwrap();
+        assert_eq!(
+            field("location"),
+            r#"{"type":"Point","coordinates":[-87.60000000000001234,41.80000000000000987]}"#
+        );
+        assert_eq!(
+            canonical_source_point(&field("location")).unwrap(),
+            "POINT (-87.60000000000001234 41.80000000000000987)"
+        );
+        assert_eq!(field("number"), "87.60000000000001234");
+        assert_eq!(field("text"), "a\\b\nc");
+        assert_eq!(field("absent"), "");
+        assert_eq!(field("missing"), "");
     }
     #[test]
     fn source_points_keep_archival_coordinates_and_canonical_zero() {

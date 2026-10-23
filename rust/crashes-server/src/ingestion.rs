@@ -4,6 +4,7 @@ use crate::{
     sources::{self, PublicationMode, VerifiedSource},
 };
 use anyhow::{Context, Result, ensure};
+use chrono::Datelike;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path};
 
@@ -30,6 +31,63 @@ const STRING_NUMBERS: &[&str] = &[
     "vehicle_id",
     "cmv_id",
 ];
+const POINT_SCRATCH_PREFIX: &str = "point-preservation-";
+const POINT_SCRATCH_RANDOM_CHARS: usize = 6;
+
+/// Reclaim interrupted point CSV copies while holding the exclusive SQL lane.
+/// Run after opening the database owner, before starting the background worker.
+pub fn cleanup_point_scratch(db: &Database) -> Result<usize> {
+    db.with_session(|session| {
+        let setting = session.query("SELECT current_setting('temp_directory') path", &[])?;
+        let scratch = Path::new(
+            setting[0]["path"]
+                .as_str()
+                .context("owner scratch directory missing")?,
+        );
+        std::fs::create_dir_all(scratch)?;
+        let mut removed = 0;
+        for entry in std::fs::read_dir(scratch)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(suffix) = name
+                .to_str()
+                .and_then(|name| name.strip_prefix(POINT_SCRATCH_PREFIX))
+            else {
+                continue;
+            };
+            ensure!(
+                suffix.len() == POINT_SCRATCH_RANDOM_CHARS
+                    && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric()),
+                "unrecognized point scratch directory name"
+            );
+            ensure!(
+                entry.file_type()?.is_dir(),
+                "point scratch path must be a directory, not a symlink or file"
+            );
+            // Check every member before removing anything. Do not follow links or
+            // delete unknown content, including DuckDB's own spill structures.
+            for member in std::fs::read_dir(entry.path())? {
+                let member = member?;
+                ensure!(
+                    member.file_type()?.is_file()
+                        && matches!(
+                            member.file_name().to_str(),
+                            Some(
+                                "location.differences.csv"
+                                    | "location.preserved.csv"
+                                    | "geocoded_column.differences.csv"
+                                    | "geocoded_column.preserved.csv"
+                            )
+                        ),
+                    "point scratch directory contains an unknown entry or symlink"
+                );
+            }
+            std::fs::remove_dir_all(entry.path())?;
+            removed += 1;
+        }
+        Ok(removed)
+    })
+}
 
 fn configured_limit(name: &str, default: u64) -> Result<u64> {
     match std::env::var(name) {
@@ -38,6 +96,17 @@ fn configured_limit(name: &str, default: u64) -> Result<u64> {
             .with_context(|| format!("{name} must be a nonnegative integer")),
         Err(std::env::VarError::NotPresent) => Ok(default),
         Err(error) => Err(error).with_context(|| format!("invalid {name} configuration")),
+    }
+}
+
+/// Full replay defaults to bulk acquisition with the existing API fallback.
+/// Operators can require ordered API acquisition when bulk exports lag changes.
+pub(crate) fn full_source_uses_api(config: &Value) -> Result<bool> {
+    match config.get("source_mode") {
+        None => Ok(false),
+        Some(Value::String(mode)) if mode == "bulk" => Ok(false),
+        Some(Value::String(mode)) if mode == "api" => Ok(true),
+        _ => anyhow::bail!("source_mode must be api or bulk"),
     }
 }
 
@@ -109,7 +178,7 @@ pub fn schema_columns(dataset: &str) -> Result<BTreeMap<String, String>> {
     fields.insert("updated_at".into(), "TIMESTAMP".into());
     Ok(fields)
 }
-fn convert(expression: &str, field: &str, kind: &str) -> String {
+fn convert(expression: &str, field: &str, kind: &str, current_year: i32) -> String {
     if kind == "VARCHAR" {
         return format!(
             "CASE WHEN regexp_full_match(trim({expression}), '(?i:NULL|N/A|UNKNOWN|UNK|)') THEN NULL ELSE regexp_replace(trim({expression}), '\\s+', ' ', 'g') END"
@@ -129,7 +198,7 @@ fn convert(expression: &str, field: &str, kind: &str) -> String {
         "latitude" => format!("{number} BETWEEN 41.6 AND 42.1"),
         "longitude" => format!("{number} BETWEEN -87.95 AND -87.5"),
         "age" => format!("{number} BETWEEN 0 AND 120"),
-        "vehicle_year" => format!("{number} BETWEEN 1900 AND 2025"),
+        "vehicle_year" => format!("{number} BETWEEN 1900 AND {}", current_year + 1),
         _ => format!("isfinite({number})"),
     };
     format!("CASE WHEN {condition} THEN {number} ELSE NULL END")
@@ -168,8 +237,11 @@ fn stage(session: &Session, source: &VerifiedSource, check: &sources::Check<'_>)
         .as_ref()
         .map_or(source.path.as_path(), |file| file.path());
     let path = input.to_str().context("source path must be UTF-8")?;
-    session.execute(&format!("CREATE TEMP VIEW {} AS SELECT * FROM read_csv({},header=true,all_varchar=true,normalize_names=false,ignore_errors=false,strict_mode=true,buffer_size=4194304,maximum_line_size=262144)",sources::identifier(&raw),sources::literal(path)),&[])?;
+    session.execute(&format!("CREATE TEMP VIEW {} AS SELECT * FROM read_csv({},header=true,all_varchar=true,normalize_names=false,delim=',',quote='\"',escape='\"',nullstr='',ignore_errors=false,strict_mode=true,buffer_size=4194304,maximum_line_size=262144)",sources::identifier(&raw),sources::literal(path)),&[])?;
     let fields = schema_columns(dataset)?;
+    let current_year = chrono::Utc::now()
+        .with_timezone(&chrono_tz::America::Chicago)
+        .year();
     let mut expressions = Vec::new();
     for c in sources::specification(dataset)?.columns {
         expressions.push(format!(
@@ -177,7 +249,8 @@ fn stage(session: &Session, source: &VerifiedSource, check: &sources::Check<'_>)
             convert(
                 &sources::identifier(&c.csv_header),
                 &c.api_field,
-                &fields[&c.api_field]
+                &fields[&c.api_field],
+                current_year,
             ),
             sources::identifier(&c.api_field)
         ));
@@ -304,7 +377,156 @@ fn fatalities(session: &Session, stage: &str, operation: &str) -> Result<(String
         json!({"missing_person_id":missing,"conflicting_person_id":conflict,"identical_duplicate_person_id":identical,"rejected_rows":rejected}),
     ))
 }
-fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode) -> Result<Value> {
+/// Keep the original archival text when source transports describe the same
+/// exact decimal point. Only differing matched points cross the CSV boundary;
+/// Rust holds one narrow record at a time, and invalid points remain changes.
+fn preserve_equivalent_points(
+    session: &Session,
+    stage: &str,
+    dataset: &str,
+    max_rows: u64,
+    check: &sources::Check<'_>,
+) -> Result<()> {
+    let points: Vec<_> = sources::specification(dataset)?
+        .columns
+        .into_iter()
+        .filter(|column| column.data_type == "point")
+        .collect();
+    if points.is_empty() {
+        return Ok(());
+    }
+    let scratch = session.query("SELECT current_setting('temp_directory') path", &[])?;
+    let scratch = Path::new(
+        scratch[0]["path"]
+            .as_str()
+            .context("owner scratch directory missing")?,
+    );
+    std::fs::create_dir_all(scratch)?;
+    let temporary = tempfile::Builder::new()
+        .prefix(POINT_SCRATCH_PREFIX)
+        .rand_bytes(POINT_SCRATCH_RANDOM_CHARS)
+        .tempdir_in(scratch)?;
+    let keys = primary_keys(dataset);
+    let table = table_name(dataset)?;
+    let equality = keys
+        .iter()
+        .map(|key| format!("t.{0}=s.{0}", sources::identifier(key)))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let projection = keys
+        .iter()
+        .map(|key| format!("s.{}", sources::identifier(key)))
+        .collect::<Vec<_>>()
+        .join(",");
+    for point in points {
+        check()?;
+        let field = sources::identifier(&point.api_field);
+        let differences = temporary
+            .path()
+            .join(format!("{}.differences.csv", point.api_field));
+        let preserved = temporary
+            .path()
+            .join(format!("{}.preserved.csv", point.api_field));
+        session.execute(&format!("COPY(SELECT {projection},t.{field} stored_point,s.{field} staged_point FROM {stage} s JOIN {table} t ON {equality} WHERE t.{field} IS NOT NULL AND s.{field} IS NOT NULL AND t.{field} IS DISTINCT FROM s.{field}) TO {}(FORMAT CSV,HEADER true,DELIMITER ',',QUOTE '\"',ESCAPE '\"',NULL '')", sources::literal(differences.to_str().context("point comparison path must be UTF-8")?)), &[])?;
+        let mut reader = csv::ReaderBuilder::new()
+            .delimiter(b',')
+            .quote(b'"')
+            .double_quote(true)
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_path(&differences)?;
+        let mut writer = csv::WriterBuilder::new()
+            .delimiter(b',')
+            .quote(b'"')
+            .double_quote(true)
+            .terminator(csv::Terminator::Any(b'\n'))
+            .from_path(&preserved)?;
+        writer.write_record(
+            keys.iter()
+                .copied()
+                .chain(std::iter::once(point.api_field.as_str())),
+        )?;
+        let mut record = csv::StringRecord::new();
+        let mut rows = 0_u64;
+        let mut preserved_rows = 0_u64;
+        while reader.read_record(&mut record)? {
+            check()?;
+            rows += 1;
+            ensure!(
+                rows <= max_rows,
+                "point comparison exceeds staged identity count"
+            );
+            let stored = record.get(keys.len()).context("stored point missing")?;
+            let staged = record.get(keys.len() + 1).context("staged point missing")?;
+            let equivalent = match (
+                sources::canonical_source_point(stored),
+                sources::canonical_source_point(staged),
+            ) {
+                (Ok(stored), Ok(staged)) => stored == staged,
+                _ => false,
+            };
+            if equivalent {
+                writer.write_record(
+                    record
+                        .iter()
+                        .take(keys.len())
+                        .chain(std::iter::once(stored)),
+                )?;
+                preserved_rows += 1;
+            }
+        }
+        writer.flush()?;
+        drop(writer);
+        drop(reader);
+        if preserved_rows == 0 {
+            continue;
+        }
+        check()?;
+        restore_preserved_points(session, stage, dataset, &point.api_field, &preserved)?;
+    }
+    Ok(())
+}
+
+fn restore_preserved_points(
+    session: &Session,
+    stage: &str,
+    dataset: &str,
+    point: &str,
+    preserved: &Path,
+) -> Result<()> {
+    let keys = primary_keys(dataset);
+    let columns = keys
+        .iter()
+        .copied()
+        .chain(std::iter::once(point))
+        .map(|name| format!("{}:'VARCHAR'", sources::literal(name)))
+        .collect::<Vec<_>>()
+        .join(",");
+    // Both writers use comma, doubled quotes and LF. A WKT-only prefix must
+    // never persuade the sniffer to disable quoting before later JSON rows.
+    session.execute(&format!("CREATE TEMP TABLE _ingest_preserved_points AS SELECT * FROM read_csv({},auto_detect=false,header=true,columns={{{columns}}},delim=',',quote='\"',escape='\"',new_line='\\n',nullstr='',allow_quoted_nulls=false,strict_mode=true,ignore_errors=false,null_padding=false,buffer_size=4194304,maximum_line_size=262144)", sources::literal(preserved.to_str().context("point preservation path must be UTF-8")?)), &[])?;
+    let matched = keys
+        .iter()
+        .map(|key| format!("s.{0}=p.{0}", sources::identifier(key)))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let field = sources::identifier(point);
+    session.execute(
+        &format!(
+            "UPDATE {stage} s SET {field}=p.{field} FROM _ingest_preserved_points p WHERE {matched}"
+        ),
+        &[],
+    )?;
+    session.execute("DROP TABLE _ingest_preserved_points", &[])?;
+    Ok(())
+}
+
+fn publish(
+    session: &Session,
+    stage: &str,
+    dataset: &str,
+    mode: PublicationMode,
+    check: &sources::Check<'_>,
+) -> Result<Value> {
     let table = table_name(dataset)?;
     let exists = count(
         session,
@@ -337,11 +559,14 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
     }
     let schema = schema_columns(dataset)?;
     let columns: Vec<_> = schema.keys().map(|c| sources::identifier(c)).collect();
-    let compared: Vec<_> = schema
-        .keys()
-        .filter(|c| !["created_at", "updated_at", "geometry"].contains(&c.as_str()))
-        .map(|c| sources::identifier(c))
+    // Imported fields absent from the current portal schema have no replacement
+    // value in staging. Preserve those historical values on matching identities.
+    let mapped: Vec<_> = sources::specification(dataset)?
+        .columns
+        .into_iter()
+        .map(|column| column.api_field)
         .collect();
+    let compared: Vec<_> = mapped.iter().map(|c| sources::identifier(c)).collect();
     let equality = primary_keys(dataset)
         .iter()
         .map(|c| format!("t.{0}=s.{0}", sources::identifier(c)))
@@ -351,6 +576,7 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
     if dataset == "fatalities" {
         session.execute(&format!("DELETE FROM {stage} WHERE person_id IN (SELECT person_id FROM {table} GROUP BY person_id HAVING count(*)>1)"),&[])?;
     }
+    preserve_equivalent_points(session, stage, dataset, accepted, check)?;
     let changed_predicate = format!(
         "row({}) IS DISTINCT FROM row({})",
         compared
@@ -376,14 +602,20 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
             "SELECT count(*) n FROM {stage} s JOIN {table} t ON {equality} WHERE {changed_predicate}"
         ),
     )?;
-    let assignments = schema
-        .keys()
-        .filter(|c| c.as_str() != "created_at")
+    let assignments = mapped
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once("updated_at"))
+        .chain(schema.contains_key("geometry").then_some("geometry"))
         .map(|c| format!("{0}=s.{0}", sources::identifier(c)))
         .collect::<Vec<_>>()
         .join(",");
-    session.execute(&format!("UPDATE {table} t SET {assignments} FROM {stage} s WHERE {equality} AND {changed_predicate}"),&[])?;
-    session.execute(&format!("INSERT INTO {table} ({}) SELECT {} FROM {stage} s WHERE NOT EXISTS(SELECT 1 FROM {table} t WHERE {equality})",columns.join(","),columns.iter().map(|c|format!("s.{c}")).collect::<Vec<_>>().join(",")),&[])?;
+    if changed > 0 {
+        session.execute(&format!("UPDATE {table} t SET {assignments} FROM {stage} s WHERE {equality} AND {changed_predicate}"),&[])?;
+    }
+    if inserted > 0 {
+        session.execute(&format!("INSERT INTO {table} ({}) SELECT {} FROM {stage} s WHERE NOT EXISTS(SELECT 1 FROM {table} t WHERE {equality})",columns.join(","),columns.iter().map(|c|format!("s.{c}")).collect::<Vec<_>>().join(",")),&[])?;
+    }
     session.execute(&format!("DROP TABLE {stage}"), &[])?;
     Ok(
         json!({"inserted_rows":inserted,"changed_rows":changed,"unchanged_rows":accepted.saturating_sub(inserted+changed),"accepted_rows":accepted}),
@@ -391,8 +623,8 @@ fn publish(session: &Session, stage: &str, dataset: &str, mode: PublicationMode)
 }
 
 /// Publishes all supplied sources and revision checkpoints in one owner transaction.
-/// Production replays full stable snapshots daily so historical corrections are
-/// included; source absence never silently deletes existing accepted records.
+/// Full snapshots and bounded event-date windows use the same merge contract;
+/// source absence never silently deletes existing accepted records.
 pub fn publish_sources(
     db: &Database,
     directory: &Path,
@@ -469,7 +701,7 @@ pub fn publish_sources_guarded(
         for source in &sources {
             let stage = stage(session,source,check)?;
             let (stage,rejections) = if source.dataset=="fatalities" {fatalities(session,&stage,operation_id)?} else {validate_core(session,&stage,&source.dataset)?;(stage,json!({"rejected_rows":0}))};
-            let mut result = publish(session,&stage,&source.dataset,mode)?;
+            let mut result = publish(session,&stage,&source.dataset,mode,check)?;
             changed_rows+=result["inserted_rows"].as_u64().unwrap_or(0)+result["changed_rows"].as_u64().unwrap_or(0);
             ensure!(!existing_targets||changed_rows<=max_changed,"publication changes exceed INGESTION_MAX_CHANGED_ROWS={max_changed}; transaction rolled back");
             result["identity_rejections"]=rejections;
@@ -502,10 +734,10 @@ mod tests {
         assert_eq!(fields["crash_date"], "TIMESTAMP");
     }
     #[test]
-    fn sanitation_preserves_audited_year_age_and_coordinate_policy() {
-        assert!(convert("v", "vehicle_year", "INTEGER").contains("1900 AND 2025"));
-        assert!(convert("v", "age", "INTEGER").contains("0 AND 120"));
-        assert!(convert("v", "longitude", "DOUBLE").contains("-87.95 AND -87.5"));
+    fn sanitation_preserves_age_and_coordinate_policy_and_advances_model_years() {
+        assert!(convert("v", "vehicle_year", "INTEGER", 2026).contains("1900 AND 2027"));
+        assert!(convert("v", "age", "INTEGER", 2026).contains("0 AND 120"));
+        assert!(convert("v", "longitude", "DOUBLE", 2026).contains("-87.95 AND -87.5"));
     }
     #[test]
     fn missing_acquisition_proof_cannot_fabricate_a_watermark() {
@@ -514,6 +746,15 @@ mod tests {
                 .unwrap()
                 .is_null()
         );
+    }
+    #[test]
+    fn full_source_mode_defaults_to_bulk_and_rejects_unknown_values() {
+        assert!(!full_source_uses_api(&json!({})).unwrap());
+        assert!(!full_source_uses_api(&json!({"source_mode":"bulk"})).unwrap());
+        assert!(full_source_uses_api(&json!({"source_mode":"api"})).unwrap());
+        for value in [json!("typo"), json!(true), Value::Null] {
+            assert!(full_source_uses_api(&json!({"source_mode":value})).is_err());
+        }
     }
 }
 
@@ -559,6 +800,117 @@ mod native_tests {
             &manifest,
         )
         .unwrap();
+    }
+    #[test]
+    fn point_scratch_cleanup_reclaims_abandoned_copies_without_touching_native_spill() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let spill = temp.path().join("spill");
+        let orphan = tempfile::Builder::new()
+            .prefix(POINT_SCRATCH_PREFIX)
+            .rand_bytes(POINT_SCRATCH_RANDOM_CHARS)
+            .tempdir_in(&spill)
+            .unwrap()
+            .keep();
+        std::fs::write(orphan.join("location.differences.csv"), "interrupted copy").unwrap();
+        std::fs::write(orphan.join("location.preserved.csv"), "interrupted copy").unwrap();
+        let unrelated = spill.join("unrelated-directory");
+        std::fs::create_dir(&unrelated).unwrap();
+        let unrelated_file = unrelated.join("keep");
+        std::fs::write(&unrelated_file, "keep").unwrap();
+        let native = spill.join("duckdb_temp_storage-0.tmp");
+        std::fs::write(&native, "native spill").unwrap();
+        assert_eq!(cleanup_point_scratch(&db).unwrap(), 1);
+        assert!(!orphan.exists());
+        assert_eq!(std::fs::read_to_string(&unrelated_file).unwrap(), "keep");
+        assert_eq!(std::fs::read_to_string(&native).unwrap(), "native spill");
+        assert_eq!(cleanup_point_scratch(&db).unwrap(), 0);
+    }
+
+    #[test]
+    fn point_scratch_cleanup_rejects_unknown_content_and_a_second_live_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let orphan = temp.path().join("spill/point-preservation-ABC123");
+        std::fs::create_dir(&orphan).unwrap();
+        let unknown = orphan.join("operator-note");
+        std::fs::write(&unknown, "must retain").unwrap();
+        assert!(cleanup_point_scratch(&db).is_err());
+        assert_eq!(std::fs::read_to_string(&unknown).unwrap(), "must retain");
+        let second = Database::open(
+            &temp.path().join("test.duckdb"),
+            &crate::test_support::library(),
+            "64MB",
+            1,
+            &temp.path().join("spill"),
+        );
+        assert!(second.is_err());
+        assert!(
+            unknown.exists(),
+            "a second owner must fail before startup cleanup"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn point_scratch_cleanup_never_follows_directory_or_file_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let spill = temp.path().join("spill");
+        let external = temp.path().join("external");
+        std::fs::create_dir(&external).unwrap();
+        let external_file = external.join("location.differences.csv");
+        std::fs::write(&external_file, "must retain").unwrap();
+        let candidate = spill.join("point-preservation-ABC123");
+        std::os::unix::fs::symlink(&external, &candidate).unwrap();
+        assert!(cleanup_point_scratch(&db).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&external_file).unwrap(),
+            "must retain"
+        );
+        std::fs::remove_file(&candidate).unwrap();
+        std::fs::create_dir(&candidate).unwrap();
+        std::os::unix::fs::symlink(&external_file, candidate.join("location.differences.csv"))
+            .unwrap();
+        assert!(cleanup_point_scratch(&db).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&external_file).unwrap(),
+            "must retain"
+        );
+        assert!(candidate.exists());
+    }
+    #[test]
+    fn vehicle_years_accept_current_and_next_model_years_but_reject_implausible_years() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let expression = convert("v", "vehicle_year", "INTEGER", 2026);
+        let rows = db.query(&format!("SELECT {expression} vehicle_year FROM (VALUES ('2026'),('2027'),('3000'),('1899')) years(v)"), &[]).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                json!({"vehicle_year":2026}),
+                json!({"vehicle_year":2027}),
+                json!({"vehicle_year":null}),
+                json!({"vehicle_year":null})
+            ]
+        );
+    }
+    #[test]
+    fn unknown_full_source_mode_is_rejected_before_staging_or_network_acquisition() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let staging = temp.path().join("ingestion");
+        let request = json!({"endpoints":["vehicles"],"mode":"full","allow_full_refresh":true,"source_mode":"typo"});
+        let error =
+            refresh_request_guarded(&db, &staging, &request, "invalid-source-mode", &|| Ok(()))
+                .unwrap_err();
+        assert!(error.to_string().contains("source_mode"));
+        assert!(!staging.exists());
+        assert!(
+            committed_publication(&db, "invalid-source-mode")
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn publication_rolls_back_first_dataset_when_later_identity_invalid() {
@@ -652,6 +1004,92 @@ mod native_tests {
         assert_eq!(db.query("SELECT count(*) n FROM ingestion_checkpoints WHERE source_updated_before=TIMESTAMPTZ '2000-01-01T00:00:00Z'",&[]).unwrap()[0]["n"],1);
     }
     #[test]
+    fn startup_reconciles_committed_final_attempts_before_deadline_recovery() {
+        use crate::control::{ControlStore, JobOptions};
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let control = ControlStore::open(temp.path().join("control.sqlite"), 8, 60).unwrap();
+        let options = JobOptions {
+            max_attempts: 1,
+            ..JobOptions::default()
+        };
+        let request = json!({"endpoints":["crashes"],"mode":"api"});
+        fixture(
+            temp.path(),
+            "crashes",
+            &[json!({"crash_record_id":"C1","crash_date":"2026-01-01"})],
+        );
+        let submit = || {
+            let queued = control
+                .enqueue_kind("ingestion", &request, &options)
+                .unwrap();
+            let claimed = control.claim("ingestion").unwrap().unwrap();
+            assert_eq!(claimed.id, queued.id);
+            claimed
+        };
+        let publish = |id: &str| {
+            publish_sources(
+                &db,
+                temp.path(),
+                &["crashes".into()],
+                PublicationMode::Production,
+                id,
+            )
+            .unwrap()
+        };
+        let uncommitted = submit();
+        let cancelled = submit();
+        publish(&cancelled.id);
+        control.cancel(&cancelled.id).unwrap();
+        let failed = submit();
+        let failed_receipt = publish(&failed.id);
+        control
+            .fail(
+                &failed.id,
+                failed.attempt_token.as_deref().unwrap(),
+                "failed after commit",
+                false,
+            )
+            .unwrap();
+        let final_attempt = submit();
+        let final_receipt = publish(&final_attempt.id);
+        control
+            .connect()
+            .unwrap()
+            .execute(
+                "UPDATE rust_jobs SET deadline_at=0 WHERE id=?",
+                [&final_attempt.id],
+            )
+            .unwrap();
+
+        assert_eq!(reconcile_committed_publications(&db, &control).unwrap(), 2);
+        assert_eq!(control.recover_interrupted().unwrap(), 1);
+        for (job, receipt) in [(&final_attempt, final_receipt), (&failed, failed_receipt)] {
+            let recovered = control.get(&job.id).unwrap().unwrap();
+            assert_eq!(recovered.status, "completed");
+            assert_eq!(recovered.manifest, Some(receipt));
+            assert_eq!(recovered.request, request);
+            assert_eq!(recovered.attempt, 1);
+            assert_eq!(recovered.max_attempts, 1);
+            assert!(recovered.error.is_none());
+            assert!(recovered.attempt_token.is_none() && recovered.lease_until.is_none());
+            assert!(
+                control
+                    .heartbeat(&job.id, job.attempt_token.as_deref().unwrap())
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            control.get(&uncommitted.id).unwrap().unwrap().status,
+            "failed"
+        );
+        assert_eq!(
+            control.get(&cancelled.id).unwrap().unwrap().status,
+            "cancelled"
+        );
+        assert_eq!(reconcile_committed_publications(&db, &control).unwrap(), 0);
+    }
+    #[test]
     fn production_replay_is_idempotent_and_updates_changed_rows_preserving_created_at() {
         let temp = tempfile::tempdir().unwrap();
         let Some(db) = database(temp.path()) else {
@@ -686,7 +1124,10 @@ mod native_tests {
         fixture(
             temp.path(),
             "crashes",
-            &[json!({"crash_record_id":"C1","crash_date":"2026-01-01","posted_speed_limit":"35"})],
+            &[
+                json!({"crash_record_id":"C1","crash_date":"2026-01-01","posted_speed_limit":"35"}),
+                json!({"crash_record_id":"C2","crash_date":"2026-01-02","posted_speed_limit":"30"}),
+            ],
         );
         let changed = publish_sources(
             &db,
@@ -697,9 +1138,29 @@ mod native_tests {
         )
         .unwrap();
         assert_eq!(changed["datasets"]["crashes"]["changed_rows"], 1);
+        assert_eq!(changed["datasets"]["crashes"]["inserted_rows"], 1);
         assert_eq!(
-            db.query("SELECT created_at FROM crashes", &[]).unwrap()[0]["created_at"],
+            db.query(
+                "SELECT created_at FROM crashes WHERE crash_record_id='C1'",
+                &[]
+            )
+            .unwrap()[0]["created_at"],
             created
+        );
+        let unchanged = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "third",
+        )
+        .unwrap();
+        assert_eq!(unchanged["datasets"]["crashes"]["changed_rows"], 0);
+        assert_eq!(unchanged["datasets"]["crashes"]["inserted_rows"], 0);
+        assert_eq!(unchanged["datasets"]["crashes"]["unchanged_rows"], 2);
+        assert_eq!(
+            committed_publication(&db, "third").unwrap(),
+            Some(unchanged)
         );
         assert!(
             publish_sources(
@@ -711,6 +1172,132 @@ mod native_tests {
             )
             .is_err()
         );
+    }
+    #[test]
+    fn refresh_preserves_fields_absent_from_current_sources_for_every_dataset() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let cases = [
+            (
+                "crashes",
+                json!({"crash_record_id":"C1","crash_date":"2026-01-01","posted_speed_limit":"30","latitude":"41.8","longitude":"-87.6"}),
+                "posted_speed_limit",
+                "35",
+            ),
+            (
+                "people",
+                json!({"crash_record_id":"C1","person_id":"P1","age":"20"}),
+                "age",
+                "21",
+            ),
+            (
+                "vehicles",
+                json!({"crash_record_id":"C1","crash_unit_id":"V1","make":"FORD"}),
+                "make",
+                "HONDA",
+            ),
+            (
+                "fatalities",
+                json!({"person_id":"P1","crash_date":"2026-01-01","victim":"Driver","latitude":"41.8","longitude":"-87.6"}),
+                "victim",
+                "Pedestrian",
+            ),
+        ];
+        let datasets: Vec<_> = cases
+            .iter()
+            .map(|(name, _, _, _)| (*name).to_owned())
+            .collect();
+        for (dataset, row, _, _) in &cases {
+            fixture(temp.path(), dataset, std::slice::from_ref(row));
+        }
+        publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "seed",
+        )
+        .unwrap();
+        let mut preserved = BTreeMap::new();
+        for (dataset, _, _, _) in &cases {
+            let fields = model_only(dataset);
+            let assignments = fields
+                .iter()
+                .filter(|(name, _)| name.as_str() != "geometry")
+                .map(|(name, kind)| {
+                    format!(
+                        "{}={}",
+                        sources::identifier(name),
+                        if kind == "TIMESTAMP" {
+                            "TIMESTAMP '2000-01-01'"
+                        } else {
+                            "'legacy value'"
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let table = table_name(dataset).unwrap();
+            db.execute(&format!("UPDATE {table} SET {assignments}"), &[])
+                .unwrap();
+            let selection = fields
+                .keys()
+                .filter(|name| name.as_str() != "geometry")
+                .map(|name| sources::identifier(name))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!("SELECT {selection},created_at FROM {table}");
+            preserved.insert(*dataset, (sql.clone(), db.query(&sql, &[]).unwrap()));
+        }
+        let unchanged = publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "unchanged",
+        )
+        .unwrap();
+        for (dataset, row, field, replacement) in &cases {
+            assert_eq!(
+                unchanged["datasets"][*dataset]["changed_rows"], 0,
+                "{dataset}"
+            );
+            let mut row = row.clone();
+            row[*field] = json!(replacement);
+            if row.get("latitude").is_some() {
+                row["latitude"] = json!("41.9");
+            }
+            fixture(temp.path(), dataset, &[row]);
+        }
+        let changed = publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "changed",
+        )
+        .unwrap();
+        for (dataset, _, _, _) in &cases {
+            assert_eq!(
+                changed["datasets"][*dataset]["changed_rows"], 1,
+                "{dataset}"
+            );
+            let (sql, expected) = &preserved[dataset];
+            assert_eq!(db.query(sql, &[]).unwrap(), *expected, "{dataset}");
+            if schema_columns(dataset).unwrap().contains_key("geometry") {
+                assert_eq!(
+                    db.query(
+                        &format!(
+                            "SELECT ST_Y(geometry) latitude FROM {}",
+                            table_name(dataset).unwrap()
+                        ),
+                        &[]
+                    )
+                    .unwrap()[0]["latitude"],
+                    41.9
+                );
+            }
+        }
     }
     #[test]
     fn people_keep_null_child_dates_and_chicago_coordinate_policy() {
@@ -755,6 +1342,357 @@ mod native_tests {
             .unwrap()[0];
         assert!(updated["crash_date"].is_null());
         assert_eq!(updated["age"], 119);
+    }
+    #[test]
+    fn crash_point_comparison_preserves_exact_equivalents_and_detects_real_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let points = [
+            (
+                "equivalent",
+                "POINT (-87.6000 41.8000)",
+                r#"{"coordinates":[-87.6,41.8],"type":"Point"}"#,
+            ),
+            (
+                "outside",
+                "POINT (999.5000 -0.000)",
+                r#"{"coordinates":[999.5,0],"type":"Point"}"#,
+            ),
+            (
+                "precise_equal",
+                "POINT (-87.60000000000001234 41.80000000000000987)",
+                r#"{"coordinates":[-87.60000000000001234,41.80000000000000987],"type":"Point"}"#,
+            ),
+            (
+                "precise_changed",
+                "POINT (-87.60000000000001234 41.80000000000000987)",
+                r#"{"coordinates":[-87.60000000000001235,41.80000000000000987],"type":"Point"}"#,
+            ),
+            (
+                "moved",
+                "POINT (-87.6 41.8)",
+                r#"{"coordinates":[-87.7,41.8],"type":"Point"}"#,
+            ),
+            (
+                "other_field",
+                "POINT (-87.6000 41.8000)",
+                r#"{"coordinates":[-87.6,41.8],"type":"Point"}"#,
+            ),
+            (
+                "invalid_old",
+                "archival unparseable point",
+                r#"{"coordinates":[-87.6,41.8],"type":"Point"}"#,
+            ),
+        ];
+        let original: Vec<_> = points.iter().map(|(id, point, _)| {
+            let mut row = json!({"crash_record_id":id,"crash_date":"2026-01-01","location":point,"posted_speed_limit":"30","latitude":"41.8","longitude":"-87.6"});
+            if *id == "outside" {
+                row["latitude"] = json!("0");
+                row["longitude"] = json!("999.5");
+            }
+            row
+        }).collect();
+        fixture(temp.path(), "crashes", &original);
+        publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "point-seed",
+        )
+        .unwrap();
+        let updated: Vec<_> = original
+            .iter()
+            .zip(&points)
+            .map(|(row, (id, _, point))| {
+                let mut row = row.clone();
+                row["location"] = json!(point);
+                if *id == "moved" {
+                    row["longitude"] = json!("-87.7");
+                }
+                if *id == "other_field" {
+                    row["posted_speed_limit"] = json!("35");
+                }
+                row
+            })
+            .collect();
+        fixture(temp.path(), "crashes", &updated);
+        let receipt = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "point-update",
+        )
+        .unwrap();
+        assert_eq!(receipt["datasets"]["crashes"]["changed_rows"], 4);
+        assert_eq!(receipt["datasets"]["crashes"]["unchanged_rows"], 3);
+        for (id, old, new) in &points {
+            let row = &db.query("SELECT location,posted_speed_limit,ST_X(geometry) longitude FROM crashes WHERE crash_record_id=?", &[json!(id)]).unwrap()[0];
+            let expected = if ["equivalent", "outside", "precise_equal", "other_field"].contains(id)
+            {
+                old
+            } else {
+                new
+            };
+            assert_eq!(row["location"], *expected, "{id}");
+            if *id == "other_field" {
+                assert_eq!(row["posted_speed_limit"], 35);
+            }
+            if *id == "moved" {
+                assert_eq!(row["longitude"], -87.7);
+            }
+            if *id == "outside" {
+                assert!(row["longitude"].is_null());
+            }
+        }
+        let replay = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "point-replay",
+        )
+        .unwrap();
+        assert_eq!(replay["datasets"]["crashes"]["changed_rows"], 0);
+        assert!(
+            std::fs::read_dir(temp.path().join("spill"))
+                .unwrap()
+                .all(|entry| !entry
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("point-preservation-"))
+        );
+    }
+    #[test]
+    fn fatality_refresh_preserves_archival_json_when_only_other_fields_change() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let archived =
+            r#"{"coordinates":[-87.60000000000001234,41.80000000000000987],"type":"Point"}"#;
+        let original = json!({"person_id":"P1","crash_date":"2026-01-01","geocoded_column":archived,"victim":"Driver"});
+        fixture(temp.path(), "fatalities", std::slice::from_ref(&original));
+        publish_sources(
+            &db,
+            temp.path(),
+            &["fatalities".into()],
+            PublicationMode::Production,
+            "fatal-point-seed",
+        )
+        .unwrap();
+        // Imported historical raw text is retained even when current ingestion
+        // canonicalizes new fatality points to WKT.
+        db.execute(
+            "UPDATE vision_zero_fatalities SET geocoded_column=?",
+            &[json!(archived)],
+        )
+        .unwrap();
+        let mut updated = original;
+        updated["victim"] = json!("Pedestrian");
+        fixture(temp.path(), "fatalities", &[updated]);
+        let receipt = publish_sources(
+            &db,
+            temp.path(),
+            &["fatalities".into()],
+            PublicationMode::Production,
+            "fatal-point-update",
+        )
+        .unwrap();
+        assert_eq!(receipt["datasets"]["fatalities"]["changed_rows"], 1);
+        let row = &db
+            .query(
+                "SELECT geocoded_column,victim FROM vision_zero_fatalities",
+                &[],
+            )
+            .unwrap()[0];
+        assert_eq!(row["geocoded_column"], archived);
+        assert_eq!(row["victim"], "Pedestrian");
+    }
+    #[test]
+    fn point_preservation_checks_cancellation_while_streaming_and_cleans_scratch() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        db.execute(
+            "CREATE TABLE crashes(crash_record_id VARCHAR,location VARCHAR)",
+            &[],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO crashes VALUES('C1','POINT (-87.6000 41.8000)')",
+            &[],
+        )
+        .unwrap();
+        let spill = temp.path().join("spill");
+        let result: Result<()> = db.transaction(|session| {
+            session.execute(
+                "CREATE TEMP TABLE _point_stage AS SELECT * FROM crashes",
+                &[],
+            )?;
+            session.execute(
+                "UPDATE _point_stage SET location=?",
+                &[json!(r#"{"type":"Point","coordinates":[-87.6,41.8]}"#)],
+            )?;
+            let check = || {
+                for entry in std::fs::read_dir(&spill)? {
+                    let path = entry?.path();
+                    ensure!(
+                        !path.join("location.differences.csv").exists()
+                            || !path.join("location.preserved.csv").exists(),
+                        "cancelled while streaming points"
+                    );
+                }
+                Ok(())
+            };
+            preserve_equivalent_points(session, "_point_stage", "crashes", 1, &check)
+        });
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cancelled while streaming")
+        );
+        assert_eq!(
+            db.query("SELECT location FROM crashes", &[]).unwrap()[0]["location"],
+            "POINT (-87.6000 41.8000)"
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM information_schema.tables WHERE table_name='_point_stage'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            0
+        );
+        assert!(std::fs::read_dir(spill).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("point-preservation-")
+        }));
+    }
+    #[test]
+    fn preserved_point_csv_reads_late_quoted_json_and_keeps_null_sentinels_distinct() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let path = temp.path().join("location.preserved.csv");
+        let archived =
+            r#"{"coordinates":[-87.60000000000001234,41.80000000000000987],"type":"Point"}"#;
+        let mut writer = csv::Writer::from_path(&path).unwrap();
+        writer
+            .write_record(["crash_record_id", "location"])
+            .unwrap();
+        // Exceed DuckDB's default 20,480-row sniffing window before the first
+        // field requiring CSV quoting, as in the production preservation file.
+        for id in 0..30_000 {
+            writer
+                .write_record([format!("wkt-{id}"), "POINT (-87.6000 41.8000)".to_owned()])
+                .unwrap();
+        }
+        for (id, point) in [
+            ("json-tail", archived),
+            ("empty-tail", ""),
+            ("literal-null-tail", "null"),
+            ("json-null-tail", "\"null\""),
+        ] {
+            writer.write_record([id, point]).unwrap();
+        }
+        writer.flush().unwrap();
+        drop(writer);
+        db.transaction(|session| {
+            session.execute("CREATE TEMP TABLE _point_stage AS SELECT 'wkt-'||i crash_record_id,'staged'::VARCHAR location FROM range(30000) ids(i)", &[])?;
+            session.execute("INSERT INTO _point_stage VALUES('json-tail','staged'),('empty-tail','staged'),('literal-null-tail','staged'),('json-null-tail','staged')", &[])?;
+            restore_preserved_points(session, "_point_stage", "crashes", "location", &path)
+        }).unwrap();
+        assert_eq!(
+            db.query("SELECT count(*) n FROM _point_stage", &[])
+                .unwrap()[0]["n"],
+            30_004
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM _point_stage WHERE location='POINT (-87.6000 41.8000)'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            30_000
+        );
+        let value = |id: &str| {
+            db.query(
+                "SELECT location FROM _point_stage WHERE crash_record_id=?",
+                &[json!(id)],
+            )
+            .unwrap()[0]["location"]
+                .clone()
+        };
+        assert_eq!(value("json-tail"), archived);
+        assert_eq!(
+            sources::canonical_source_point(value("json-tail").as_str().unwrap()).unwrap(),
+            "POINT (-87.60000000000001234 41.80000000000000987)"
+        );
+        assert!(value("empty-tail").is_null());
+        assert_eq!(value("literal-null-tail"), "null");
+        assert_eq!(value("json-null-tail"), "\"null\"");
+    }
+    #[test]
+    fn format_only_replays_above_publication_guard_succeed_but_actual_changes_roll_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let mut rows: Vec<_> = (0..25_001).map(|id| json!({"crash_record_id":format!("C{id}"),"crash_date":"2026-01-01","location":"POINT (-87.6000 41.8000)"})).collect();
+        fixture(temp.path(), "crashes", &rows);
+        publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "guard-point-seed",
+        )
+        .unwrap();
+        for row in &mut rows {
+            row["location"] = json!(r#"{"type":"Point","coordinates":[-87.6,41.8]}"#);
+        }
+        fixture(temp.path(), "crashes", &rows);
+        let receipt = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "guard-point-equivalent",
+        )
+        .unwrap();
+        assert_eq!(receipt["datasets"]["crashes"]["changed_rows"], 0);
+        assert_eq!(receipt["datasets"]["crashes"]["unchanged_rows"], 25_001);
+        for row in &mut rows {
+            row["location"] = json!(r#"{"type":"Point","coordinates":[-87.7,41.8]}"#);
+        }
+        fixture(temp.path(), "crashes", &rows);
+        let result = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "guard-point-changed",
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("INGESTION_MAX_CHANGED_ROWS")
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM crashes WHERE location='POINT (-87.6000 41.8000)'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            25_001
+        );
+        assert!(
+            committed_publication(&db, "guard-point-changed")
+                .unwrap()
+                .is_none()
+        );
     }
     #[test]
     fn fatalities_coalesce_wkt_json_points_and_roll_back_bad_source_points() {
@@ -1339,7 +2277,15 @@ pub fn refresh_request_guarded(
                     && config.get("end_date").is_none_or(Value::is_null),
                 "full refresh cannot use event-date filters"
             );
-            refresh_attempt(db, directory, &datasets, operation_id, check, None, false)
+            refresh_attempt(
+                db,
+                directory,
+                &datasets,
+                operation_id,
+                check,
+                None,
+                full_source_uses_api(&config)?,
+            )
         }
         "incremental" => {
             ensure!(
@@ -1420,4 +2366,40 @@ pub fn committed_publication(db: &Database, operation_id: &str) -> Result<Option
             }
         })
         .transpose()
+}
+
+/// Resolve the cross-store commit gap before expired/final attempts are failed.
+/// The caller must hold the exclusive owner lock and have no running workers.
+pub fn reconcile_committed_publications(
+    db: &Database,
+    control: &crate::control::ControlStore,
+) -> Result<usize> {
+    let exists = db.query("SELECT 1 FROM information_schema.tables WHERE table_schema='main' AND table_name='ingestion_publications'", &[])?;
+    if exists.is_empty() {
+        return Ok(0);
+    }
+    let mut after = String::new();
+    let mut reconciled = 0;
+    loop {
+        let ids = control.unreconciled_ingestion_ids(&after)?;
+        let Some(last) = ids.last() else { break };
+        after.clone_from(last);
+        let parameters: Vec<_> = ids.iter().map(|id| json!(id)).collect();
+        let placeholders = std::iter::repeat_n("?", ids.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let rows = db.query(&format!("SELECT operation_id,receipt FROM ingestion_publications WHERE operation_id IN ({placeholders})"), &parameters)?;
+        for row in rows {
+            let id = row["operation_id"]
+                .as_str()
+                .context("publication operation ID missing")?;
+            let receipt = if let Some(text) = row["receipt"].as_str() {
+                serde_json::from_str(text)?
+            } else {
+                row["receipt"].clone()
+            };
+            reconciled += control.reconcile_ingestion_publication(id, &receipt)?;
+        }
+    }
+    Ok(reconciled)
 }

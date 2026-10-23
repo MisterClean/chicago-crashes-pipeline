@@ -15,6 +15,8 @@ use serde_json::{Value, json};
 use crate::db::Database;
 
 pub const MAP_LIMIT: usize = 5000;
+const MAX_REPORT_MONTHS: usize = 1200;
+pub const REPORT_RANGE_ERROR: &str = "Location reports support at most 1200 calendar months";
 const CYCLIST: &str = "(person_type ILIKE '%BICYCLE%' OR person_type ILIKE '%CYCLIST%' OR person_type ILIKE '%PEDALCYCLIST%')";
 const KNOWN: &str = "'FATAL','INCAPACITATING INJURY','NONINCAPACITATING INJURY','REPORTED, NOT EVIDENT','NO INDICATION OF INJURY'";
 const MAP_COLUMNS: &str = "crash_record_id, strftime(crash_date,'%Y-%m-%dT%H:%M:%S.%f') AS crash_date, injuries_total, injuries_fatal, injuries_incapacitating, hit_and_run_i, crash_type, street_name, prim_contributory_cause, ST_X(geometry) AS longitude, ST_Y(geometry) AS latitude";
@@ -150,6 +152,14 @@ impl LocationRequest {
         normalized_dates(&self.dates())?;
         Ok(())
     }
+
+    /// Reject explicit ranges that would expand an unbounded monthly response.
+    pub fn validate_report_dates(&self) -> Result<()> {
+        if let (Some(first), Some(last)) = normalized_dates(&self.dates())? {
+            report_month_count(first, last)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -169,7 +179,7 @@ fn now_chicago() -> NaiveDateTime {
 /// Interpret offset timestamps in Chicago; naive timestamps are Chicago wall time.
 pub fn wall_time(value: &str) -> Result<NaiveDateTime> {
     if let Ok(value) = DateTime::parse_from_rfc3339(value) {
-        return Ok(value.with_timezone(&Chicago).naive_local());
+        return calendar_time(value.with_timezone(&Chicago).naive_local());
     }
     for format in [
         "%Y-%m-%dT%H:%M:%S%.f",
@@ -178,11 +188,19 @@ pub fn wall_time(value: &str) -> Result<NaiveDateTime> {
         "%Y-%m-%d %H:%M",
     ] {
         if let Ok(value) = NaiveDateTime::parse_from_str(value, format) {
-            return Ok(value);
+            return calendar_time(value);
         }
     }
     let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").context("Invalid ISO date/time")?;
-    date.and_hms_opt(0, 0, 0).context("Invalid date")
+    calendar_time(date.and_hms_opt(0, 0, 0).context("Invalid date")?)
+}
+
+fn calendar_time(value: NaiveDateTime) -> Result<NaiveDateTime> {
+    ensure!(
+        (1..=9999).contains(&value.year()),
+        "Date year must be between 0001 and 9999"
+    );
+    Ok(value)
 }
 
 fn normalized_dates(dates: &DateRange) -> Result<(Option<NaiveDateTime>, Option<NaiveDateTime>)> {
@@ -733,6 +751,17 @@ fn costs(counts: &[Value], pdo: i64) -> Value {
     json!({"injury_costs":injury_costs,"vehicle_costs":{"count":pdo,"unit_economic_cost":6269,"unit_qaly_cost":3927,"subtotal_economic":pdo*6269,"subtotal_societal":pdo*(6269+3927)},"total_economic":total_economic,"total_societal":total_societal})
 }
 
+fn report_month_count(first: NaiveDateTime, last: NaiveDateTime) -> Result<usize> {
+    let months = i64::from(last.year() - first.year()) * 12 + i64::from(last.month0())
+        - i64::from(first.month0())
+        + 1;
+    ensure!(
+        (1..=MAX_REPORT_MONTHS as i64).contains(&months),
+        REPORT_RANGE_ERROR
+    );
+    Ok(months as usize)
+}
+
 pub fn fill_report_months(rows: &[Value], dates: &DateRange, now: NaiveDateTime) -> Result<Value> {
     let (start, end) = normalized_dates(dates)?;
     let months = rows
@@ -750,12 +779,16 @@ pub fn fill_report_months(rows: &[Value], dates: &DateRange, now: NaiveDateTime)
     let (Some(first), Some(last)) = (first, last) else {
         return Ok(json!([]));
     };
+    if first > last {
+        return Ok(json!([]));
+    }
+    let month_count = report_month_count(first, last)?;
     let mut cursor = first
         .date()
         .with_day(1)
         .and_then(|d| d.and_hms_opt(0, 0, 0))
         .context("Invalid month")?;
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity(month_count);
     while cursor <= last {
         let following = (cursor + Duration::days(32))
             .date()
@@ -779,6 +812,7 @@ pub fn location_report_at(
     request: &LocationRequest,
     now: NaiveDateTime,
 ) -> Result<Value> {
+    request.validate_report_dates()?;
     let selection = selected_crashes(db, request)?;
     let sql = include_str!("../sql/location_report.sql")
         .replace("__SELECTION__", &selection.sql)
@@ -861,6 +895,73 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn dates_reject_years_outside_the_four_digit_calendar() {
+        for value in ["0000-01-01", "-250000-01-01", "+250000-01-01"] {
+            assert!(
+                wall_time(value).is_err(),
+                "accepted out-of-range year {value}"
+            );
+        }
+        assert!(wall_time("0001-01-01").is_ok());
+        assert!(wall_time("9999-12-31").is_ok());
+    }
+
+    #[test]
+    fn monthly_report_expansion_is_bounded_even_for_empty_or_one_sided_ranges() {
+        let now = wall_time("2026-01-01").unwrap();
+        let limit = DateRange {
+            start_date: Some("0001-01-01".into()),
+            end_date: Some("0100-12-31".into()),
+        };
+        assert_eq!(
+            fill_report_months(&[], &limit, now)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            MAX_REPORT_MONTHS
+        );
+        for dates in [
+            DateRange {
+                start_date: Some("0001-01-01".into()),
+                end_date: Some("9999-12-31".into()),
+            },
+            DateRange {
+                start_date: Some("0001-01-01".into()),
+                end_date: None,
+            },
+            DateRange {
+                start_date: None,
+                end_date: Some("9999-12-31".into()),
+            },
+        ] {
+            let error = fill_report_months(&[json!({"month":"2024-01","crashes":1})], &dates, now)
+                .unwrap_err();
+            assert_eq!(error.to_string(), REPORT_RANGE_ERROR);
+        }
+    }
+
+    #[test]
+    fn one_sided_report_bounds_outside_matching_months_return_an_empty_series() {
+        let rows = [json!({"month":"2024-01","crashes":1})];
+        for dates in [
+            DateRange {
+                start_date: Some("2025-01-01".into()),
+                end_date: None,
+            },
+            DateRange {
+                start_date: None,
+                end_date: Some("2023-12-31".into()),
+            },
+        ] {
+            assert_eq!(
+                fill_report_months(&rows, &dates, wall_time("2026-01-01").unwrap()).unwrap(),
+                json!([])
+            );
+        }
     }
 
     #[test]

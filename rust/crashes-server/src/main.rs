@@ -12,6 +12,7 @@ mod ingestion;
 mod layers;
 mod migration;
 mod mutations;
+mod ops_cli;
 mod queries;
 mod recovery;
 #[cfg(test)]
@@ -55,12 +56,17 @@ struct Options {
     memory_limit: String,
     #[arg(long, env = "DUCKDB_THREADS", default_value_t = 2)]
     threads: u32,
+    /// Dedicated private DuckDB scratch directory; defaults to DATA_DIR/spill.
+    #[arg(long, env = "DUCKDB_TEMP_DIRECTORY")]
+    temp_directory: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
 #[derive(Subcommand)]
 enum Command {
     BuildInfo,
+    /// Monitor and manage a running backend over its authenticated HTTP API.
+    Admin(ops_cli::Options),
     Probe,
     Inspect,
     Download {
@@ -154,12 +160,16 @@ fn open(options: &Options) -> Result<db::Database> {
         .database
         .clone()
         .unwrap_or_else(|| options.data_dir.join("current.duckdb"));
+    let temporary = options
+        .temp_directory
+        .clone()
+        .unwrap_or_else(|| options.data_dir.join("spill"));
     let db = db::Database::open(
         &path,
         options.library.as_deref().unwrap_or(Path::new(default)),
         &options.memory_limit,
         options.threads,
-        &options.data_dir.join("spill"),
+        &temporary,
     )?;
     db.execute(
         &format!(
@@ -187,6 +197,9 @@ fn main() -> Result<()> {
         .json()
         .init();
     let options = Options::parse();
+    if let Command::Admin(admin) = &options.command {
+        return ops_cli::run(admin);
+    }
     if matches!(options.command, Command::BuildInfo) {
         println!(
             "{}",
@@ -255,9 +268,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
     let database = Arc::new(open(&options)?);
+    ingestion::cleanup_point_scratch(&database)?;
     match &options.command {
-        Command::BuildInfo|Command::ExportPostgresLayers{..}=>{},
-        Command::Probe=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT version() AS version, current_setting('memory_limit') AS memory_limit, current_setting('threads') AS sql_threads, ST_Distance_Spheroid(ST_Point(-87.65,41.88), ST_Point(-87.65,41.881)) AS axis_probe_meters",&[])?)?),
+        Command::BuildInfo|Command::Admin(_)|Command::ExportPostgresLayers{..}=>{},
+        Command::Probe=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT version() AS version, current_setting('memory_limit') AS memory_limit, current_setting('threads') AS sql_threads, current_setting('max_temp_directory_size') AS max_temp_directory_size, ST_Distance_Spheroid(ST_Point(-87.65,41.88), ST_Point(-87.65,41.881)) AS axis_probe_meters",&[])?)?),
         Command::Inspect=>println!("{}",serde_json::to_string_pretty(&database.query("SELECT table_name FROM information_schema.tables WHERE table_schema='main' ORDER BY table_name",&[])?)?),
         Command::Seed{source_dir,datasets,profiling,operation_id}=>{
             let receipt=ingestion::publish_sources(&database,source_dir,datasets,if *profiling{sources::PublicationMode::Profiling}else{sources::PublicationMode::Production},operation_id.as_deref().unwrap_or(&uuid::Uuid::new_v4().to_string()))?;
@@ -281,6 +295,7 @@ fn main() -> Result<()> {
             control.initialize_scheduling(*daily_sync)?;
             let state=api::AppState { db:database,control,directory:options.data_dir.clone(),api_key:Arc::new(key),production,storage,admission:Arc::new(tokio::sync::Semaphore::new(32)),profiling_data:*allow_profiling_data,pubcache:Arc::new(cache::ResponseCache::from_env()?) };
             let stop=Arc::new(AtomicBool::new(false));
+            ingestion::reconcile_committed_publications(&state.db,&state.control)?;
             state.control.recover_interrupted()?;
             mutations::reconcile_deletions(&state.db,&state.control)?;
             let worker=worker::start(state.clone(),stop.clone());

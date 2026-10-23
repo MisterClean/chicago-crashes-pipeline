@@ -125,7 +125,95 @@ pub struct Database {
     owner: Mutex<Owner>,
     generation: Arc<AtomicU64>,
     _lock: File,
+    _scratch_lock: File,
     pub path: PathBuf,
+}
+
+fn temp_directory_size(value: &str) -> Result<String> {
+    let value = value.trim();
+    let split = value
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(value.len());
+    let (amount, unit) = value.split_at(split);
+    let amount = amount
+        .parse::<u64>()
+        .context("DUCKDB_MAX_TEMP_DIRECTORY_SIZE requires a positive integer and finite unit")?;
+    let multiplier = match unit.trim().to_ascii_lowercase().as_str() {
+        "b" => 1,
+        "kb" => 1000,
+        "mb" => 1000_u64.pow(2),
+        "gb" => 1000_u64.pow(3),
+        "kib" => 1024,
+        "mib" => 1024_u64.pow(2),
+        "gib" => 1024_u64.pow(3),
+        _ => bail!("DUCKDB_MAX_TEMP_DIRECTORY_SIZE unit must be B, KB, MB, GB, KiB, MiB or GiB"),
+    };
+    let bytes = amount
+        .checked_mul(multiplier)
+        .filter(|bytes| (1..=i64::MAX as u64).contains(bytes))
+        .context(
+            "DUCKDB_MAX_TEMP_DIRECTORY_SIZE must be positive and at most 9223372036854775807 bytes",
+        )?;
+    Ok(format!("{bytes}B"))
+}
+
+/// One owner may use this private writable directory for native and ingestion scratch.
+fn own_scratch_directory(path: &Path, database: &Path) -> Result<File> {
+    let mut create = std::fs::DirBuilder::new();
+    create.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        create.mode(0o700);
+    }
+    create
+        .create(path)
+        .context("create DuckDB scratch directory")?;
+    ensure!(
+        std::fs::symlink_metadata(path)?.file_type().is_dir(),
+        "DuckDB scratch directory must be a directory, not a symlink"
+    );
+    let marker = path.join(".crashes-scratch.owner.lock");
+    let existing_marker = match std::fs::symlink_metadata(&marker) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.file_type().is_file(),
+                "DuckDB scratch ownership marker must be a regular file"
+            );
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error).context("inspect DuckDB scratch ownership"),
+    };
+    let legacy = database
+        .parent()
+        .is_some_and(|parent| path == parent.join("spill"));
+    ensure!(
+        existing_marker || legacy || std::fs::read_dir(path)?.next().is_none(),
+        "custom DuckDB scratch directory must be empty or already owned by this application"
+    );
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options
+        .open(&marker)
+        .context("open DuckDB scratch ownership lock")?;
+    fs2::FileExt::try_lock_exclusive(&lock)
+        .context("another process owns this DuckDB scratch directory")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .context("make DuckDB scratch directory private")?;
+    }
+    // A preexisting writable lock file alone does not establish directory writability.
+    let _writable = tempfile::NamedTempFile::new_in(path)
+        .context("DuckDB scratch directory must be writable")?;
+    Ok(lock)
 }
 /// A connection borrow with admission held for the entire operation.
 pub struct Session<'a> {
@@ -145,7 +233,6 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::create_dir_all(temp)?;
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -153,6 +240,13 @@ impl Database {
             .write(true)
             .open(path.with_extension("owner.lock"))?;
         fs2::FileExt::try_lock_exclusive(&lock).context("another process owns this DuckDB file")?;
+        let scratch_lock = own_scratch_directory(temp, path)?;
+        let max_temp_size =
+            temp_directory_size(&match std::env::var("DUCKDB_MAX_TEMP_DIRECTORY_SIZE") {
+                Ok(value) => value,
+                Err(std::env::VarError::NotPresent) => "4GB".into(),
+                Err(error) => return Err(error).context("invalid DUCKDB_MAX_TEMP_DIRECTORY_SIZE"),
+            })?;
         let api = Api::load(library)?;
         // SAFETY: version returns a static library-owned string.
         let version = unsafe { message((api.version)()) };
@@ -198,7 +292,7 @@ impl Database {
                 "temp_directory",
                 temp.to_str().context("temp path must be UTF-8")?,
             ),
-            ("max_temp_directory_size", "4GB"),
+            ("max_temp_directory_size", max_temp_size.as_str()),
             ("TimeZone", "America/Chicago"),
         ] {
             session.execute(&format!("SET {key}={}", sql_literal(value)), &[])?;
@@ -209,6 +303,7 @@ impl Database {
             owner: Mutex::new(owner),
             generation,
             _lock: lock,
+            _scratch_lock: scratch_lock,
             path: path.to_owned(),
         })
     }
@@ -543,6 +638,96 @@ pub fn sql_literal(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn scratch_size_accepts_only_positive_finite_units_without_overflow() {
+        for (value, expected) in [
+            ("4GB", "4000000000B"),
+            ("8GB", "8000000000B"),
+            ("1B", "1B"),
+            ("2KB", "2000B"),
+            ("3MiB", "3145728B"),
+            (" 8 GiB ", "8589934592B"),
+        ] {
+            assert_eq!(temp_directory_size(value).unwrap(), expected);
+        }
+        for value in [
+            "",
+            "0B",
+            "-1",
+            "unlimited",
+            "8",
+            "1.5GB",
+            "1TB",
+            "18446744073709551615GB",
+            "18446744073709551615B",
+            "9223372036854775808B",
+            "18446744073709551616B",
+            "1GB; SELECT 1",
+        ] {
+            assert!(temp_directory_size(value).is_err(), "accepted {value}");
+        }
+    }
+
+    #[test]
+    fn native_scratch_is_private_writable_and_exclusive_across_database_owners() {
+        let directory = tempfile::tempdir().unwrap();
+        let scratch = directory.path().join("custom-scratch");
+        let library = crate::test_support::library();
+        let first = Database::open(
+            &directory.path().join("first.duckdb"),
+            &library,
+            "64MB",
+            1,
+            &scratch,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&scratch).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        assert!(tempfile::NamedTempFile::new_in(&scratch).is_ok());
+        let second = Database::open(
+            &directory.path().join("second.duckdb"),
+            &library,
+            "64MB",
+            1,
+            &scratch,
+        );
+        assert!(
+            second
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("scratch directory")
+        );
+        drop(first);
+        assert!(
+            Database::open(
+                &directory.path().join("second.duckdb"),
+                &library,
+                "64MB",
+                1,
+                &scratch
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn custom_scratch_refuses_unmarked_nonempty_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let scratch = directory.path().join("shared-directory");
+        std::fs::create_dir(&scratch).unwrap();
+        let unrelated = scratch.join("operator-file");
+        std::fs::write(&unrelated, "retain").unwrap();
+        assert!(own_scratch_directory(&scratch, &directory.path().join("facts.duckdb")).is_err());
+        assert_eq!(std::fs::read_to_string(&unrelated).unwrap(), "retain");
+        assert!(!scratch.join(".crashes-scratch.owner.lock").exists());
+    }
     #[test]
     fn sql_literal_escapes_quotes() {
         assert_eq!(sql_literal("a'b"), "'a''b'");

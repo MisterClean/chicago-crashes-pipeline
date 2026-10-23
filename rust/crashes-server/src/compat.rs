@@ -65,6 +65,7 @@ struct SyncRequest {
     start_date: Option<String>,
     end_date: Option<String>,
     mode: Option<String>,
+    source_mode: Option<String>,
     force: Option<bool>,
     config: Option<serde_json::Map<String, Value>>,
     held: Option<bool>,
@@ -94,6 +95,10 @@ pub fn sync_request(body: &Value, today: NaiveDate) -> Result<Value> {
     })
     .map_err(Error::bad)?;
     let mut config = request.config.unwrap_or_default();
+    if let Some(source_mode) = request.source_mode {
+        config.insert("source_mode".into(), json!(source_mode));
+    }
+    crate::ingestion::full_source_uses_api(&Value::Object(config.clone())).map_err(Error::bad)?;
     for (key, value) in [
         ("held", request.held),
         ("hold", request.hold),
@@ -500,11 +505,23 @@ mod tests {
         assert_eq!(value["force"], true);
     }
     #[test]
+    fn reviewed_full_replay_preserves_explicit_source_transport() {
+        for source_mode in ["api", "bulk"] {
+            let request = sync_request(&json!({"endpoint":"vehicles","mode":"full","allow_full_refresh":true,"source_mode":source_mode}), today()).unwrap();
+            assert_eq!(request["source_mode"], source_mode);
+            assert_eq!(request["config"]["source_mode"], source_mode);
+            assert_eq!(request["endpoints"], json!(["vehicles"]));
+            assert!(request.get("start_date").is_none() && request.get("end_date").is_none());
+        }
+    }
+    #[test]
     fn invalid_or_held_requests_fail_before_queueing() {
         for body in [
             json!({"endpoint":"unknown"}),
             json!({"endpoint":"people","datasets":["vehicles"]}),
             json!({"mode":"full"}),
+            json!({"mode":"full","allow_full_refresh":true,"source_mode":"typo"}),
+            json!({"mode":"full","allow_full_refresh":true,"config":{"source_mode":42}}),
             json!({"mode":"incremental","endpoint":"people"}),
             json!({"endpoint":"crashes","config":{"held":true}}),
             json!({"config":{"repair_null_people_dates":true}}),

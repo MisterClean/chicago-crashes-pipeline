@@ -114,6 +114,7 @@ pub(crate) fn validate_job_record(job: &Value) -> Result<()> {
         "retry_delay_minutes must be 1..60"
     );
     ensure!(job["config"].is_object(), "job config must be an object");
+    crate::ingestion::full_source_uses_api(&job["config"])?;
     if let Some(mode) = job["config"]["mode"].as_str() {
         ensure!(
             matches!(mode, "api" | "incremental" | "full"),
@@ -268,6 +269,28 @@ fn update(store: &ControlStore, id: &str, body: &Value) -> Result<Value> {
 
 /// Build the deployed job's ingestion parameters, preserving daily core API mode.
 pub fn sync_request(job: &Value, override_config: Option<&Value>) -> Result<Value> {
+    sync_request_at(job, override_config, Utc::now())
+}
+
+fn config_held(config: &Value) -> bool {
+    ["held", "hold", "disabled"]
+        .iter()
+        .any(|key| config[key] == true)
+}
+
+fn sync_request_at(
+    job: &Value,
+    override_config: Option<&Value>,
+    now: DateTime<Utc>,
+) -> Result<Value> {
+    ensure!(
+        job["enabled"] != false,
+        "scheduled job is disabled; enable it before execution"
+    );
+    ensure!(
+        !config_held(&job["config"]),
+        "ingestion request is held or disabled; update the persisted job configuration before execution"
+    );
     let mut config = job["config"].clone();
     if let Some(override_config) = override_config {
         for (key, value) in override_config
@@ -278,7 +301,7 @@ pub fn sync_request(job: &Value, override_config: Option<&Value>) -> Result<Valu
         }
     }
     let kind = job["job_type"].as_str().context("job_type missing")?;
-    let now = Utc::now();
+    let today = now.with_timezone(&chrono_tz::America::Chicago).date_naive();
     let defaults = || json!(["crashes", "people", "vehicles", "fatalities"]);
     let endpoints = || {
         config
@@ -287,7 +310,7 @@ pub fn sync_request(job: &Value, override_config: Option<&Value>) -> Result<Valu
             .cloned()
             .unwrap_or_else(defaults)
     };
-    let mut request = if kind == "full_refresh" {
+    let mut request = if kind == "full_refresh" || config["mode"] == "full" {
         json!({"mode":"full","endpoints":endpoints(),"force":true})
     } else if kind == "incremental" || config["mode"] == "incremental" {
         json!({"mode":"incremental","endpoints":endpoints()})
@@ -315,10 +338,9 @@ pub fn sync_request(job: &Value, override_config: Option<&Value>) -> Result<Valu
             _ => anyhow::bail!("unsupported job type"),
         };
         ensure!((0..=36500).contains(&days), "invalid date_range_days");
-        let mut request = json!({"mode":"api","endpoints":endpoints,"end_date":now.format("%Y-%m-%d").to_string(),"force":config["force"].as_bool().unwrap_or(true)});
+        let mut request = json!({"mode":"api","endpoints":endpoints,"end_date":today.to_string(),"force":config["force"].as_bool().unwrap_or(true)});
         if days > 0 {
-            request["start_date"] =
-                json!((now - Duration::days(days)).format("%Y-%m-%d").to_string());
+            request["start_date"] = json!((today - Duration::days(days)).to_string());
         }
         if kind == "custom" {
             for key in ["start_date", "end_date"] {
@@ -329,6 +351,9 @@ pub fn sync_request(job: &Value, override_config: Option<&Value>) -> Result<Valu
         }
         request
     };
+    // Freeze the reviewed policy alongside execution parameters. Ingestion
+    // applies holds, repair restrictions and explicit full-refresh permission.
+    request["config"] = config;
     request["scheduled_job_id"] = job["id"].clone();
     request["job_type"] = job["job_type"].clone();
     Ok(request)
@@ -396,7 +421,9 @@ pub fn enqueue_due(store: &ControlStore) -> Result<usize> {
     let mut count = 0;
     for mut job in records(&transaction, "scheduled_jobs")? {
         validate_job_record(&job)?;
-        if job["enabled"] != true || !timestamp(&job["next_run"])?.is_some_and(|next| next <= time)
+        if job["enabled"] != true
+            || config_held(&job["config"])
+            || !timestamp(&job["next_run"])?.is_some_and(|next| next <= time)
         {
             continue;
         }
@@ -845,6 +872,65 @@ mod tests {
         assert_eq!(enqueue_due(&store)?, 1);
         assert_eq!(enqueue_due(&store)?, 0);
         assert!(create(&store,&json!({"name":"Invalid cron","job_type":"incremental","recurrence_type":"custom_cron","cron_expression":"bad","config":{}})).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn execution_retains_reviewed_policy_and_uses_chicago_calendar_dates() -> Result<()> {
+        let now = DateTime::parse_from_rfc3339("2026-10-23T02:00:00Z")?.with_timezone(&Utc);
+        let mut job = json!({"id":1,"job_type":"last_30_days_core_data","config":{"repair_null_people_dates":true}});
+        let request = sync_request_at(&job, None, now)?;
+        assert_eq!(request["start_date"], "2026-09-22");
+        assert_eq!(request["end_date"], "2026-10-22");
+        assert_eq!(request["config"]["repair_null_people_dates"], true);
+
+        job["config"] = json!({"mode":"full","endpoints":["fatalities"],"allow_full_refresh":true});
+        let request = sync_request_at(&job, None, now)?;
+        assert_eq!(request["mode"], "full");
+        assert_eq!(request["endpoints"], json!(["fatalities"]));
+        assert_eq!(request["config"]["allow_full_refresh"], true);
+        Ok(())
+    }
+
+    #[test]
+    fn held_jobs_cannot_be_forced_or_block_other_due_schedules() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let store = ControlStore::open(directory.path().join("control.sqlite"), 8, 30)?;
+        for flag in ["held", "hold", "disabled"] {
+            let mut config = json!({});
+            config[flag] = json!(true);
+            let mut job = create(
+                &store,
+                &json!({"name":flag,"job_type":"last_30_days_core_data","recurrence_type":"daily","config":config}),
+            )?;
+            job["next_run"] = json!((Utc::now() - Duration::days(1)).to_rfc3339());
+            persist(&store.connect()?, "scheduled_jobs", &job)?;
+            let mut overrides = json!({});
+            overrides[flag] = json!(false);
+            assert!(
+                execute(
+                    &store,
+                    &job["id"].to_string(),
+                    &json!({"force":true,"override_config":overrides})
+                )
+                .is_err()
+            );
+        }
+        let disabled = create(
+            &store,
+            &json!({"name":"Disabled schedule","enabled":false,"job_type":"last_30_days_core_data","recurrence_type":"daily","config":{}}),
+        )?;
+        assert!(execute(&store, &disabled["id"].to_string(), &json!({"force":true})).is_err());
+        let mut runnable = create(
+            &store,
+            &json!({"name":"Runnable","job_type":"last_30_days_core_data","recurrence_type":"daily","config":{}}),
+        )?;
+        runnable["next_run"] = json!((Utc::now() - Duration::days(1)).to_rfc3339());
+        persist(&store.connect()?, "scheduled_jobs", &runnable)?;
+        assert_eq!(enqueue_due(&store)?, 1);
+        let queued = store.list(Some("ingestion"), 8)?;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].request["scheduled_job_id"], runnable["id"]);
         Ok(())
     }
 }

@@ -88,7 +88,8 @@ impl From<anyhow::Error> for ApiError {
         {
             return Self(StatusCode::NOT_FOUND, "Resource not found".into());
         }
-        if message == "Selection geometry must be valid and nonempty"
+        if message == queries::REPORT_RANGE_ERROR
+            || message == "Selection geometry must be valid and nonempty"
             || message == "Selection geometry must be Polygon or MultiPolygon"
             || message == "upload requires 1..100000 features"
             || message == "invalid upload geometry"
@@ -445,6 +446,9 @@ async fn dispatch(
             return Err(ApiError::bad("resolved_area is internal"));
         }
         location.validate().map_err(ApiError::bad)?;
+        if path == "/dashboard/location-report" {
+            location.validate_report_dates().map_err(ApiError::bad)?;
+        }
         if let Some(kind) = &location.place_type {
             validate_place(kind, location.place_id.as_deref())?;
         }
@@ -614,9 +618,9 @@ fn execute(
     if *method == Method::GET {
         return match parts.as_slice() {
             ["runtime", "info"] => {
-                let settings=db.query("SELECT current_setting('memory_limit') AS memory_limit,current_setting('threads') AS sql_threads",&[])?.into_iter().next().context("runtime settings missing")?;
+                let settings=db.query("SELECT current_setting('memory_limit') AS memory_limit,current_setting('threads') AS sql_threads,current_setting('max_temp_directory_size') AS max_temp_directory_size",&[])?.into_iter().next().context("runtime settings missing")?;
                 Ok(
-                    json!({"backend":"rust","source_sha256":env!("CRASHES_SOURCE_SHA256"),"engine":"2.0.0","resources":{"pid":std::process::id()},"memory_limit":settings["memory_limit"],"sql_threads":settings["sql_threads"],"serialized":true,"profiling_data":state.profiling_data,"public_cache":state.pubcache.stats()}),
+                    json!({"backend":"rust","source_sha256":env!("CRASHES_SOURCE_SHA256"),"engine":"2.0.0","resources":{"pid":std::process::id()},"memory_limit":settings["memory_limit"],"sql_threads":settings["sql_threads"],"max_temp_directory_size":settings["max_temp_directory_size"],"serialized":true,"profiling_data":state.profiling_data,"public_cache":state.pubcache.stats()}),
                 )
             }
             ["ready"] => {
@@ -698,6 +702,20 @@ fn execute(
                     .collect::<Vec<_>>()
             )),
             ["jobs", "schedules"] => Ok(serde_json::to_value(state.control.schedules()?)?),
+            ["jobs", "backups"] => {
+                // History is recorded only after the paired snapshot and any
+                // configured offsite publication complete. Do not infer success
+                // from local directories, which can also contain pending work.
+                let history = state
+                    .control
+                    .configuration("full_backup_history")?
+                    .unwrap_or_else(|| json!([]));
+                let history = history.as_array().context("invalid backup history")?;
+                Ok(json!({
+                    "backups": &history[history.len().saturating_sub(7)..],
+                    "last_full_backup_at": state.control.configuration("last_full_backup_at")?.and_then(|value| value.as_i64()),
+                }))
+            }
             ["jobs", id] => Ok(state
                 .control
                 .get(id)?
@@ -1010,6 +1028,12 @@ async fn upload(
                         .await
                         .map_err(anyhow::Error::from)?;
                 }
+                // Tokio may return from write_all before its filesystem task
+                // finishes. Complete it before synchronous validation reopens
+                // this path, including the final multipart chunk's write errors.
+                tokio::io::AsyncWriteExt::flush(&mut file)
+                    .await
+                    .map_err(anyhow::Error::from)?;
             }
             "name" => name = field.text().await.map_err(ApiError::bad)?,
             "label_field" => label = Some(field.text().await.map_err(ApiError::bad)?),
