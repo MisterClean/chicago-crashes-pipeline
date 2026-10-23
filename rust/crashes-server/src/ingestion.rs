@@ -580,8 +580,12 @@ fn publish(
         .map(|c| format!("{0}=s.{0}", sources::identifier(c)))
         .collect::<Vec<_>>()
         .join(",");
-    session.execute(&format!("UPDATE {table} t SET {assignments} FROM {stage} s WHERE {equality} AND {changed_predicate}"),&[])?;
-    session.execute(&format!("INSERT INTO {table} ({}) SELECT {} FROM {stage} s WHERE NOT EXISTS(SELECT 1 FROM {table} t WHERE {equality})",columns.join(","),columns.iter().map(|c|format!("s.{c}")).collect::<Vec<_>>().join(",")),&[])?;
+    if changed > 0 {
+        session.execute(&format!("UPDATE {table} t SET {assignments} FROM {stage} s WHERE {equality} AND {changed_predicate}"),&[])?;
+    }
+    if inserted > 0 {
+        session.execute(&format!("INSERT INTO {table} ({}) SELECT {} FROM {stage} s WHERE NOT EXISTS(SELECT 1 FROM {table} t WHERE {equality})",columns.join(","),columns.iter().map(|c|format!("s.{c}")).collect::<Vec<_>>().join(",")),&[])?;
+    }
     session.execute(&format!("DROP TABLE {stage}"), &[])?;
     Ok(
         json!({"inserted_rows":inserted,"changed_rows":changed,"unchanged_rows":accepted.saturating_sub(inserted+changed),"accepted_rows":accepted}),
@@ -1090,7 +1094,10 @@ mod native_tests {
         fixture(
             temp.path(),
             "crashes",
-            &[json!({"crash_record_id":"C1","crash_date":"2026-01-01","posted_speed_limit":"35"})],
+            &[
+                json!({"crash_record_id":"C1","crash_date":"2026-01-01","posted_speed_limit":"35"}),
+                json!({"crash_record_id":"C2","crash_date":"2026-01-02","posted_speed_limit":"30"}),
+            ],
         );
         let changed = publish_sources(
             &db,
@@ -1101,9 +1108,29 @@ mod native_tests {
         )
         .unwrap();
         assert_eq!(changed["datasets"]["crashes"]["changed_rows"], 1);
+        assert_eq!(changed["datasets"]["crashes"]["inserted_rows"], 1);
         assert_eq!(
-            db.query("SELECT created_at FROM crashes", &[]).unwrap()[0]["created_at"],
+            db.query(
+                "SELECT created_at FROM crashes WHERE crash_record_id='C1'",
+                &[]
+            )
+            .unwrap()[0]["created_at"],
             created
+        );
+        let unchanged = publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "third",
+        )
+        .unwrap();
+        assert_eq!(unchanged["datasets"]["crashes"]["changed_rows"], 0);
+        assert_eq!(unchanged["datasets"]["crashes"]["inserted_rows"], 0);
+        assert_eq!(unchanged["datasets"]["crashes"]["unchanged_rows"], 2);
+        assert_eq!(
+            committed_publication(&db, "third").unwrap(),
+            Some(unchanged)
         );
         assert!(
             publish_sources(
