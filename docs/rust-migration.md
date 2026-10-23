@@ -44,6 +44,8 @@ Automatic scheduling is off in the local CLI; the production image sets `DAILY_S
 
 The daily core job uses a 30-day event-date API window for crashes, people and vehicles. It preserves historical null person dates and enforces the default 25,000 changed-row publication guard. A date window does not prove full historical completeness or advance a global modification watermark.
 
+For historical location reports, configure separate weekly full replays for crashes, people and vehicles, staggered so each source completes before the next begins. Use `mode=full`, `allow_full_refresh=true`, one endpoint per schedule, and the same finite change guard. `source_mode=bulk` retains strict bulk validation with complete ordered API fallback; `source_mode=api` requires the complete ordered API directly. These schedules are explicit operating policy and are not installed automatically. Review their durable receipts with `crashes-server admin queue`. Current portal vehicle model years through the Chicago calendar year plus one are accepted; snapshot imports preserve captured historical values.
+
 Fatality incremental updates require an actual source-update checkpoint. Core modification-watermark jobs and historical person-date repair remain held until a reviewed baseline/policy is provided. `force` does not bypass holds, disabled flags or the change guard. Empty or unstable API windows do not erase facts.
 
 The audited [mapping](../rust/crashes-server/resources/csv_column_mapping.json) owns CSV display-header/API-name/type conversion. Downloads validate schema, transport, content hashes, counts and source revisions. New or renamed columns fail for review. Successful staging is removed after durable publication; source disk budget, retention and attempt counts are bounded.
@@ -71,6 +73,8 @@ Required settings:
 | `DAILY_SYNC` | Enable only after reviewing imported schedules |
 
 The image's starting buffer configuration is `DUCKDB_MEMORY_LIMIT=192MB`, `DUCKDB_THREADS=2` and a 16 MiB response cache. Do not use a 128 MB buffer with exports: it is smaller than an observed native allocation. The local low-traffic trial passed with a 512 MiB backend cap, but reached that cap with reclaim pressure. Validate the actual host architecture, storage, traffic and upload envelope before selecting limits.
+
+Full historical reconciliation needs additional headroom: a complete vehicle replay exhausted the 192 MB buffer without publishing. For deployments running those jobs, configure a 512 MB DuckDB buffer, one SQL thread and a finite 2 GiB outer container ceiling; validate the complete replay and report workload on the actual volume. Keep per-source full jobs separate to bound source staging. A buffer or container ceiling does not imply that amount of idle consumption.
 
 Serve the frontend separately with a private `BACKEND_URL` and `NEXT_PUBLIC_API_URL=/api`. Set `BACKEND_URL` when building and at runtime; changing it requires rebuilding compiled rewrites. `NEXT_PUBLIC_BASEMAP_URL` optionally selects a public style at build time. No server secret belongs in a `NEXT_PUBLIC_*` setting.
 
