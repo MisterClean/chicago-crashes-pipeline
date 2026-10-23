@@ -163,7 +163,7 @@ See [measured results and their limits](docs/research/rust-migration-results-202
 
 ## Deploying on Railway
 
-The root `railway.toml` builds `docker/Dockerfile.rust`, runs one backend replica and checks `/ready`. Mount a persistent volume at `/data`, populate it before serving, and configure production authentication and private object storage. The image initializes mounted-volume permissions, drops privileges and binds `::` for Railway's private IPv6 network and dual-stack hosts.
+For a new Railway service, set the Dockerfile to `docker/Dockerfile.rust`, the start command to `/usr/local/bin/crashes-entrypoint serve`, one replica and the healthcheck to `/ready` in service settings or Railway IaC. Railway has deprecated TOML configuration for new services; the checked-in TOML files remain references for existing deployments. Mount a persistent volume at `/data`, populate it before serving, and configure production authentication and private object storage. The image initializes mounted-volume permissions, drops privileges and binds `::` for Railway's private IPv6 network and dual-stack hosts.
 
 Deploy `frontend/` as a separate Next.js service and set its private `BACKEND_URL` for both build and runtime. No PostgreSQL server, separate ingestion/export workers, Redis, or tile server is required for normal operation.
 

@@ -56,7 +56,7 @@ GeoJSON/ZIP validation rejects unsafe paths, symlinks, unsupported geometry, mis
 
 ## Production configuration
 
-The root `railway.toml` builds `docker/Dockerfile.rust`, starts the entrypoint wrapper and checks `/ready`. The image uses one Rust owner, the pinned native engine, GDAL and system CA certificates. The wrapper initializes mounted-volume ownership as needed and drops to UID 10001. For fresh portal CSV facts while retaining uploaded boundaries, follow the [private bootstrap procedure](railway-bootstrap.md).
+Configure new Railway services through service settings or Railway IaC: build `docker/Dockerfile.rust`, start `/usr/local/bin/crashes-entrypoint serve`, use one replica and check `/ready`. Railway's deprecated TOML configuration remains usable only for existing deployments during its transition period. The image uses one Rust owner, the pinned native engine, GDAL and system CA certificates. The wrapper initializes mounted-volume ownership as needed and drops to UID 10001. For fresh portal CSV facts while retaining uploaded boundaries, follow the [private bootstrap procedure](railway-bootstrap.md).
 
 Required settings:
 

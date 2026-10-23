@@ -2,7 +2,7 @@
 
 This procedure creates fresh facts from the Chicago portal's complete CSV exports and preserves the existing uploaded boundary catalog. It does not import PostgreSQL crash rows or historical operational state. Keep the old service and its data available until the replacement has passed verification and the agreed rollback window has ended.
 
-The temporary [bootstrap configuration](../docker/railway.bootstrap.toml) builds the normal Rust image but starts `crashes-bootstrap`. This process gives `/data` private permissions, initializes its ownership and waits as UID/GID 10001. It starts no DuckDB connection, HTTP listener, ingestion worker or scheduler. The normal root `railway.toml` remains unchanged.
+The temporary bootstrap configuration builds the normal Rust image but starts `crashes-bootstrap`. This process gives `/data` private permissions, initializes its ownership and waits as UID/GID 10001. It starts no DuckDB connection, HTTP listener, ingestion worker or scheduler. Configure new services through Railway service settings or IaC; Railway no longer accepts TOML configuration for new services. The checked-in [bootstrap TOML](../docker/railway.bootstrap.toml) is a settings reference for legacy deployments.
 
 ## Capture only the uploaded boundaries
 
@@ -21,9 +21,9 @@ The result's `boundaries/manifest.json` and associated files belong together. Re
 
 ## Start the private hold
 
-Use one replacement backend replica with one persistent volume mounted at `/data`. Select `/docker/railway.bootstrap.toml` as its temporary config file. Leave public domains and TCP proxies detached. Clear any existing service-level healthcheck path: this TOML intentionally contains no `healthcheckPath`, and omitting it does not establish readiness for an HTTP server. Disable service sleeping while performing SSH maintenance.
+Use one replacement backend replica with one persistent volume mounted at `/data`. Set the Dockerfile path to `docker/Dockerfile.rust` and the start command to `/usr/local/bin/crashes-bootstrap` in service settings or IaC. Leave public domains and TCP proxies detached. Explicitly clear any service-level healthcheck path: the hold has no HTTP server. Disable service sleeping while performing SSH maintenance. Existing services still managed by TOML must first migrate their configuration before equivalent service settings can take effect.
 
-The deployment's expected log is `Private bootstrap hold ready as uid/gid 10001; HTTP and scheduling are stopped.` No `/ready` endpoint exists in this phase. The image retains its normal Docker healthcheck for regular serving; a standalone local hold test should use Docker's `--no-healthcheck`. Railway's activation checks are configured separately by its service healthcheck path, as described in [Railway healthchecks](https://docs.railway.com/deployments/healthchecks) and [custom config files](https://docs.railway.com/config-as-code).
+The deployment's expected log is `Private bootstrap hold ready as uid/gid 10001; HTTP and scheduling are stopped.` No `/ready` endpoint exists in this phase. The image retains its normal Docker healthcheck for regular serving; a standalone local hold test should use Docker's `--no-healthcheck`. Railway's activation checks are configured separately by its service healthcheck path, as described in [Railway healthchecks](https://docs.railway.com/deployments/healthchecks) and [infrastructure as code](https://docs.railway.com/infrastructure-as-code).
 
 Set backend service variables through the platform's secret/configuration manager:
 
@@ -87,7 +87,7 @@ For a replacement-volume drill, retrieve one complete paired snapshot privately 
 
 ## Verify privately, then change traffic
 
-Change the service config path back to `/railway.toml`, preserving the same volume and one replica. Keep `DAILY_SYNC=false` and networking private during verification. The normal start command serves the application and `/ready` checks the imported production data. Wait for the exact submitted deployment to succeed and verify `/health`, `/ready`, fact counts, uploaded places, a location report, the admin execution history and one signed private export. Fresh portal counts may differ from the retired database; compare against the validated source receipts rather than expecting historical database parity.
+Change the start command to `/usr/local/bin/crashes-entrypoint serve` and set the healthcheck path to `/ready`, preserving the same volume and one replica. Keep `DAILY_SYNC=false` and networking private during verification. The normal start command serves the application and `/ready` checks the imported production data. Wait for the exact submitted deployment to succeed and verify `/health`, `/ready`, fact counts, uploaded places, a location report, the admin execution history and one signed private export. Fresh portal counts may differ from the retired database; compare against the validated source receipts rather than expecting historical database parity.
 
 Build the frontend with `BACKEND_URL` pointing to the replacement backend's private hostname and port, and `NEXT_PUBLIC_API_URL=/api`. Set `BACKEND_URL` both during the build and at runtime. Basemap precedence is explicit `NEXT_PUBLIC_BASEMAP_URL`, then browser-visible `NEXT_PUBLIC_PROTOMAPS_KEY`, then keyless CARTO Positron. Keep the style URL empty when selecting Protomaps by key; both are build-time values and require a rebuild after changes. Never expose the backend `API_KEY` as a `NEXT_PUBLIC_*` value.
 

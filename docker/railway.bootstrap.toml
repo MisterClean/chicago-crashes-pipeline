@@ -1,5 +1,6 @@
-# Select this temporary config explicitly for a private, single-volume bootstrap.
-# Return the service config path to /railway.toml after verified seed and backup.
+# Legacy TOML/settings reference for a private, single-volume bootstrap.
+# New Railway services must configure these settings through the UI or IaC.
+# After verified seed and backup, use crashes-entrypoint serve and /ready.
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "docker/Dockerfile.rust"
