@@ -74,7 +74,7 @@ Required settings:
 
 The image's starting buffer configuration is `DUCKDB_MEMORY_LIMIT=192MB`, `DUCKDB_THREADS=2` and a 16 MiB response cache. Do not use a 128 MB buffer with exports: it is smaller than an observed native allocation. The local low-traffic trial passed with a 512 MiB backend cap, but reached that cap with reclaim pressure. Validate the actual host architecture, storage, traffic and upload envelope before selecting limits.
 
-Full historical reconciliation needs additional headroom: a complete vehicle replay exhausted the 192 MB buffer without publishing. For deployments running those jobs, configure a 512 MB DuckDB buffer, one SQL thread and a finite 2 GiB outer container ceiling; validate the complete replay and report workload on the actual volume. Keep per-source full jobs separate to bound source staging. A buffer or container ceiling does not imply that amount of idle consumption.
+Full historical reconciliation needs additional headroom: a complete vehicle replay exhausted the 192 MB buffer without publishing. For deployments running those jobs, configure a 512 MB DuckDB buffer, one SQL thread and a finite 2 GB outer container ceiling; validate the complete replay and report workload on the actual volume. Keep per-source full jobs separate to bound source staging. A buffer or container ceiling does not imply that amount of idle consumption.
 
 Serve the frontend separately with a private `BACKEND_URL` and `NEXT_PUBLIC_API_URL=/api`. Set `BACKEND_URL` when building and at runtime; changing it requires rebuilding compiled rewrites. `NEXT_PUBLIC_BASEMAP_URL` optionally selects a public style at build time. No server secret belongs in a `NEXT_PUBLIC_*` setting.
 
