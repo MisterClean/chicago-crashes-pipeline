@@ -73,7 +73,7 @@ fn portal_get_with_backoff(
         let delay = match outcome {
             Ok(response) => {
                 let status = response.status();
-                if !matches!(status.as_u16(), 429 | 502 | 503 | 504)
+                if !matches!(status.as_u16(), 429 | 500 | 502 | 503 | 504)
                     || attempt == PORTAL_GET_ATTEMPTS
                 {
                     return Ok(response.error_for_status()?);
@@ -811,7 +811,7 @@ mod portal_retry_tests {
 
     #[test]
     fn transient_status_recovers_without_restarting_the_source_request() {
-        for transient in [429, 502, 503, 504] {
+        for transient in [429, 500, 502, 503, 504] {
             let (url, received, worker) = server(2, move |index, mut stream| {
                 reply(
                     &mut stream,
