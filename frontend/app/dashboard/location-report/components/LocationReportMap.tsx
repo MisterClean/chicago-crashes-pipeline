@@ -20,6 +20,7 @@ import {
   MAX_ZOOM,
 } from "@/lib/mapStyles";
 import type { LocationReportResponse } from "@/lib/api";
+import { costBasisLabel, coverageLabel, formatCost } from "@/lib/costDisplay";
 
 setWorkerUrl(new URL("maplibre-gl/dist/maplibre-gl-worker.mjs", import.meta.url).toString());
 
@@ -73,15 +74,6 @@ function formatDateRange(startDate: string, endDate: string): string {
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr + "T00:00:00");
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-// Format currency in abbreviated form ($1.2M, $45.3K, etc.)
-function formatCurrency(value: number | undefined | null): string {
-  if (value === undefined || value === null) return "$0";
-  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
-  return `$${value.toFixed(0)}`;
 }
 
 export function LocationReportMap({
@@ -382,22 +374,23 @@ export function LocationReportMap({
           <div className="mb-2 pb-2 border-b border-gray-200 dark:border-gray-700 space-y-1">
             <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-0.5">
               <div className="text-base font-bold text-gray-900 dark:text-white leading-tight">
-                {formatCurrency(reportData.stats.estimated_economic_damages)}
+                {formatCost(reportData.stats.estimated_economic_damages)}
               </div>
               <div className="text-[10px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                Est. Economic Cost
+                {reportData.stats.cost_breakdown?.coverage.status === "partial" ? "Partial Economic Cost" : "Est. Economic Cost"}
                 <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-full" title="See methodology footnote below">i</span>
               </div>
             </div>
             <div className="bg-gray-50 dark:bg-gray-700/30 rounded-md px-2 py-0.5">
               <div className="text-base font-bold text-gray-900 dark:text-white leading-tight">
-                {formatCurrency(reportData.stats.estimated_societal_costs)}
+                {formatCost(reportData.stats.estimated_societal_costs)}
               </div>
               <div className="text-[10px] text-gray-600 dark:text-gray-400 flex items-center gap-1">
-                Est. Total Societal Cost
+                {reportData.stats.cost_breakdown?.coverage.status === "partial" ? "Partial Societal Cost" : "Est. Total Societal Cost"}
                 <span className="inline-flex items-center justify-center w-3 h-3 text-[8px] font-bold bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-full" title="See methodology footnote below">i</span>
               </div>
             </div>
+            <p className="text-[10px] text-gray-600 dark:text-gray-400">{costBasisLabel(reportData.stats.cost_breakdown)}. {coverageLabel(reportData.stats.cost_breakdown?.coverage)}.</p>
           </div>
 
           {/* Conditional metrics - only show if > 0 */}

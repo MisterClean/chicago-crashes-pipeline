@@ -26,6 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "build.rs",
         "../../Cargo.lock",
         "resources/csv_column_mapping.json",
+        "resources/kabco_annual_inputs.json",
     ] {
         println!("cargo:rerun-if-changed={path}");
         digest.update(fs::read(path)?);

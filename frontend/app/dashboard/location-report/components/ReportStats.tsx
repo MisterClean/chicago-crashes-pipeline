@@ -1,26 +1,12 @@
 "use client";
 
 import type { LocationReportStats } from "@/lib/api";
+import { costBasisLabel, coverageLabel, formatCost } from "@/lib/costDisplay";
 import { CostBreakdownTable } from "./CostBreakdownTable";
+import { CostCoverageNotice } from "./CostCoverageNotice";
 
 interface ReportStatsProps {
   stats: LocationReportStats;
-}
-
-// Format currency in abbreviated form ($1.2M, $45.3K, etc.)
-function formatCurrency(value: number | undefined | null): string {
-  if (value === undefined || value === null) {
-    return "$0";
-  }
-  if (value >= 1_000_000_000) {
-    return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  } else if (value >= 1_000_000) {
-    return `$${(value / 1_000_000).toFixed(1)}M`;
-  } else if (value >= 1_000) {
-    return `$${(value / 1_000).toFixed(1)}K`;
-  } else {
-    return `$${value.toFixed(0)}`;
-  }
 }
 
 export function ReportStats({ stats }: ReportStatsProps) {
@@ -105,14 +91,14 @@ export function ReportStats({ stats }: ReportStatsProps) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-emerald-100 mb-1 flex items-center gap-1.5">
-                Est. Economic Cost
+                {stats.cost_breakdown?.coverage.status === "partial" ? "Partial Economic Cost" : "Est. Economic Cost"}
                 <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold bg-emerald-400/50 rounded-full cursor-help" title="See methodology footnote below">i</span>
               </p>
               <p className="text-3xl font-bold">
-                {formatCurrency(stats.estimated_economic_damages)}
+                {formatCost(stats.estimated_economic_damages)}
               </p>
               <p className="text-xs text-emerald-200 mt-2">
-                Based on FHWA KABCO methodology (2024$)
+                {costBasisLabel(stats.cost_breakdown)}
               </p>
             </div>
             <div className="text-emerald-200">
@@ -127,14 +113,14 @@ export function ReportStats({ stats }: ReportStatsProps) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium text-indigo-100 mb-1 flex items-center gap-1.5">
-                Est. Total Societal Cost
+                {stats.cost_breakdown?.coverage.status === "partial" ? "Partial Societal Cost" : "Est. Total Societal Cost"}
                 <span className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold bg-indigo-400/50 rounded-full cursor-help" title="See methodology footnote below">i</span>
               </p>
               <p className="text-3xl font-bold">
-                {formatCurrency(stats.estimated_societal_costs)}
+                {formatCost(stats.estimated_societal_costs)}
               </p>
               <p className="text-xs text-indigo-200 mt-2">
-                Includes economic + quality-adjusted life years (QALY)
+                {coverageLabel(stats.cost_breakdown?.coverage)}; includes economic + QALY
               </p>
             </div>
             <div className="text-indigo-200">
@@ -145,6 +131,10 @@ export function ReportStats({ stats }: ReportStatsProps) {
           </div>
         </div>
       </div>
+
+      {stats.cost_breakdown && stats.cost_breakdown.coverage.status !== "complete" && (
+        <CostCoverageNotice coverage={stats.cost_breakdown.coverage} />
+      )}
 
       {/* Key Insights */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 mb-6">

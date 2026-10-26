@@ -1,7 +1,9 @@
 CREATE TABLE crashes (
     crash_record_id VARCHAR, crash_date TIMESTAMP, latitude DOUBLE, longitude DOUBLE, geometry GEOMETRY,
     injuries_total BIGINT, injuries_fatal BIGINT, injuries_incapacitating BIGINT,
-    hit_and_run_i VARCHAR, prim_contributory_cause VARCHAR, crash_type VARCHAR,street_name VARCHAR
+    hit_and_run_i VARCHAR, prim_contributory_cause VARCHAR, crash_type VARCHAR,street_name VARCHAR,
+    injuries_non_incapacitating BIGINT, injuries_reported_not_evident BIGINT,
+    injuries_no_indication BIGINT, injuries_unknown BIGINT, num_units DOUBLE
 );
 CREATE TABLE crash_people (crash_record_id VARCHAR, person_id VARCHAR, crash_date TIMESTAMP,
     person_type VARCHAR, injury_classification VARCHAR, age INTEGER);

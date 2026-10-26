@@ -20,28 +20,6 @@ pub const REPORT_RANGE_ERROR: &str = "Location reports support at most 1200 cale
 const CYCLIST: &str = "(person_type ILIKE '%BICYCLE%' OR person_type ILIKE '%CYCLIST%' OR person_type ILIKE '%PEDALCYCLIST%')";
 const KNOWN: &str = "'FATAL','INCAPACITATING INJURY','NONINCAPACITATING INJURY','REPORTED, NOT EVIDENT','NO INDICATION OF INJURY'";
 const MAP_COLUMNS: &str = "crash_record_id, strftime(crash_date,'%Y-%m-%dT%H:%M:%S.%f') AS crash_date, injuries_total, injuries_fatal, injuries_incapacitating, hit_and_run_i, crash_type, street_name, prim_contributory_cause, ST_X(geometry) AS longitude, ST_Y(geometry) AS latitude";
-const COSTS: [(&str, i64, i64, &str); 5] = [
-    ("FATAL", 1_606_644, 9_651_851, "Fatal (K)"),
-    (
-        "INCAPACITATING INJURY",
-        172_179,
-        917_345,
-        "Incapacitating (A)",
-    ),
-    (
-        "NONINCAPACITATING INJURY",
-        44_490,
-        180_107,
-        "Non-incapacitating (B)",
-    ),
-    (
-        "REPORTED, NOT EVIDENT",
-        25_933,
-        85_348,
-        "Possible Injury (C)",
-    ),
-    ("NO INDICATION OF INJURY", 0, 0, "No Indication (O)"),
-];
 const NATIVE: [(&str, &str, &str, &str); 5] = [
     ("wards", "ward", "Wards", "Ward"),
     (
@@ -283,16 +261,27 @@ pub fn weekly_trends(db: &Database, dates: &DateRange, weeks: usize) -> Result<V
 }
 
 fn map_features(rows: Vec<Value>) -> Value {
-    json!({"type":"FeatureCollection","features":rows.into_iter().map(|r| {
+    let features = rows.into_iter().map(|r| {
         let date = r["crash_date"].as_str().map(|s| s.strip_suffix(".000000").unwrap_or(s));
-        json!({"type":"Feature","geometry":{"type":"Point","coordinates":[r["longitude"],r["latitude"]]},"properties":{
+        let mut properties = json!({
             "crash_record_id":r["crash_record_id"],"crash_date":date,
             "injuries_total":r["injuries_total"].as_i64().unwrap_or(0),
             "injuries_fatal":r["injuries_fatal"].as_i64().unwrap_or(0),
             "injuries_incapacitating":r["injuries_incapacitating"].as_i64().unwrap_or(0),
             "hit_and_run_i":r["hit_and_run_i"]=="Y", "crash_type":r["crash_type"],
-            "street_name":r["street_name"],"primary_contributory_cause":r["prim_contributory_cause"]}})
-    }).collect::<Vec<_>>()})
+            "street_name":r["street_name"],"primary_contributory_cause":r["prim_contributory_cause"]
+        });
+        // Location-report points expose the same estimates as the full export.
+        // The standalone dashboard map keeps its existing property contract.
+        if r.get("cost_status").is_some() {
+            for key in ["valuation_year","valuation_status","cost_status","estimated_economic_damages","estimated_societal_costs"] {
+                properties[key] = r[key].clone();
+            }
+            properties["cost_methodology_version"] = json!(crate::costs::VERSION);
+        }
+        json!({"type":"Feature","geometry":{"type":"Point","coordinates":[r["longitude"],r["latitude"]]},"properties":properties})
+    }).collect::<Vec<_>>();
+    json!({"type":"FeatureCollection","features":features})
 }
 
 pub fn crashes_geojson(db: &Database, dates: &DateRange, limit: usize) -> Result<Value> {
@@ -740,17 +729,6 @@ pub fn selected_crashes(db: &Database, request: &LocationRequest) -> Result<Sele
     })
 }
 
-fn costs(counts: &[Value], pdo: i64) -> Value {
-    let mut total_economic = pdo * 6269;
-    let mut total_societal = pdo * (6269 + 3927);
-    let injury_costs=COSTS.into_iter().map(|(class,economic,qaly,label)| {
-        let n=counts.iter().find(|r|r["injury_classification"]==class).and_then(|r|r["count"].as_i64()).unwrap_or(0);
-        total_economic+=n*economic; total_societal+=n*(economic+qaly);
-        json!({"classification":class,"classification_label":label,"count":n,"unit_economic_cost":economic,"unit_qaly_cost":qaly,"subtotal_economic":n*economic,"subtotal_societal":n*(economic+qaly)})
-    }).collect::<Vec<_>>();
-    json!({"injury_costs":injury_costs,"vehicle_costs":{"count":pdo,"unit_economic_cost":6269,"unit_qaly_cost":3927,"subtotal_economic":pdo*6269,"subtotal_societal":pdo*(6269+3927)},"total_economic":total_economic,"total_societal":total_societal})
-}
-
 fn report_month_count(first: NaiveDateTime, last: NaiveDateTime) -> Result<usize> {
     let months = i64::from(last.year() - first.year()) * 12 + i64::from(last.month0())
         - i64::from(first.month0())
@@ -816,6 +794,7 @@ pub fn location_report_at(
     let selection = selected_crashes(db, request)?;
     let sql = include_str!("../sql/location_report.sql")
         .replace("__SELECTION__", &selection.sql)
+        .replace("__COST_CTES__", &crate::costs::ctes()?)
         .replace("__CYCLIST__", CYCLIST)
         .replace("__KNOWN__", KNOWN);
     let mut report = parse_json(&row(db, &sql, &selection.params)?["payload"])?;
@@ -830,19 +809,14 @@ pub fn location_report_at(
             cause["percentage"] = json!(format!("{percentage:.1}").parse::<f64>()?);
         }
     }
-    let counts = report["injury_counts"]
-        .as_array()
-        .context("Missing injury counts")?;
-    let pdo = report["stats"]["pdo_vehicles"]
-        .as_i64()
-        .context("Missing vehicle count")?;
-    let costs = costs(counts, pdo);
+    let costs = crate::costs::breakdown(
+        report["cost_years"]
+            .as_array()
+            .context("Missing cost years")?,
+    )?;
     report["stats"]["estimated_economic_damages"] = costs["total_economic"].clone();
     report["stats"]["estimated_societal_costs"] = costs["total_societal"].clone();
     report["stats"]["cost_breakdown"] = costs;
-    if let Some(stats) = report["stats"].as_object_mut() {
-        stats.remove("pdo_vehicles");
-    }
     report["monthly_trends"] = fill_report_months(
         report["monthly_trends"]
             .as_array()
@@ -860,7 +834,7 @@ pub fn location_report_at(
     report["query_area_geojson"] = selection.query_area;
     report["map_limit"] = json!(MAP_LIMIT);
     if let Some(object) = report.as_object_mut() {
-        object.remove("injury_counts");
+        object.remove("cost_years");
         object.remove("map_points");
     }
     Ok(report)
@@ -997,18 +971,6 @@ mod tests {
     }
 
     #[test]
-    fn costs_should_count_people_once_and_only_pdo_vehicles() {
-        let c = costs(
-            &[json!({"injury_classification":"INCAPACITATING INJURY","count":1})],
-            2,
-        );
-        assert_eq!(
-            (c["total_economic"].as_i64(), c["total_societal"].as_i64()),
-            (Some(184717), Some(1109916))
-        );
-    }
-
-    #[test]
     fn natural_order_should_compare_digit_runs_without_overflow() {
         assert_eq!(natural_cmp("District 2", "District 10"), Ordering::Less);
         assert_eq!(natural_cmp("Ward 0002", "Ward 2"), Ordering::Equal);
@@ -1063,10 +1025,180 @@ mod tests {
         assert_eq!(report["stats"]["children_injured"], 1);
         assert_eq!(report["stats"]["unknown_injury_count"], 1);
         assert_eq!(report["stats"]["total_vehicles"], 3);
-        assert_eq!(report["stats"]["estimated_economic_damages"], 172179);
-        assert_eq!(report["stats"]["estimated_societal_costs"], 1089524);
+        assert_eq!(report["stats"]["estimated_economic_damages"], 240389.73);
+        assert_eq!(report["stats"]["estimated_societal_costs"], 1400576.06);
+        assert_eq!(
+            report["stats"]["cost_breakdown"]["coverage"]["status"],
+            "partial"
+        );
         assert_eq!(report["hour_day_counts"].as_array().unwrap().len(), 168);
         assert_eq!(report["hour_day_counts"][22]["severe_crashes"], 1);
+    }
+
+    #[test]
+    fn crash_year_costs_reconcile_reports_exports_and_parent_year_boundaries() {
+        let (db, _directory) = fixture().expect("native fixture");
+        db.execute(
+            "DELETE FROM crash_people; DELETE FROM crash_vehicles; DELETE FROM crashes",
+            &[],
+        )
+        .unwrap();
+        db.execute("INSERT INTO crashes (crash_record_id,crash_date,latitude,longitude,geometry,injuries_total,injuries_fatal,injuries_incapacitating) VALUES ('y23','2023-12-31 23:59:59.999999',41.75,-87.65,ST_Point(-87.65,41.75),1,0,1),('y24','2024-01-01 00:00:00',41.75,-87.65,ST_Point(-87.65,41.75),1,0,1)",&[]).unwrap();
+        db.execute("INSERT INTO crash_people (crash_record_id,person_id,crash_date,injury_classification) SELECT id,id||suffix,date,injury FROM (VALUES ('y23','2024-02-01'::TIMESTAMP),('y24',NULL::TIMESTAMP)) c(id,date) CROSS JOIN (VALUES ('a','INCAPACITATING INJURY'),('o','NO INDICATION OF INJURY')) p(suffix,injury)",&[]).unwrap();
+        db.execute("INSERT INTO crash_vehicles SELECT id||i,id FROM (VALUES ('y23'),('y24')) c(id) CROSS JOIN range(3) t(i)",&[]).unwrap();
+        let request = LocationRequest {
+            latitude: Some(41.75),
+            longitude: Some(-87.65),
+            radius_feet: Some(1000.0),
+            ..Default::default()
+        };
+        let report = location_report(&db, &request).unwrap();
+        let costs = &report["stats"]["cost_breakdown"];
+        assert_eq!(costs["coverage"]["status"], "complete");
+        assert_eq!(costs["years"][0]["year"], 2023);
+        assert_eq!(costs["years"][1]["year"], 2024);
+        assert_eq!(costs["years"][0]["total_economic"], 240974.36);
+        assert_eq!(costs["years"][1]["total_economic"], 248081.74);
+        assert_eq!(costs["years"][0]["total_societal"], 1361922.28);
+        assert_eq!(costs["years"][1]["total_societal"], 1413234.63);
+        assert!(costs["injury_costs"][1]["unit_economic_cost"].is_null());
+        assert_eq!(costs["vehicle_costs"]["count"], 6);
+        assert_eq!(
+            costs["vehicle_costs"]["subtotal_societal"],
+            costs["vehicle_costs"]["subtotal_economic"]
+        );
+        assert_eq!(costs["methodology"]["base_dollar_year"], 2019);
+        assert_eq!(costs["methodology"]["publication_year"], 2025);
+        let selected = selected_crashes(&db, &request).unwrap();
+        let rows = db
+            .query(
+                &crate::costs::export_query(&selected.sql).unwrap(),
+                &selected.params,
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        for (index, row) in rows.iter().enumerate() {
+            assert_eq!(
+                row["estimated_economic_damages"],
+                costs["years"][index]["total_economic"]
+            );
+            assert_eq!(
+                row["estimated_societal_costs"],
+                costs["years"][index]["total_societal"]
+            );
+            assert_eq!(row["methodology_version"], costs["methodology"]["version"]);
+            let rates: Value = serde_json::from_str(row["unit_costs"].as_str().unwrap()).unwrap();
+            assert_eq!(rates["vehicle_qaly"], 0);
+            let point = report["crashes_geojson"]["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|point| point["properties"]["crash_record_id"] == row["crash_record_id"])
+                .unwrap();
+            assert_eq!(
+                point["properties"]["estimated_economic_damages"],
+                row["estimated_economic_damages"]
+            );
+        }
+        let sum = rows
+            .iter()
+            .map(|row| row["estimated_economic_damages"].as_f64().unwrap())
+            .sum::<f64>();
+        assert!(
+            (sum - report["stats"]["estimated_economic_damages"]
+                .as_f64()
+                .unwrap())
+            .abs()
+                < 0.001
+        );
+        let summary = costs["injury_costs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["subtotal_economic"].as_f64().unwrap())
+            .sum::<f64>()
+            + costs["vehicle_costs"]["subtotal_economic"]
+                .as_f64()
+                .unwrap();
+        assert!((sum - summary).abs() < 0.001);
+        // Missing uninjured people and an incomplete vehicle feed are visible
+        // from parent expectations even when the linked injury totals agree.
+        db.execute(
+            "UPDATE crashes SET injuries_no_indication=2,num_units=4 WHERE crash_record_id='y24'",
+            &[],
+        )
+        .unwrap();
+        let partial = location_report(&db, &request).unwrap();
+        let coverage = &partial["stats"]["cost_breakdown"]["coverage"];
+        assert_eq!(coverage["status"], "partial");
+        assert_eq!(coverage["inconsistent_injury_crashes"], 1);
+        assert_eq!(coverage["inconsistent_vehicle_crashes"], 1);
+        assert_eq!(coverage["complete_crashes"], 1);
+        assert_eq!(coverage["partial_crashes"], 1);
+        assert_eq!(
+            partial["stats"]["estimated_economic_damages"],
+            report["stats"]["estimated_economic_damages"]
+        );
+    }
+
+    #[test]
+    fn crash_year_costs_expose_unavailable_partial_and_empty_selections() {
+        let (db, _directory) = fixture().expect("native fixture");
+        db.execute(
+            "DELETE FROM crash_people; DELETE FROM crash_vehicles; DELETE FROM crashes",
+            &[],
+        )
+        .unwrap();
+        db.execute("INSERT INTO crashes (crash_record_id,crash_date,latitude,longitude,geometry,injuries_total,injuries_fatal,injuries_incapacitating) VALUES ('unknown','2024-01-01',41.75,-87.65,ST_Point(-87.65,41.75),1,0,0),('missing','2024-01-02',41.75,-87.65,ST_Point(-87.65,41.75),0,0,0),('unsupported','2025-01-01',41.75,-87.65,ST_Point(-87.65,41.75),0,0,0),('no-date',NULL,41.75,-87.65,ST_Point(-87.65,41.75),0,0,0)",&[]).unwrap();
+        db.execute("INSERT INTO crash_people (crash_record_id,person_id,injury_classification) VALUES ('unknown','u',NULL),('unsupported','s','NO INDICATION OF INJURY'),('no-date','n','NO INDICATION OF INJURY')",&[]).unwrap();
+        db.execute("INSERT INTO crash_vehicles VALUES ('v1','unknown'),('v2','unsupported'),('v3','no-date')",&[]).unwrap();
+        let mut request = LocationRequest {
+            latitude: Some(41.75),
+            longitude: Some(-87.65),
+            radius_feet: Some(1000.0),
+            ..Default::default()
+        };
+        let report = location_report(&db, &request).unwrap();
+        let costs = &report["stats"]["cost_breakdown"];
+        assert_eq!(costs["coverage"]["status"], "partial");
+        assert_eq!(costs["coverage"]["crash_count"], 4);
+        assert_eq!(costs["coverage"]["complete_crashes"], 0);
+        assert_eq!(costs["coverage"]["partial_crashes"], 1);
+        assert_eq!(costs["coverage"]["unavailable_crashes"], 3);
+        assert_eq!(costs["coverage"]["unknown_injury_count"], 1);
+        assert_eq!(costs["coverage"]["missing_people_crashes"], 1);
+        assert_eq!(costs["coverage"]["missing_vehicle_crashes"], 1);
+        assert_eq!(costs["coverage"]["inconsistent_injury_crashes"], 1);
+        assert_eq!(costs["total_economic"], 9709.18);
+        let selected = selected_crashes(&db, &request).unwrap();
+        let rows = db
+            .query(
+                &crate::costs::export_query(&selected.sql).unwrap(),
+                &selected.params,
+            )
+            .unwrap();
+        assert_eq!(rows[1]["valuation_status"], "missing_date");
+        assert!(rows[1]["estimated_economic_damages"].is_null());
+        assert_eq!(rows[3]["valuation_status"], "unsupported_year");
+        assert!(rows[3]["estimated_societal_costs"].is_null());
+        request.start_date = Some("2025-01-01".into());
+        let unavailable = location_report(&db, &request).unwrap();
+        assert!(unavailable["stats"]["estimated_economic_damages"].is_null());
+        assert_eq!(
+            unavailable["stats"]["cost_breakdown"]["coverage"]["status"],
+            "unavailable"
+        );
+        assert!(
+            unavailable["stats"]["cost_breakdown"]["injury_costs"][4]["subtotal_economic"]
+                .is_null()
+        );
+        request.start_date = Some("2026-01-01".into());
+        let empty = location_report(&db, &request).unwrap();
+        assert_eq!(empty["stats"]["estimated_economic_damages"], 0.0);
+        assert_eq!(
+            empty["stats"]["cost_breakdown"]["coverage"]["status"],
+            "empty"
+        );
     }
 
     #[test]
@@ -1156,6 +1288,11 @@ mod tests {
             return;
         };
         db.execute("INSERT INTO crashes (crash_record_id,crash_date,latitude,longitude,geometry,injuries_total) SELECT 'large-' || i,'2024-04-01'::TIMESTAMP,41.75,-87.65,ST_Point(-87.65,41.75),1 FROM range(5001) t(i)",&[]).unwrap();
+        db.execute(
+            "INSERT INTO crash_vehicles SELECT 'large-v-' || i,'large-' || i FROM range(5001) t(i)",
+            &[],
+        )
+        .unwrap();
         let report = location_report_at(
             &db,
             &LocationRequest {
@@ -1169,6 +1306,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report["stats"]["total_crashes"], 5001);
+        assert_eq!(report["stats"]["estimated_economic_damages"], 48555609.18);
+        assert_eq!(
+            report["stats"]["cost_breakdown"]["coverage"]["partial_crashes"],
+            5001
+        );
         assert_eq!(
             report["crashes_geojson"]["features"]
                 .as_array()

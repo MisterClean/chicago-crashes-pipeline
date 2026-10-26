@@ -1,9 +1,10 @@
 WITH selected AS MATERIALIZED (
     SELECT crash_record_id, crash_date, injuries_total, injuries_fatal,
-        injuries_incapacitating, hit_and_run_i, crash_type, street_name,
+        injuries_incapacitating, injuries_non_incapacitating, injuries_reported_not_evident,
+        injuries_no_indication, injuries_unknown, num_units, hit_and_run_i, crash_type, street_name,
         prim_contributory_cause, longitude, latitude, geometry
     FROM (__SELECTION__)
-), people AS MATERIALIZED (
+), __COST_CTES__, people AS MATERIALIZED (
     SELECT p.person_type, p.injury_classification, p.age
     FROM crash_people p JOIN selected c USING(crash_record_id)
 ), crash_stats AS (
@@ -23,11 +24,8 @@ WITH selected AS MATERIALIZED (
             ('FATAL','INCAPACITATING INJURY','NONINCAPACITATING INJURY','REPORTED, NOT EVIDENT')) AS children_injured
     FROM people
 ), vehicle_stats AS (
-    SELECT count(*) AS total_vehicles,
-        count(*) FILTER (WHERE coalesce(c.injuries_total,0)=0 AND coalesce(c.injuries_fatal,0)=0) AS pdo_vehicles
+    SELECT count(*) AS total_vehicles
     FROM crash_vehicles v JOIN selected c USING(crash_record_id)
-), injury_counts AS (
-    SELECT injury_classification, count(*) AS count FROM people GROUP BY 1
 ), causes AS (
     SELECT coalesce(nullif(prim_contributory_cause,''),'UNKNOWN') AS cause, prim_contributory_cause AS source,
         count(*) AS crashes, coalesce(sum(injuries_total),0)::BIGINT AS injuries,
@@ -62,14 +60,17 @@ WITH selected AS MATERIALIZED (
         count(*) FILTER (WHERE injury_classification IS NULL OR injury_classification NOT IN (__KNOWN__)) AS unknown
     FROM people GROUP BY 1 ORDER BY people DESC,road_user
 ), map_points AS (
-    SELECT crash_record_id, strftime(crash_date,'%Y-%m-%dT%H:%M:%S.%f') AS crash_date,
+    SELECT s.crash_record_id, strftime(s.crash_date,'%Y-%m-%dT%H:%M:%S.%f') AS crash_date,
         injuries_total, injuries_fatal, injuries_incapacitating, hit_and_run_i,
-        crash_type, street_name, prim_contributory_cause, ST_X(geometry) AS longitude, ST_Y(geometry) AS latitude
-    FROM selected ORDER BY crash_date DESC,crash_record_id LIMIT 5000
+        crash_type, street_name, prim_contributory_cause, ST_X(geometry) AS longitude, ST_Y(geometry) AS latitude,
+        costs.valuation_year, costs.valuation_status, costs.cost_status,
+        costs.estimated_economic_damages, costs.estimated_societal_costs
+    FROM selected s JOIN cost_crashes costs USING(crash_record_id)
+    ORDER BY s.crash_date DESC,s.crash_record_id LIMIT 5000
 )
 SELECT to_json(struct_pack(
     stats := (SELECT c FROM (SELECT * FROM crash_stats CROSS JOIN people_stats CROSS JOIN vehicle_stats) c),
-    injury_counts := coalesce((SELECT list(i) FROM injury_counts i),[]),
+    cost_years := coalesce((SELECT list(y ORDER BY year NULLS LAST) FROM cost_years y),[]),
     causes := coalesce((SELECT list(struct_pack(cause := c.cause, crashes := c.crashes, injuries := c.injuries, fatalities := c.fatalities, percentage := c.percentage) ORDER BY c.crashes DESC,c.cause,c.source NULLS FIRST) FROM causes c),[]),
     monthly_trends := coalesce((SELECT list(m ORDER BY m.month) FROM monthly m),[]),
     hour_day_counts := (SELECT list(h ORDER BY h.day,h.hour) FROM heatmap h),

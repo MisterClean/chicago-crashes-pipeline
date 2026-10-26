@@ -479,13 +479,22 @@ async fn exports_validate_datasets_freeze_geometry_and_obey_durable_queue_capaci
             StatusCode::BAD_REQUEST
         );
     }
-    let (status, job, _) = send(app.clone(), "POST", "/exports", export(), Some(KEY)).await;
+    let mut all_datasets = export();
+    all_datasets["datasets"] = json!([
+        "crashes",
+        "people",
+        "vehicles",
+        "vision_zero",
+        "crash_costs"
+    ]);
+    let (status, job, _) = send(app.clone(), "POST", "/exports", all_datasets, Some(KEY)).await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let stored = state
         .control
         .get(job["id"].as_str().unwrap())
         .unwrap()
         .unwrap();
+    assert_eq!(stored.request["datasets"].as_array().unwrap().len(), 5);
     assert_eq!(
         stored.request["location"]["resolved_area"]["geometry"]["type"],
         "Polygon"
