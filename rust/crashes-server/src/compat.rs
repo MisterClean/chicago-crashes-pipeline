@@ -124,6 +124,7 @@ pub fn sync_request(body: &Value, today: NaiveDate) -> Result<Value> {
         "repair_null_people_dates",
         "allow_full_refresh",
         "force",
+        "recover_historical",
     ] {
         if let Some(value) = config.get(key) {
             ensure!(
@@ -244,6 +245,11 @@ pub fn sync_request(body: &Value, today: NaiveDate) -> Result<Value> {
         Error::bad("date_range_days must be 1..36500")
     );
     if mode == "api" {
+        // Preserve whether the operator supplied dates before normalizing the
+        // rolling window into concrete dates for a durable manual request.
+        config
+            .entry("recover_historical")
+            .or_insert(json!(dates.iter().all(Option::is_none)));
         let end = dates[1].unwrap_or(today);
         let start = dates[0].unwrap_or(end - Duration::days(days));
         ensure!(
@@ -494,6 +500,7 @@ mod tests {
         assert_eq!(value["mode"], "api");
         assert_eq!(value["start_date"], "2026-09-21");
         assert_eq!(value["end_date"], "2026-10-21");
+        assert_eq!(value["recover_historical"], true);
     }
     #[test]
     fn singular_fatalities_and_dates_are_not_broadened() {
@@ -501,6 +508,7 @@ mod tests {
         assert_eq!(value["endpoints"], json!(["fatalities"]));
         assert_eq!(value["mode"], "api");
         assert_eq!(value["requested_mode"], "incremental");
+        assert_eq!(value["recover_historical"], false);
         assert_eq!(value["start_date"], "2024-01-01");
         assert_eq!(value["force"], true);
     }

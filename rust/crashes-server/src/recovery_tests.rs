@@ -446,6 +446,17 @@ fn complete_event_windows_cannot_bootstrap_without_full_historical_baseline() ->
         true,
     )?;
     assert_incomplete(&fixture.database)?;
+    let datasets = crate::sources::DATASETS
+        .iter()
+        .map(|dataset| {
+            (
+                dataset.to_string(),
+                json!({"source_manifest":{"source_scope":"event_date_window_with_history"}}),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    fixture.database.execute("UPDATE ingestion_publications SET receipt=json_merge_patch(receipt, ?::JSON) WHERE operation_id='window-only'", &[json!(json!({"datasets":datasets}).to_string())])?;
+    assert_incomplete(&fixture.database)?;
     Ok(())
 }
 

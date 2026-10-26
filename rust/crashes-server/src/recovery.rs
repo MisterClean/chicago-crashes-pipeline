@@ -50,9 +50,12 @@ pub fn assert_complete(db: &Database) -> Result<()> {
                 let valid = receipt["production_complete"] == true
                     && receipt["profiling_only"] == false
                     && result["source_manifest"]["profiling_only"] != true;
-                // A daily event-date window updates an established history; it
+                // A daily filtered acquisition updates an established history; it
                 // cannot prove that a newly created table contains full history.
-                if result["source_manifest"]["source_scope"] == "event_date_window" {
+                if matches!(
+                    result["source_manifest"]["source_scope"].as_str(),
+                    Some("event_date_window" | "event_date_window_with_history")
+                ) {
                     if !valid {
                         complete.insert(dataset.to_owned(), false);
                     }

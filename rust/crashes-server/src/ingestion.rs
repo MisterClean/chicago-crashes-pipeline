@@ -523,10 +523,11 @@ fn restore_preserved_points(
 fn publish(
     session: &Session,
     stage: &str,
-    dataset: &str,
+    source: &VerifiedSource,
     mode: PublicationMode,
     check: &sources::Check<'_>,
 ) -> Result<Value> {
+    let dataset = source.dataset.as_str();
     let table = table_name(dataset)?;
     let exists = count(
         session,
@@ -602,6 +603,64 @@ fn publish(
             "SELECT count(*) n FROM {stage} s JOIN {table} t ON {equality} WHERE {changed_predicate}"
         ),
     )?;
+    let mut recovery = json!({});
+    if source.manifest["source_scope"] == "event_date_window_with_history" {
+        let coverage = &source.manifest["coverage"];
+        let start = coverage["event_start"]
+            .as_str()
+            .context("event start missing")?;
+        let end = coverage["event_end_exclusive"]
+            .as_str()
+            .context("event end missing")?;
+        let historical = format!(
+            "(s.crash_date IS NULL OR s.crash_date < {}::TIMESTAMP OR s.crash_date >= {}::TIMESTAMP)",
+            sources::literal(start),
+            sources::literal(end)
+        );
+        recovery["historical_rows"] = json!(count(
+            session,
+            &format!("SELECT count(*) n FROM {stage} s WHERE {historical}")
+        )?);
+        recovery["historical_inserted_rows"] = json!(count(
+            session,
+            &format!(
+                "SELECT count(*) n FROM {stage} s WHERE {historical} AND NOT EXISTS(SELECT 1 FROM {table} t WHERE {equality})"
+            )
+        )?);
+        recovery["historical_changed_rows"] = json!(count(
+            session,
+            &format!(
+                "SELECT count(*) n FROM {stage} s JOIN {table} t ON {equality} WHERE {historical} AND {changed_predicate}"
+            )
+        )?);
+        if dataset == "crashes" {
+            for (child, child_table) in [("people", "crash_people"), ("vehicles", "crash_vehicles")]
+            {
+                let child_exists = count(
+                    session,
+                    &format!(
+                        "SELECT count(*) n FROM information_schema.tables WHERE table_schema='main' AND table_name={}",
+                        sources::literal(child_table)
+                    ),
+                )? > 0;
+                if child_exists {
+                    recovery[format!("{child}_recovered_with_parent")] = json!(count(
+                        session,
+                        &format!(
+                            "SELECT count(*) n FROM {child_table} c JOIN {stage} s USING(crash_record_id) WHERE NOT EXISTS(SELECT 1 FROM crashes t WHERE t.crash_record_id=s.crash_record_id)"
+                        )
+                    )?);
+                }
+            }
+        } else if matches!(dataset, "people" | "vehicles") {
+            recovery["parentless_rows_retained"] = json!(count(
+                session,
+                &format!(
+                    "SELECT count(*) n FROM {stage} s WHERE NOT EXISTS(SELECT 1 FROM crashes c WHERE c.crash_record_id=s.crash_record_id)"
+                )
+            )?);
+        }
+    }
     let assignments = mapped
         .iter()
         .map(String::as_str)
@@ -617,9 +676,11 @@ fn publish(
         session.execute(&format!("INSERT INTO {table} ({}) SELECT {} FROM {stage} s WHERE NOT EXISTS(SELECT 1 FROM {table} t WHERE {equality})",columns.join(","),columns.iter().map(|c|format!("s.{c}")).collect::<Vec<_>>().join(",")),&[])?;
     }
     session.execute(&format!("DROP TABLE {stage}"), &[])?;
-    Ok(
-        json!({"inserted_rows":inserted,"changed_rows":changed,"unchanged_rows":accepted.saturating_sub(inserted+changed),"accepted_rows":accepted}),
-    )
+    let mut result = json!({"inserted_rows":inserted,"changed_rows":changed,"unchanged_rows":accepted.saturating_sub(inserted+changed),"accepted_rows":accepted});
+    if source.manifest["source_scope"] == "event_date_window_with_history" {
+        result["historical_recovery"] = recovery;
+    }
+    Ok(result)
 }
 
 /// Publishes all supplied sources and revision checkpoints in one owner transaction.
@@ -701,14 +762,14 @@ pub fn publish_sources_guarded(
         for source in &sources {
             let stage = stage(session,source,check)?;
             let (stage,rejections) = if source.dataset=="fatalities" {fatalities(session,&stage,operation_id)?} else {validate_core(session,&stage,&source.dataset)?;(stage,json!({"rejected_rows":0}))};
-            let mut result = publish(session,&stage,&source.dataset,mode,check)?;
+            let mut result = publish(session,&stage,source,mode,check)?;
             changed_rows+=result["inserted_rows"].as_u64().unwrap_or(0)+result["changed_rows"].as_u64().unwrap_or(0);
             ensure!(!existing_targets||changed_rows<=max_changed,"publication changes exceed INGESTION_MAX_CHANGED_ROWS={max_changed}; transaction rolled back");
             result["identity_rejections"]=rejections;
             result["source_rows"]=json!(source.rows()?);
             result["source_manifest"]=source.manifest.clone();
             stats.insert(source.dataset.clone(),result);
-            if mode == PublicationMode::Production && source.manifest["source_scope"]!="event_date_window" {
+            if mode == PublicationMode::Production && !matches!(source.manifest["source_scope"].as_str(),Some("event_date_window" | "event_date_window_with_history")) {
                 let watermark = acquisition_watermark(&source.manifest)?;
                 session.execute("INSERT INTO ingestion_checkpoints(dataset,source_revision,operation_id,updated_at,source_updated_before) VALUES(?,?,?,current_timestamp,?::TIMESTAMPTZ) ON CONFLICT(dataset) DO UPDATE SET source_revision=excluded.source_revision,operation_id=excluded.operation_id,updated_at=excluded.updated_at,source_updated_before=excluded.source_updated_before",&[json!(source.dataset),source.manifest["source_revision_after"].clone(),json!(operation_id),watermark])?;
             }
@@ -801,6 +862,309 @@ mod native_tests {
         )
         .unwrap();
     }
+
+    fn coverage_fixture(directory: &Path, dataset: &str, records: &[Value], nightly: bool) {
+        fixture(directory, dataset, records);
+        let path = directory.join(format!("sources/{dataset}.manifest.json"));
+        let mut manifest: Value = serde_json::from_reader(File::open(&path).unwrap()).unwrap();
+        manifest["acquisition_started_at"] = json!("2026-10-24T00:00:10Z");
+        manifest["source_updated_before"] = json!("2026-10-24T00:00:00Z");
+        manifest["downloaded_at"] = json!("2026-10-24T00:01:00Z");
+        manifest["source_scope"] = json!(if nightly {
+            "event_date_window_with_history"
+        } else {
+            "full_dataset"
+        });
+        if nightly {
+            manifest["coverage"] =
+                json!({"event_start":"2026-09-25","event_end_exclusive":"2026-10-26"});
+        }
+        std::fs::write(path, manifest.to_string()).unwrap();
+    }
+
+    #[test]
+    fn nightly_replays_history_and_recovers_children_without_advancing_baselines() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let datasets = ["crashes".into(), "people".into(), "vehicles".into()];
+        coverage_fixture(
+            temp.path(),
+            "crashes",
+            &[
+                json!({"crash_record_id":"loaded-parent","crash_date":"2026-09-05"}),
+                json!({"crash_record_id":"old-correction","crash_date":"2015-01-01","posted_speed_limit":"30"}),
+            ],
+            false,
+        );
+        // Children are retained even if the parent feed is behind. Their own
+        // provider timestamps need not change again for reports to recover.
+        coverage_fixture(
+            temp.path(),
+            "people",
+            &[
+                json!({"crash_record_id":"late-parent","person_id":"early-child","crash_date":"2026-09-12"}),
+            ],
+            false,
+        );
+        coverage_fixture(
+            temp.path(),
+            "vehicles",
+            &[
+                json!({"crash_record_id":"late-parent","crash_unit_id":"early-unit","crash_date":"2026-09-12"}),
+            ],
+            false,
+        );
+        publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "weekly-full",
+        )
+        .unwrap();
+        let baseline = historical_baseline(&db, "people").unwrap();
+        assert_eq!(baseline.baseline_operation_id, "weekly-full");
+        assert_eq!(
+            baseline.modified_since.to_rfc3339(),
+            "2026-10-23T00:00:00+00:00"
+        );
+        let before = db
+            .query(
+                "SELECT created_at,updated_at FROM crashes WHERE crash_record_id='loaded-parent'",
+                &[],
+            )
+            .unwrap();
+
+        coverage_fixture(
+            temp.path(),
+            "crashes",
+            &[
+                json!({"crash_record_id":"late-parent","crash_date":"2026-09-12"}),
+                json!({"crash_record_id":"old-correction","crash_date":"2015-01-01","posted_speed_limit":"35"}),
+            ],
+            true,
+        );
+        coverage_fixture(
+            temp.path(),
+            "people",
+            &[
+                json!({"crash_record_id":"loaded-parent","person_id":"late-july-child","crash_date":"2026-07-11"}),
+                json!({"crash_record_id":"future-parent","person_id":"deferred-child","crash_date":"2026-09-14"}),
+            ],
+            true,
+        );
+        coverage_fixture(
+            temp.path(),
+            "vehicles",
+            &[
+                json!({"crash_record_id":"loaded-parent","crash_unit_id":"late-july-unit","crash_date":"2026-07-11"}),
+                json!({"crash_record_id":"future-parent","crash_unit_id":"deferred-unit","crash_date":"2026-09-14"}),
+            ],
+            true,
+        );
+        let first = publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "nightly",
+        )
+        .unwrap();
+        assert_eq!(
+            first["datasets"]["crashes"]["historical_recovery"]["historical_inserted_rows"],
+            1
+        );
+        assert_eq!(
+            first["datasets"]["crashes"]["historical_recovery"]["historical_changed_rows"],
+            1
+        );
+        for (dataset, recovered) in [
+            ("people", "people_recovered_with_parent"),
+            ("vehicles", "vehicles_recovered_with_parent"),
+        ] {
+            assert_eq!(
+                first["datasets"]["crashes"]["historical_recovery"][recovered],
+                1
+            );
+            assert_eq!(
+                first["datasets"][dataset]["historical_recovery"]["historical_inserted_rows"],
+                2
+            );
+            assert_eq!(
+                first["datasets"][dataset]["historical_recovery"]["parentless_rows_retained"],
+                1
+            );
+            assert_eq!(
+                db.query(
+                    &format!(
+                        "SELECT count(*) n FROM {} JOIN crashes USING(crash_record_id)",
+                        table_name(dataset).unwrap()
+                    ),
+                    &[]
+                )
+                .unwrap()[0]["n"],
+                2
+            );
+            assert_eq!(
+                historical_baseline(&db, dataset)
+                    .unwrap()
+                    .baseline_operation_id,
+                "weekly-full"
+            );
+        }
+        assert_eq!(
+            db.query(
+                "SELECT posted_speed_limit FROM crashes WHERE crash_record_id='old-correction'",
+                &[]
+            )
+            .unwrap()[0]["posted_speed_limit"],
+            35
+        );
+        assert_eq!(
+            db.query(
+                "SELECT created_at,updated_at FROM crashes WHERE crash_record_id='loaded-parent'",
+                &[]
+            )
+            .unwrap(),
+            before
+        );
+        let timestamps = db.query("SELECT crash_record_id,created_at,updated_at FROM crashes ORDER BY crash_record_id", &[]).unwrap();
+        let replay = publish_sources(
+            &db,
+            temp.path(),
+            &datasets,
+            PublicationMode::Production,
+            "nightly-repeat",
+        )
+        .unwrap();
+        for dataset in &datasets {
+            assert_eq!(replay["datasets"][dataset]["inserted_rows"], 0);
+            assert_eq!(replay["datasets"][dataset]["changed_rows"], 0);
+        }
+        assert_eq!(db.query("SELECT crash_record_id,created_at,updated_at FROM crashes ORDER BY crash_record_id", &[]).unwrap(), timestamps);
+        assert_eq!(committed_publication(&db, "nightly").unwrap(), Some(first));
+
+        // The missing parent can arrive after a newer full baseline, with no
+        // child re-fetch at all: retained identities now join into reports.
+        coverage_fixture(
+            temp.path(),
+            "crashes",
+            &[json!({"crash_record_id":"future-parent","crash_date":"2026-09-14"})],
+            false,
+        );
+        let path = temp.path().join("sources/crashes.manifest.json");
+        let mut manifest: Value = serde_json::from_reader(File::open(&path).unwrap()).unwrap();
+        manifest["acquisition_started_at"] = json!("2026-10-25T00:00:10Z");
+        manifest["source_updated_before"] = json!("2026-10-25T00:00:00Z");
+        manifest["downloaded_at"] = json!("2026-10-25T00:01:00Z");
+        std::fs::write(path, manifest.to_string()).unwrap();
+        publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "next-full",
+        )
+        .unwrap();
+        assert_eq!(
+            historical_baseline(&db, "crashes")
+                .unwrap()
+                .baseline_operation_id,
+            "next-full"
+        );
+        assert_eq!(
+            historical_baseline(&db, "people")
+                .unwrap()
+                .baseline_operation_id,
+            "weekly-full"
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM crash_people JOIN crashes USING(crash_record_id)",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            3
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM crash_vehicles JOIN crashes USING(crash_record_id)",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            3
+        );
+
+        // A later source's invalid identity rolls back the earlier source too.
+        coverage_fixture(
+            temp.path(),
+            "crashes",
+            &[json!({"crash_record_id":"must-rollback","crash_date":"2026-09-23"})],
+            false,
+        );
+        coverage_fixture(
+            temp.path(),
+            "vehicles",
+            &[json!({"crash_unit_id":"invalid"})],
+            false,
+        );
+        assert!(
+            publish_sources(
+                &db,
+                temp.path(),
+                &["crashes".into(), "vehicles".into()],
+                PublicationMode::Production,
+                "failed-full"
+            )
+            .is_err()
+        );
+        assert_eq!(
+            historical_baseline(&db, "crashes")
+                .unwrap()
+                .baseline_operation_id,
+            "next-full"
+        );
+        assert_eq!(
+            db.query(
+                "SELECT count(*) n FROM crashes WHERE crash_record_id='must-rollback'",
+                &[]
+            )
+            .unwrap()[0]["n"],
+            0
+        );
+    }
+
+    #[test]
+    fn nightly_without_a_baseline_fails_before_network_or_staging() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = database(temp.path()).unwrap();
+        let staging = temp.path().join("ingestion");
+        let error = refresh_request_guarded(
+            &db,
+            &staging,
+            &json!({"endpoints":["crashes"],"mode":"api"}),
+            "missing-baseline",
+            &|| Ok(()),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("full refresh baseline"));
+        assert!(!staging.exists());
+        fixture(
+            temp.path(),
+            "crashes",
+            &[json!({"crash_record_id":"C1","crash_date":"2026-01-01"})],
+        );
+        publish_sources(
+            &db,
+            temp.path(),
+            &["crashes".into()],
+            PublicationMode::Production,
+            "unproven-full",
+        )
+        .unwrap();
+        assert!(historical_baseline(&db, "crashes").is_err());
+    }
+
     #[test]
     fn point_scratch_cleanup_reclaims_abandoned_copies_without_touching_native_spill() {
         let temp = tempfile::tempdir().unwrap();
@@ -1786,6 +2150,42 @@ mod native_tests {
     }
 }
 
+struct EventWindow<'a> {
+    start: &'a str,
+    end: &'a str,
+    recover_historical: bool,
+}
+
+fn historical_baseline(db: &Database, dataset: &str) -> Result<sources::HistoricalRecovery> {
+    let exists = db.query("SELECT count(*) n FROM information_schema.tables WHERE table_schema='main' AND table_name='ingestion_checkpoints'", &[])?;
+    ensure!(
+        exists[0]["n"].as_u64().unwrap_or(0) > 0,
+        "{dataset} historical recovery requires a successful full refresh baseline"
+    );
+    let rows = db.query("SELECT operation_id,floor(epoch(source_updated_before))::BIGINT baseline FROM ingestion_checkpoints WHERE dataset=? AND source_updated_before IS NOT NULL", &[json!(dataset)])?;
+    let baseline = rows.first().with_context(|| {
+        format!("{dataset} historical recovery requires a successful full refresh baseline")
+    })?;
+    let timestamp = baseline["baseline"]
+        .as_i64()
+        .context("invalid full source baseline")?;
+    let timestamp = chrono::DateTime::from_timestamp(timestamp, 0)
+        .context("invalid full source baseline timestamp")?;
+    ensure!(
+        timestamp <= chrono::Utc::now(),
+        "full source baseline is in the future"
+    );
+    Ok(sources::HistoricalRecovery {
+        modified_since: timestamp
+            .checked_sub_signed(chrono::Duration::days(1))
+            .context("full source baseline overlap overflow")?,
+        baseline_operation_id: baseline["operation_id"]
+            .as_str()
+            .context("full source baseline operation missing")?
+            .to_owned(),
+    })
+}
+
 /// Run one bounded acquisition attempt under the owner lease/deadline fence.
 fn refresh_attempt(
     db: &Database,
@@ -1793,12 +2193,26 @@ fn refresh_attempt(
     datasets: &[String],
     operation_id: &str,
     check: &sources::Check<'_>,
-    window: Option<(&str, &str)>,
+    window: Option<EventWindow<'_>>,
     api_only: bool,
 ) -> Result<Value> {
     ensure!(!datasets.is_empty(), "choose at least one dataset");
     for dataset in datasets {
         sources::specification(dataset)?;
+    }
+    // Resolve every baseline before starting network work. Windowed receipts do
+    // not advance these checkpoints, including failed/retried nightly attempts.
+    let mut baselines = BTreeMap::new();
+    if window
+        .as_ref()
+        .is_some_and(|window| window.recover_historical)
+    {
+        for dataset in datasets
+            .iter()
+            .filter(|dataset| dataset.as_str() != "fatalities")
+        {
+            baselines.insert(dataset.as_str(), historical_baseline(db, dataset)?);
+        }
     }
     let attempts = directory.join("attempts");
     std::fs::create_dir_all(&attempts)?;
@@ -1837,8 +2251,15 @@ fn refresh_attempt(
     };
     let result = (|| {
         for dataset in datasets {
-            if let Some((start, end)) = window {
-                sources::download_api_window_source(&attempt, dataset, start, end, &checked)?;
+            if let Some(window) = &window {
+                sources::download_api_window_source(
+                    &attempt,
+                    dataset,
+                    window.start,
+                    window.end,
+                    baselines.get(dataset.as_str()),
+                    &checked,
+                )?;
                 continue;
             }
             if api_only {
@@ -2338,7 +2759,22 @@ pub fn refresh_request_guarded(
                 &datasets,
                 operation_id,
                 check,
-                Some((start, end)),
+                Some(EventWindow {
+                    start,
+                    end,
+                    recover_historical: config
+                        .get("recover_historical")
+                        .map(|value| {
+                            value
+                                .as_bool()
+                                .context("recover_historical must be boolean")
+                        })
+                        .transpose()?
+                        .unwrap_or(
+                            config.get("start_date").is_none_or(Value::is_null)
+                                && config.get("end_date").is_none_or(Value::is_null),
+                        ),
+                }),
                 true,
             )
         }

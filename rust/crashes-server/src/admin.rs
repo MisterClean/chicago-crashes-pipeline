@@ -115,6 +115,9 @@ pub(crate) fn validate_job_record(job: &Value) -> Result<()> {
     );
     ensure!(job["config"].is_object(), "job config must be an object");
     crate::ingestion::full_source_uses_api(&job["config"])?;
+    if let Some(value) = job["config"].get("recover_historical") {
+        ensure!(value.is_boolean(), "recover_historical must be boolean");
+    }
     if let Some(mode) = job["config"]["mode"].as_str() {
         ensure!(
             matches!(mode, "api" | "incremental" | "full"),
@@ -349,6 +352,16 @@ fn sync_request_at(
                 }
             }
         }
+        request["recover_historical"] =
+            config
+                .get("recover_historical")
+                .cloned()
+                .unwrap_or_else(|| {
+                    json!(
+                        kind != "custom"
+                            || !config["start_date"].is_string() && !config["end_date"].is_string()
+                    )
+                });
         request
     };
     // Freeze the reviewed policy alongside execution parameters. Ingestion
@@ -882,7 +895,19 @@ mod tests {
         let request = sync_request_at(&job, None, now)?;
         assert_eq!(request["start_date"], "2026-09-22");
         assert_eq!(request["end_date"], "2026-10-22");
+        assert_eq!(request["recover_historical"], true);
         assert_eq!(request["config"]["repair_null_people_dates"], true);
+        job["config"] = json!({"recover_historical":false});
+        assert_eq!(
+            sync_request_at(&job, None, now)?["recover_historical"],
+            false
+        );
+        job["job_type"] = json!("custom");
+        job["config"] = json!({"date_range_days":30,"start_date":"2026-01-01"});
+        assert_eq!(
+            sync_request_at(&job, None, now)?["recover_historical"],
+            false
+        );
 
         job["config"] = json!({"mode":"full","endpoints":["fatalities"],"allow_full_refresh":true});
         let request = sync_request_at(&job, None, now)?;
