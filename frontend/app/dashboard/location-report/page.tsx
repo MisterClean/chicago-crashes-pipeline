@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { Suspense, useState, useCallback, useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
+import { initialReportDates } from "@/lib/reportDates";
 import { LocationReportMap } from "./components/LocationReportMap";
 import { ReportStats } from "./components/ReportStats";
 import { CausesTable } from "./components/CausesTable";
@@ -62,7 +64,16 @@ const DEFAULT_PLACE_TYPE = "layer:4"; // Community Areas uploaded layer
 const DEFAULT_PLACE_ID = "259"; // LOOP community area feature ID
 
 export default function LocationReportPage() {
-  const defaultDates = getDefaultDates();
+  return (
+    <Suspense fallback={<p className="p-8 text-gray-600 dark:text-gray-300" role="status">Loading location report…</p>}>
+      <LocationReport />
+    </Suspense>
+  );
+}
+
+function LocationReport() {
+  const searchParams = useSearchParams();
+  const defaultDates = initialReportDates(searchParams, getDefaultDates());
   const [selectionMode, setSelectionMode] = useState<SelectionMode>("place");
   const [report, setReport] = useState<LocationReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,7 +89,7 @@ export default function LocationReportPage() {
   // Date filter state - default to last 1 year
   const [startDate, setStartDate] = useState(defaultDates.startDate);
   const [endDate, setEndDate] = useState(defaultDates.endDate);
-  const [activeDatePreset, setActiveDatePreset] = useState<string | null>("1yr"); // Track active preset
+  const [activeDatePreset, setActiveDatePreset] = useState<string | null>(defaultDates.preset); // Track active preset
 
   // Selection state from map
   const [selectedCenter, setSelectedCenter] = useState<[number, number] | null>(null);

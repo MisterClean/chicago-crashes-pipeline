@@ -19,22 +19,6 @@ function getAuthHeaders(): HeadersInit {
   return {};
 }
 
-export interface DashboardStats {
-  total_crashes: number;
-  total_injuries: number;
-  total_fatalities: number;
-  pedestrians_involved: number;
-  cyclists_involved: number;
-  hit_and_run_count: number;
-}
-
-export interface WeeklyTrend {
-  week: string;
-  crashes: number;
-  injuries: number;
-  fatalities: number;
-}
-
 export interface CrashFeature {
   type: "Feature";
   geometry: {
@@ -65,73 +49,6 @@ export interface SyncStatus {
   crashes_count: number;
   people_count: number;
   vehicles_count: number;
-}
-
-export async function fetchDashboardStats(params?: {
-  start_date?: string;
-  end_date?: string;
-  community_area?: string;
-}): Promise<DashboardStats> {
-  const searchParams = new URLSearchParams();
-  if (params?.start_date) searchParams.set("start_date", params.start_date);
-  if (params?.end_date) searchParams.set("end_date", params.end_date);
-  if (params?.community_area)
-    searchParams.set("community_area", params.community_area);
-
-  const res = await fetch(`${API_BASE}/dashboard/stats?${searchParams}`, {
-    headers: getAuthHeaders(),
-    next: { revalidate: 300 }, // Cache for 5 minutes
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch dashboard stats: ${res.statusText}`);
-  }
-
-  return res.json();
-}
-
-export async function fetchWeeklyTrends(params?: {
-  weeks?: number;
-  start_date?: string;
-  end_date?: string;
-}): Promise<WeeklyTrend[]> {
-  const searchParams = new URLSearchParams();
-  if (params?.weeks) searchParams.set("weeks", params.weeks.toString());
-  if (params?.start_date) searchParams.set("start_date", params.start_date);
-  if (params?.end_date) searchParams.set("end_date", params.end_date);
-
-  const res = await fetch(`${API_BASE}/dashboard/trends/weekly?${searchParams}`, {
-    headers: getAuthHeaders(),
-    next: { revalidate: 300 },
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch weekly trends: ${res.statusText}`);
-  }
-
-  return res.json();
-}
-
-export async function fetchCrashesGeoJSON(params?: {
-  start_date?: string;
-  end_date?: string;
-  limit?: number;
-}): Promise<CrashGeoJSON> {
-  const searchParams = new URLSearchParams();
-  if (params?.start_date) searchParams.set("start_date", params.start_date);
-  if (params?.end_date) searchParams.set("end_date", params.end_date);
-  if (params?.limit) searchParams.set("limit", params.limit.toString());
-
-  const res = await fetch(`${API_BASE}/dashboard/crashes/geojson?${searchParams}`, {
-    headers: getAuthHeaders(),
-    next: { revalidate: 60 }, // Cache for 1 minute
-  });
-
-  if (!res.ok) {
-    throw new Error(`Failed to fetch crashes GeoJSON: ${res.statusText}`);
-  }
-
-  return res.json();
 }
 
 export async function fetchSyncStatus(): Promise<SyncStatus> {

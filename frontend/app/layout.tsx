@@ -31,12 +31,6 @@ export default function RootLayout({
               </div>
               <div className="flex items-center space-x-4">
                 <Link
-                  href="/dashboard"
-                  className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
-                >
-                  Dashboard
-                </Link>
-                <Link
                   href="/dashboard/location-report"
                   className="text-gray-300 hover:text-white px-3 py-2 rounded-md text-sm font-medium"
                 >

@@ -9,6 +9,8 @@ npm run dev
 
 The dashboard runs on port 3001. `BACKEND_URL` defaults to `http://127.0.0.1:8003`. Browser requests use `/api`; Next.js rewrites them to the Rust backend. `/admin` proxies the embedded admin UI. Set `BACKEND_URL` at build time and runtime, and rebuild after changing it.
 
+The [Location Crash Report](http://127.0.0.1:3001/dashboard/location-report) is the single reporting experience. Existing `/dashboard` links permanently redirect there, preserving query parameters. Valid `start_date` and `end_date` calendar dates initialize the report's date filters; empty values leave that bound open. Invalid dates use the usual default for that bound. Location selection, report generation and exports continue to use the location-report workflow. Backend dashboard API endpoints retain their existing contracts.
+
 Basemap selection uses an explicit `NEXT_PUBLIC_BASEMAP_URL` first, then `NEXT_PUBLIC_PROTOMAPS_KEY`, then keyless CARTO Positron. Leave the URL empty when selecting Protomaps by its browser-visible key. Both settings are embedded at build time. MapLibre requires WebGL 2 and access to the style's tiles/glyphs. Never place a server secret in a `NEXT_PUBLIC_*` variable.
 
 ```sh
