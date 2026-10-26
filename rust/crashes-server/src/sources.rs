@@ -146,6 +146,13 @@ pub enum PublicationMode {
     Production,
 }
 
+/// Replay changes from the last full publication rather than advancing a delta
+/// cursor nightly. Weekly reconciliation bounds the repeated acquisition.
+pub struct HistoricalRecovery {
+    pub modified_since: chrono::DateTime<chrono::Utc>,
+    pub baseline_operation_id: String,
+}
+
 pub fn specification(dataset: &str) -> Result<SourceSpec> {
     let mut mapping: BTreeMap<String, SourceSpec> = serde_json::from_str(MAPPING)?;
     mapping
@@ -570,15 +577,35 @@ pub fn download_api_window_source(
     dataset: &str,
     start: &str,
     end: &str,
+    recovery: Option<&HistoricalRecovery>,
     check: &Check<'_>,
 ) -> Result<VerifiedSource> {
+    let (filter, coverage) = window_coverage(start, end, recovery)?;
+    download_api_filtered_source(directory, dataset, Some((&filter, coverage)), check)
+}
+
+fn window_coverage(
+    start: &str,
+    end: &str,
+    recovery: Option<&HistoricalRecovery>,
+) -> Result<(String, Value)> {
     let start = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d")?;
     let end = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d")?;
     ensure!(start <= end, "reversed ingestion date window");
     let exclusive = end.succ_opt().context("date window overflow")?;
-    let filter =
+    let mut filter =
         format!("crash_date >= '{start}T00:00:00' AND crash_date < '{exclusive}T00:00:00'");
-    download_api_filtered_source(directory, dataset, Some(&filter), check)
+    let mut coverage = json!({"source_scope":"event_date_window","event_start":start.to_string(),"event_end_exclusive":exclusive.to_string()});
+    if let Some(recovery) = recovery {
+        let since = recovery.modified_since.to_rfc3339();
+        filter = format!("({filter}) OR :updated_at >= '{since}' OR :created_at >= '{since}'");
+        coverage["source_scope"] = json!("event_date_window_with_history");
+        coverage["modified_since"] = json!(since);
+        coverage["baseline_operation_id"] = json!(recovery.baseline_operation_id);
+        coverage["baseline_policy"] = json!("last_full_publication");
+        coverage["overlap_seconds"] = json!(86400);
+    }
+    Ok((filter, coverage))
 }
 
 /// Decode source strings while retaining exact numeric and point JSON tokens.
@@ -599,11 +626,12 @@ fn api_csv_value(value: Option<&serde_json::value::RawValue>) -> Result<String> 
 fn download_api_filtered_source(
     directory: &Path,
     dataset: &str,
-    filter: Option<&str>,
+    selection: Option<(&str, Value)>,
     check: &Check<'_>,
 ) -> Result<VerifiedSource> {
     check()?;
     let acquisition_started_at = chrono::Utc::now();
+    let filter = selection.as_ref().map(|(filter, _)| *filter);
     let spec = specification(dataset)?;
     let client = portal_client()?;
     let before = metadata(&client, dataset, check)?;
@@ -685,6 +713,10 @@ fn download_api_filtered_source(
         );
         let receipt = json!({"manifest_version":1,"dataset":dataset,"dataset_id":spec.dataset_id,"source_origin":"stable_ordered_api_bootstrap","source_filter":filter,"source_scope":if filter.is_some(){"event_date_window"}else{"full_dataset"},"source_revision_before":before["rowsUpdatedAt"],"source_revision_after":after["rowsUpdatedAt"],"source_revision":after["rowsUpdatedAt"],"stable_source_revision":true,"profiling_only":false,"expected_rows_before":count_before,"expected_rows_after":count_after,"expected_rows":count_after,"headers":headers,"rows":offset,"bytes":temporary.metadata()?.len(),"sha256":file_sha256_guarded(&temporary,check)?,"mapping_sha256":mapping_sha256(),"mapping_baseline":"c08b80a","downloaded_at":chrono::Utc::now().to_rfc3339()});
         let mut receipt = receipt;
+        if let Some((_, coverage)) = &selection {
+            receipt["source_scope"] = coverage["source_scope"].clone();
+            receipt["coverage"] = coverage.clone();
+        }
         receipt["acquisition_started_at"] = json!(acquisition_started_at.to_rfc3339());
         receipt["source_updated_before"] =
             json!((acquisition_started_at - chrono::Duration::seconds(10)).to_rfc3339());
@@ -712,6 +744,64 @@ fn download_api_filtered_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nightly_selection_captures_old_events_and_null_dates_by_provider_time() {
+        let temp = tempfile::tempdir().unwrap();
+        let db = crate::db::Database::open(
+            &temp.path().join("test.duckdb"),
+            &crate::test_support::library(),
+            "128MB",
+            1,
+            &temp.path().join("spill"),
+        )
+        .unwrap();
+        db.execute("CREATE TABLE source_rows(identity VARCHAR,crash_date TIMESTAMP,provider_updated_at TIMESTAMPTZ,provider_created_at TIMESTAMPTZ)", &[]).unwrap();
+        db.execute(
+            "INSERT INTO source_rows VALUES
+            ('july-child','2026-07-11','2026-10-25','2026-10-25'),
+            ('september-parent','2026-09-12','2026-10-24','2026-10-24'),
+            ('old-correction','2015-01-01','2026-10-24','2015-01-01'),
+            ('null-child',NULL,'2026-10-24','2026-10-24'),
+            ('created-only','2020-01-01','2020-01-01','2026-10-24'),
+            ('unchanged-old','2015-01-01','2015-01-01','2015-01-01'),
+            ('recent-event','2026-10-01','2026-10-01','2026-10-01'),
+            ('overlap-boundary','2020-01-01','2026-10-23','2020-01-01')",
+            &[],
+        )
+        .unwrap();
+        let recovery = HistoricalRecovery {
+            modified_since: "2026-10-23T00:00:00Z".parse().unwrap(),
+            baseline_operation_id: "weekly-full".into(),
+        };
+        let selected = |recovery| {
+            let (filter, _) = window_coverage("2026-09-25", "2026-10-25", recovery).unwrap();
+            let sql = filter
+                .replace(":updated_at", "provider_updated_at")
+                .replace(":created_at", "provider_created_at");
+            db.query(
+                &format!("SELECT identity FROM source_rows WHERE {sql} ORDER BY identity"),
+                &[],
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            selected(None),
+            json!([{"identity":"recent-event"}])
+                .as_array()
+                .unwrap()
+                .clone()
+        );
+        let rows = selected(Some(&recovery));
+        assert_eq!(rows.len(), 7);
+        assert!(!rows.iter().any(|row| row["identity"] == "unchanged-old"));
+        assert_eq!(
+            window_coverage("2026-09-25", "2026-10-25", Some(&recovery))
+                .unwrap()
+                .1["baseline_operation_id"],
+            "weekly-full"
+        );
+    }
+
     #[test]
     fn rejects_duplicate_or_renamed_headers() {
         let mut headers = specification("fatalities").unwrap().observed_csv_headers;
