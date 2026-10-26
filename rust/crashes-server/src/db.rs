@@ -748,7 +748,12 @@ mod tests {
             &directory.path().join("spill"),
         )
         .unwrap();
-        db.owner.lock().unwrap().query_timeout = std::time::Duration::from_millis(50);
+        let normal_timeout = {
+            let mut owner = db.owner.lock().unwrap();
+            let timeout = owner.query_timeout;
+            owner.query_timeout = std::time::Duration::from_millis(50);
+            timeout
+        };
         let started = std::time::Instant::now();
         let error = db
             .query(
@@ -761,6 +766,9 @@ mod tests {
             "DuckDB statement execution deadline exceeded"
         );
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        // Recovery checks connection usability, not whether a busy CI runner can
+        // schedule another statement within the deliberately tiny test budget.
+        db.owner.lock().unwrap().query_timeout = normal_timeout;
         assert_eq!(db.query("SELECT 42 AS n", &[]).unwrap()[0]["n"], 42);
     }
     #[test]
