@@ -137,6 +137,8 @@ Compose mounts the same data directory and runs the backend at 512 MiB and the f
 
 Public routes include `/health`, `/ready`, `/version`, dashboard queries and `/places/*`. The embedded admin uses `/admin/api/*`, which works directly and through the frontend proxy. Administrative operations use `X-API-Key`; the admin page prompts for the key when configured. Exports use the durable `/exports` workflow and signed download URLs.
 
+Location-report [cost estimates](docs/kabco-methodology.md) use crash-year nominal dollars with explicit coverage and year-specific KABCO rates. Valuations currently cover 2013–2024; incomplete annual inputs make later years unavailable. Select the separate `crash_costs` dataset for auditable per-crash estimates without changing the raw CSV export schemas.
+
 ```sh
 curl --fail http://127.0.0.1:8003/health
 curl --fail http://127.0.0.1:8003/dashboard/stats

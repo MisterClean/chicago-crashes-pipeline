@@ -87,6 +87,7 @@ export default function LocationReportPage() {
   const [selectedPolygon, setSelectedPolygon] = useState<[number, number][] | null>(null);
   const [exportDatasets, setExportDatasets] = useState<LocationReportDataset[]>([
     "crashes",
+    "crash_costs",
     "people",
     "vehicles",
     "vision_zero",
@@ -670,11 +671,12 @@ export default function LocationReportPage() {
                       Export Data
                     </p>
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      Download raw records for this report.
+                      Download raw records and per-crash cost estimates for this report. A single dataset downloads as CSV; multiple datasets include a ZIP manifest.
                     </p>
                     <div className="mt-3 space-y-2">
                       {[
                         { id: "crashes", label: "Crashes" },
+                        { id: "crash_costs", label: "Crash cost estimates" },
                         { id: "people", label: "People" },
                         { id: "vehicles", label: "Vehicles" },
                         { id: "vision_zero", label: "Vision Zero" },
@@ -751,7 +753,7 @@ export default function LocationReportPage() {
           <>
             {/* Stats Cards */}
             <ReportStats stats={report.stats} />
-            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Injury and fatality summaries use crash records. Road-user counts and cost estimates use linked person records, which can differ as the source datasets are revised.</p>
+            <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">Injury and fatality summaries use crash records. Road-user counts use linked people; cost estimates use linked people and vehicles. These can differ as the source datasets are revised.</p>
             <TimingHeatmap data={report.hour_day_counts || []} />
             <RoadUserTable data={report.road_user_severity || []} />
 
@@ -788,7 +790,16 @@ export default function LocationReportPage() {
                   </p>
                   <p>
                     Costs are calculated per-person based on injury severity classification (K=Fatal, A=Incapacitating,
-                    B=Non-incapacitating, C=Possible injury, O=No injury), plus per-vehicle costs. Values are in 2024 dollars.
+                    B=Non-incapacitating, C=Possible injury, O=No injury), plus an economic cost for each linked vehicle.
+                    Each crash uses the dollar year of its Chicago-local crash date. FHWA&apos;s 2019-dollar inputs are
+                    adjusted using annual CPI-U for economic costs and the mean of four quarterly median usual weekly
+                    earnings for QALY costs. Values are summed in nominal crash-year dollars, not a common dollar year.
+                  </p>
+                  <p>
+                    Supported valuation years are 2013–2024. A complete four-quarter earnings series is unavailable
+                    for 2025; 2026 is not a complete year. Unsupported or missing years have no estimate. Unknown
+                    injury classifications and missing or inconsistent linked records make estimates partial or
+                    unavailable. Partial totals include only known costs; unavailable costs are never treated as zero.
                   </p>
                   <p>
                     <a

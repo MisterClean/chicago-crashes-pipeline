@@ -427,8 +427,8 @@ async fn dispatch(
                 .context(ApiError::bad("datasets required"))?;
             let datasets: Vec<String> =
                 serde_json::from_value(datasets.clone()).map_err(ApiError::bad)?;
-            if datasets.is_empty() || datasets.len() > 4 {
-                return Err(ApiError::bad("choose 1..4 datasets"));
+            if datasets.is_empty() || datasets.len() > 5 {
+                return Err(ApiError::bad("choose 1..5 datasets"));
             }
             let mut unique = std::collections::HashSet::new();
             for dataset in &datasets {
@@ -738,8 +738,8 @@ fn execute(
                     .context("datasets required")?;
                 let datasets: Vec<String> = serde_json::from_value(datasets)?;
                 ensure!(
-                    !datasets.is_empty() && datasets.len() <= 4,
-                    "choose 1..4 datasets"
+                    !datasets.is_empty() && datasets.len() <= 5,
+                    "choose 1..5 datasets"
                 );
                 let mut unique = std::collections::HashSet::new();
                 for d in &datasets {

@@ -51,6 +51,13 @@ export interface CrashFeature {
     crash_type: string;
     street_name?: string;
     primary_contributory_cause?: string;
+    // Included on location-report points; the standalone map omits costing.
+    valuation_year?: number | null;
+    valuation_status?: "supported" | "unsupported_year" | "missing_date";
+    cost_status?: "complete" | "partial" | "unavailable";
+    estimated_economic_damages?: number | null;
+    estimated_societal_costs?: number | null;
+    cost_methodology_version?: string;
   };
 }
 
@@ -153,25 +160,58 @@ export interface InjuryClassificationCost {
   classification: string;
   classification_label: string;
   count: number;
-  unit_economic_cost: number;
-  unit_qaly_cost: number;
-  subtotal_economic: number;
-  subtotal_societal: number;
+  priced_count: number;
+  unit_economic_cost: number | null;
+  unit_qaly_cost: number | null;
+  subtotal_economic: number | null;
+  subtotal_societal: number | null;
 }
 
 export interface VehicleCostBreakdown {
   count: number;
-  unit_economic_cost: number;
-  unit_qaly_cost: number;
-  subtotal_economic: number;
-  subtotal_societal: number;
+  priced_count: number;
+  unit_economic_cost: number | null;
+  unit_qaly_cost: number | null;
+  subtotal_economic: number | null;
+  subtotal_societal: number | null;
 }
 
-export interface CostBreakdown {
+export interface CostCoverage {
+  status: "empty" | "complete" | "partial" | "unavailable";
+  crash_count: number;
+  complete_crashes: number;
+  partial_crashes: number;
+  unavailable_crashes: number;
+  unknown_injury_count: number;
+  missing_people_crashes: number;
+  missing_vehicle_crashes: number;
+  inconsistent_injury_crashes: number;
+  inconsistent_vehicle_crashes: number;
+}
+
+export interface CostYearBreakdown {
+  year: number | null;
+  crash_count: number;
   injury_costs: InjuryClassificationCost[];
   vehicle_costs: VehicleCostBreakdown;
-  total_economic: number;
-  total_societal: number;
+  total_economic: number | null;
+  total_societal: number | null;
+  coverage: CostCoverage;
+}
+
+export interface CostBreakdown extends Omit<CostYearBreakdown, "year" | "crash_count"> {
+  years: CostYearBreakdown[];
+  methodology: {
+    version: string;
+    dollar_basis: string;
+    base_dollar_year: number;
+    publication_year: number;
+    source_url: string;
+    supported_years: number[];
+    cpi_series: string;
+    earnings_series: string;
+    annual_inputs: { year: number; cpi: number; muwe: number }[];
+  };
 }
 
 export interface LocationReportStats {
@@ -185,9 +225,9 @@ export interface LocationReportStats {
   children_injured: number;
   crashes_with_injuries: number;
   crashes_with_fatalities: number;
-  // Cost estimates (2024$) - FHWA methodology
-  estimated_economic_damages: number;
-  estimated_societal_costs: number;
+  // Nominal crash-year dollars; null means no estimate is available.
+  estimated_economic_damages: number | null;
+  estimated_societal_costs: number | null;
   total_vehicles: number;
   unknown_injury_count: number;
   // Detailed cost breakdown
@@ -242,6 +282,7 @@ export interface LocationReportRequest {
 
 export type LocationReportDataset =
   | "crashes"
+  | "crash_costs"
   | "people"
   | "vehicles"
   | "vision_zero";

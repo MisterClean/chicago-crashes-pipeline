@@ -1,4 +1,5 @@
-//! Schema-v1 exports with frozen geometry, one read transaction and private artifacts.
+//! Frozen schema-v1 raw exports and an additive crash-cost dataset, with one read
+//! transaction, frozen geometry and private artifacts.
 
 use crate::{
     db::{Database, sql_literal},
@@ -16,7 +17,8 @@ use std::{
 };
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-/// Exact public columns/order from the deployed ff1503e schema-v1 export contract.
+/// Raw columns/order retain the deployed ff1503e schema-v1 export contract.
+/// `crash_costs` is a separate, additive dataset with explicit method provenance.
 pub fn export_columns(dataset: &str) -> Result<&'static [&'static str]> {
     Ok(match dataset {
         "crashes" => &[
@@ -145,6 +147,35 @@ pub fn export_columns(dataset: &str) -> Result<&'static [&'static str]> {
             "geometry",
             "geocoded_column",
         ],
+        "crash_costs" => &[
+            "crash_record_id",
+            "crash_date",
+            "valuation_year",
+            "valuation_status",
+            "cost_status",
+            "estimated_economic_damages",
+            "estimated_societal_costs",
+            "person_count",
+            "vehicle_count",
+            "k_count",
+            "a_count",
+            "b_count",
+            "c_count",
+            "o_count",
+            "unknown_injury_count",
+            "missing_people",
+            "missing_vehicles",
+            "inconsistent_injuries",
+            "inconsistent_vehicles",
+            "cpi",
+            "muwe",
+            "methodology_version",
+            "base_dollar_year",
+            "publication_year",
+            "source_url",
+            "dollar_basis",
+            "unit_costs",
+        ],
         _ => anyhow::bail!("unsupported export dataset"),
     })
 }
@@ -177,6 +208,10 @@ pub struct ExportArtifact {
 }
 
 fn dataset_query(dataset: &str, selection: &Selection, limit: u64) -> Result<String> {
+    if dataset == "crash_costs" {
+        let query = crate::costs::export_query(&selection.sql)?;
+        return Ok(format!("SELECT * FROM ({query}) export_rows LIMIT {limit}"));
+    }
     let columns = export_columns(dataset)?
         .iter()
         .map(|column| {
@@ -294,8 +329,8 @@ pub fn generate_export(
         "export limits must be positive"
     );
     ensure!(
-        !datasets.is_empty() && datasets.len() <= 4,
-        "choose 1..4 export datasets"
+        !datasets.is_empty() && datasets.len() <= 5,
+        "choose 1..5 export datasets"
     );
     let mut unique = HashSet::new();
     for dataset in datasets {
@@ -337,6 +372,9 @@ pub fn generate_export(
             "geometry":{"encoding":"WKT","crs":"EPSG:4326","axis_order":"longitude,latitude"},
             "null_serialization":"empty CSV field"
         });
+        if datasets.iter().any(|dataset| dataset == "crash_costs") {
+            manifest["cost_methodology"] = crate::costs::methodology()?;
+        }
         database.transaction(|session| {
             session.guarded(native_check, || {
                 native_check()?;
@@ -577,6 +615,86 @@ mod tests {
         let mut archive = zip::ZipArchive::new(File::open(artifact.path)?)?;
         let archived: Value = serde_json::from_reader(archive.by_name("manifest.json")?)?;
         assert_eq!(archived, artifact.manifest);
+        Ok(())
+    }
+
+    #[test]
+    fn native_cost_exports_are_self_describing_and_reconcile_to_report() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let database = native_fixture(directory.path())?.context("native fixture")?;
+        database.execute(
+            "UPDATE crashes SET injuries_total=1,injuries_fatal=0,injuries_incapacitating=1",
+            &[],
+        )?;
+        database.execute("UPDATE crash_people SET injury_classification=CASE WHEN person_id='p1' THEN 'INCAPACITATING INJURY' ELSE 'NO INDICATION OF INJURY' END",&[])?;
+        let report = crate::queries::location_report(&database, &request())?;
+        let standalone = generate_export(
+            &database,
+            &request(),
+            &["crash_costs".into()],
+            &directory.path().join("cost-only"),
+            &ExportLimits::default(),
+            &|| Ok(()),
+            None,
+        )?;
+        assert_eq!(
+            standalone.path.extension().and_then(|e| e.to_str()),
+            Some("csv")
+        );
+        let mut reader = csv::Reader::from_path(&standalone.path)?;
+        let headers = reader.headers()?.clone();
+        assert!(
+            headers
+                .iter()
+                .eq(export_columns("crash_costs")?.iter().copied())
+        );
+        let rows = reader
+            .deserialize::<std::collections::BTreeMap<String, String>>()
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(row["valuation_year"], "2024");
+        assert_eq!(row["cost_status"], "complete");
+        assert_eq!(row["base_dollar_year"], "2019");
+        assert_eq!(row["publication_year"], "2025");
+        assert_eq!(row["methodology_version"], crate::costs::VERSION);
+        assert_eq!(row["source_url"], crate::costs::SOURCE);
+        assert_eq!(row["cpi"], "313.689");
+        assert_eq!(row["muwe"], "1159.75");
+        for field in ["estimated_economic_damages", "estimated_societal_costs"] {
+            assert_eq!(
+                row[field].parse::<f64>()?,
+                report["stats"][field].as_f64().context("report cost")?
+            );
+        }
+        let units: Value = serde_json::from_str(&row["unit_costs"])?;
+        assert_eq!(units["a_economic"], 211262.19);
+        assert_eq!(units["vehicle_qaly"], 0);
+        let archive = generate_export(
+            &database,
+            &request(),
+            &[
+                "crashes".into(),
+                "people".into(),
+                "vehicles".into(),
+                "vision_zero".into(),
+                "crash_costs".into(),
+            ],
+            &directory.path().join("all-five"),
+            &ExportLimits::default(),
+            &|| Ok(()),
+            None,
+        )?;
+        assert_eq!(archive.manifest["schema_version"], 1);
+        assert_eq!(archive.manifest["datasets"]["crash_costs"]["rows"], 1);
+        assert_eq!(
+            archive.manifest["cost_methodology"]["version"],
+            crate::costs::VERSION
+        );
+        let mut zip = zip::ZipArchive::new(File::open(archive.path)?)?;
+        assert_eq!(zip.len(), 6);
+        let archived: Value = serde_json::from_reader(zip.by_name("manifest.json")?)?;
+        assert_eq!(archived, archive.manifest);
         Ok(())
     }
 

@@ -1,0 +1,149 @@
+{
+  "version": "fhwa-person-injury-crash-year-v1",
+  "retrieved_on": "2026-10-26",
+  "source_url": "https://highways.dot.gov/sites/fhwa.dot.gov/files/2025-10/CrashCostFactSheet_508_OCT2025.pdf",
+  "publication_year": 2025,
+  "base_dollar_year": 2019,
+  "cpi_series": "CUUR0000SA0",
+  "cpi_source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/CUUR0000SA0",
+  "earnings_series": "LEU0252881500",
+  "earnings_source_url": "https://api.bls.gov/publicAPI/v2/timeseries/data/LEU0252881500",
+  "annual_inputs": [
+    {
+      "year": 2013,
+      "cpi": 232.957,
+      "muwe": 776.5,
+      "quarterly_earnings": [
+        773,
+        776,
+        771,
+        786
+      ]
+    },
+    {
+      "year": 2014,
+      "cpi": 236.736,
+      "muwe": 791.25,
+      "quarterly_earnings": [
+        796,
+        780,
+        790,
+        799
+      ]
+    },
+    {
+      "year": 2015,
+      "cpi": 237.017,
+      "muwe": 809.25,
+      "quarterly_earnings": [
+        808,
+        801,
+        803,
+        825
+      ]
+    },
+    {
+      "year": 2016,
+      "cpi": 240.007,
+      "muwe": 832.5,
+      "quarterly_earnings": [
+        830,
+        824,
+        827,
+        849
+      ]
+    },
+    {
+      "year": 2017,
+      "cpi": 245.12,
+      "muwe": 860.0,
+      "quarterly_earnings": [
+        865,
+        859,
+        859,
+        857
+      ]
+    },
+    {
+      "year": 2018,
+      "cpi": 251.107,
+      "muwe": 886.0,
+      "quarterly_earnings": [
+        881,
+        876,
+        887,
+        900
+      ]
+    },
+    {
+      "year": 2019,
+      "cpi": 255.657,
+      "muwe": 917.0,
+      "quarterly_earnings": [
+        905,
+        908,
+        919,
+        936
+      ]
+    },
+    {
+      "year": 2020,
+      "cpi": 258.811,
+      "muwe": 984.25,
+      "quarterly_earnings": [
+        957,
+        1002,
+        994,
+        984
+      ]
+    },
+    {
+      "year": 2021,
+      "cpi": 270.97,
+      "muwe": 997.5,
+      "quarterly_earnings": [
+        989,
+        990,
+        1001,
+        1010
+      ]
+    },
+    {
+      "year": 2022,
+      "cpi": 292.655,
+      "muwe": 1058.25,
+      "quarterly_earnings": [
+        1037,
+        1041,
+        1070,
+        1085
+      ]
+    },
+    {
+      "year": 2023,
+      "cpi": 304.702,
+      "muwe": 1115.75,
+      "quarterly_earnings": [
+        1100,
+        1100,
+        1118,
+        1145
+      ]
+    },
+    {
+      "year": 2024,
+      "cpi": 313.689,
+      "muwe": 1159.75,
+      "quarterly_earnings": [
+        1139,
+        1143,
+        1165,
+        1192
+      ]
+    }
+  ],
+  "unsupported_year_notes": {
+    "2025": "BLS did not produce Q4 earnings: October observations were not collected during the federal government shutdown. Do not substitute a three-quarter mean.",
+    "2026": "Full-year CPI and four-quarter earnings inputs are not yet available."
+  }
+}

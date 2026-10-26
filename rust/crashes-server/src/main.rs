@@ -6,6 +6,7 @@ mod api_tests;
 mod cache;
 mod compat;
 mod control;
+mod costs;
 mod db;
 mod exports;
 mod ingestion;
