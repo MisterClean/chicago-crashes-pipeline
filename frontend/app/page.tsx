@@ -14,10 +14,10 @@ export default function Home() {
           </p>
           <div className="mt-10 flex justify-center gap-4">
             <Link
-              href="/dashboard"
+              href="/dashboard/location-report"
               className="rounded-md bg-chicago-red px-6 py-3 text-lg font-semibold text-white shadow-sm hover:bg-red-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
             >
-              View Dashboard
+              View Location Report
             </Link>
             <a
               href="https://github.com/MisterClean/chicago-crashes-pipeline"

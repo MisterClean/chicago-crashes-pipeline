@@ -90,8 +90,7 @@ npm --prefix frontend run dev
 
 Open:
 
-- [Dashboard](http://127.0.0.1:3001/dashboard)
-- [Location reports](http://127.0.0.1:3001/dashboard/location-report)
+- [Location Crash Report](http://127.0.0.1:3001/dashboard/location-report)
 - [Administration](http://127.0.0.1:3001/admin)
 
 The default basemap uses CARTO Positron without an API key. Set `NEXT_PUBLIC_BASEMAP_URL` at frontend build time to use another MapLibre style. Internet access to the style, tiles and glyphs is required.

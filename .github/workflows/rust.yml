@@ -28,7 +28,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci && npm run build
         working-directory: frontend
-      - run: node --test rust/crashes-server/tests/admin-ui.test.cjs frontend/tests/export-api.test.cjs
+      - run: node --test rust/crashes-server/tests/admin-ui.test.cjs frontend/tests/*.test.cjs
       - name: Build the production container
         if: runner.os == 'Linux'
         run: docker build -f docker/Dockerfile.rust -t crashes-rust:ci .
